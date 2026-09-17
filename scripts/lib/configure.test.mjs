@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_SCHEMA } from './config-schema.mjs';
-import { spawnSandboxed } from './test-sandbox.mjs';
+import { spawnSandboxed, writeHomeReporter, withHomeReporter } from './test-sandbox.mjs';
 
 const CONFIGURE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'configure.mjs');
 
@@ -123,6 +123,26 @@ test('the shared sandbox helper resolves os.homedir() and os.tmpdir() inside the
     assert.strictEqual(reported.home, tmp, 'os.homedir() must resolve inside the fixture, never the operator\'s real home');
     assert.strictEqual(reported.tmp, tmp, 'os.tmpdir() must resolve inside the fixture, never the operator\'s real temp dir');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+// r34 findings-back round 2 (LOW-C): the probe above proves `spawnSandboxed`; it
+// cannot see a regression in `runConfigure`'s OWN wiring to that helper (INSPECT
+// Mutation C: reverting `runConfigure`'s body to a raw `spawnSync` with no env made
+// this file 9/10 pass, with `--global` as the ONLY red -- and only after it had
+// already overwritten the sandbox's own global config file first). This drives the
+// proof through `runConfigure` itself with `--help`, which writes NOTHING anywhere,
+// pass or fail -- so `runConfigure`'s wiring gets a non-destructive guard instead of
+// depending on `--global`'s side effect to notice.
+test('runConfigure wires the sandbox through to the CHILD it actually spawns -- proof rides the wrapper, not spawnSandboxed directly', () => {
+  const dir = freshProject();
+  try {
+    const reporter = writeHomeReporter(dir);
+    const r = withHomeReporter(reporter, () => runConfigure(['--help'], dir));
+    assert.strictEqual(r.status, 0, r.stderr);
+    const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
+    assert.strictEqual(reported.home, dir, 'the real configure CHILD must resolve os.homedir() inside the sandbox `runConfigure` was given');
+    assert.strictEqual(reported.tmp, dir, 'the real configure CHILD must resolve os.tmpdir() inside the same sandbox');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('help documents every schema key — drift between table and help is impossible to ship', () => {

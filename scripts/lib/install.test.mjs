@@ -17,6 +17,13 @@
 // target and an explicit, separate sandbox dir, never the bare 'claude' keyword
 // against a real machine and never cwd doing double duty as the sandbox -- the
 // r31/r33/r34 hazard this rule exists to make structural rather than remembered.
+//
+// round 2, LOW-C: a probe against `spawnSandboxed` proves the HELPER; it cannot see
+// `runInstall`'s own wiring to it regress. Two tests below drive the proof through
+// `runInstall` itself instead, via a `--require` preload that reports the real
+// installer CHILD's os.homedir()/os.tmpdir() (`writeHomeReporter`/`withHomeReporter`,
+// scripts/lib/test-sandbox.mjs) -- one generic wrapper-level probe, and the
+// self-pollution test's own reporter check covering the LOW-1 call site specifically.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +33,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectPresentAgents } from './targets.mjs';
-import { spawnSandboxed } from './test-sandbox.mjs';
+import { spawnSandboxed, writeHomeReporter, withHomeReporter } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INSTALL = path.join(repo, 'scripts', 'install.mjs');
@@ -48,10 +55,13 @@ function runInstall(target, cwd, extra = [], sandboxDir = cwd) {
 // function `runInstall` calls), and asserts the CHILD's own os.homedir()/os.tmpdir()
 // resolve inside the sandbox. Deliberately does not spawn `install.mjs` here -- a red
 // proof for this property must never risk writing the real home to demonstrate the
-// bug; a bare `os` probe writes nothing anywhere, pass or fail. Re-proven red-first in
-// a throwaway clone by deleting the `env:` line from `spawnSandboxed` itself (never
-// from a copy inside this test) -- see the room craft note / build-note for the exact
-// failing assertion text.
+// bug; a bare `os` probe writes nothing anywhere, pass or fail. Re-proven red-first by
+// deleting the `env:` line from `spawnSandboxed` in `test-sandbox.mjs` itself (never
+// from a copy inside this test), in a `git clone` of the committed tree with the
+// working-tree edit overlaid on top: this test goes from 17/17 to 16/17, red at
+// exactly `os.homedir() must resolve inside the fixture` -- restore the line to return
+// to green. This proves the HELPER; it does NOT prove `runInstall`'s own use of it --
+// see the wrapper-level probe below (round 2, LOW-C) for that half.
 test('the shared sandbox helper resolves os.homedir() and os.tmpdir() inside the fixture, never the real machine', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-sandbox-probe-'));
   try {
@@ -65,6 +75,30 @@ test('the shared sandbox helper resolves os.homedir() and os.tmpdir() inside the
     assert.equal(reported.home, tmp, 'os.homedir() must resolve inside the fixture, never the operator\'s real home');
     assert.equal(reported.tmp, tmp, 'os.tmpdir() must resolve inside the fixture, never the operator\'s real temp dir');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+// r34 findings-back round 2 (LOW-C): the probe above proves `spawnSandboxed`; it
+// cannot see a regression in `runInstall`'s OWN wiring to that helper (INSPECT
+// Mutation B: reverting `runInstall`'s body to a raw `spawnSync` with no env left
+// this whole file 17/17 green, because nothing here spawns `install.mjs` through the
+// wrapper and checks what the CHILD resolves). This test drives the proof through
+// `runInstall` itself, the exact call every other test in this file makes -- a
+// `--require` preload reports the real INSTALLER child's os.homedir()/os.tmpdir()
+// before install.mjs runs a line of its own code, writing only to stderr.
+test('runInstall wires the sandbox through to the CHILD it actually spawns -- proof rides the wrapper, not spawnSandboxed directly', () => {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-wrapprobe-sb-'));
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-wrapprobe-tg-'));
+  try {
+    const reporter = writeHomeReporter(sandbox);
+    const r = withHomeReporter(reporter, () => runInstall(target, target, [], sandbox));
+    assert.equal(r.status, 0, `install must pass:\n${r.stdout}${r.stderr}`);
+    const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
+    assert.equal(reported.home, sandbox, 'the real installer CHILD must resolve os.homedir() inside the sandbox `runInstall` was given');
+    assert.equal(reported.tmp, sandbox, 'the real installer CHILD must resolve os.tmpdir() inside the same sandbox');
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
 });
 
 test('manifest-driven reinstall removes renamed leftovers, spares foreign skills', () => {
@@ -216,6 +250,12 @@ test('corrupt manifest entries can never escape the target directory', () => {
 
 test('installer run from the CoalMine source repo does NOT drop a project config anywhere (self-pollution guard)', () => {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-selfpol-'));
+  // r34 findings-back round 2, NOTE-3: sandboxDir is its OWN mkdtemp, separate from
+  // `target` -- the installer's child TEMP/HOME must not double as the very directory
+  // it is installing skills into (a future stray temp write there would sit exactly
+  // where cleanPreviousInstall/manifest logic looks, unmeasured today but decoupled
+  // for free by giving it a different fixture).
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-selfpol-sb-'));
   const rootCfg = path.join(repo, '.coalmine.json');
   // The new-shape default write target (namespace campaign #69+#39,
   // owner-designated 2026-08-08) — snapshotted too, so a regression that
@@ -236,9 +276,16 @@ test('installer run from the CoalMine source repo does NOT drop a project config
   try {
     // cwd === repo → copyDefaultConfig must skip the write entirely. r34 LOW-1: cwd
     // MUST be the live repo for this test's own subject, so the sandbox dir is passed
-    // SEPARATELY (`target`, already a throwaway fixture dir) -- HOME/TEMP resolve
-    // there, never into the live tree, even though cwd deliberately does not.
-    const r = runInstall(target, repo, [], target);
+    // SEPARATELY (`sandbox`, its own throwaway fixture -- round 2 NOTE-3, no longer
+    // `target`) -- HOME/TEMP resolve there, never into the live tree, even though cwd
+    // deliberately does not.
+    //
+    // round 2, LOW-C Mutation D: reverting to `runInstall(target, repo)` (no explicit
+    // sandboxDir) makes `sandboxDir` default back to `cwd` = `repo`, and the reporter
+    // below then reports `home === repo` -- this is what makes that regression FAIL
+    // rather than pass silently, the way it did before this test carried a reporter.
+    const reporter = writeHomeReporter(sandbox);
+    const r = withHomeReporter(reporter, () => runInstall(target, repo, [], sandbox));
     assert.equal(r.status, 0, `install from source repo must pass:\n${r.stdout}${r.stderr}`);
     if (cfgBefore === null) {
       assert.ok(!fs.existsSync(rootCfg), 'no .coalmine.json may be created at the source repo root');
@@ -247,12 +294,16 @@ test('installer run from the CoalMine source repo does NOT drop a project config
       assert.ok(!fs.existsSync(newCfg), 'no config may be created at the new own-dir home either');
     }
     assert.match(r.stdout, /self-pollution|source repo/i, 'the skip is reported');
+    const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
+    assert.equal(reported.home, sandbox, 'the installer child\'s HOME must be the throwaway sandbox, never the live repo');
+    assert.notEqual(reported.home, repo, 'the installer child must never resolve os.homedir() to the source repo it is running from');
   } finally {
     // Leave the real repo exactly as found (both config homes + git hooks).
     restore(rootCfg, cfgBefore);
     restore(newCfg, newCfgBefore);
     hookPaths.forEach((p, i) => restore(p, hooksBefore[i]));
     fs.rmSync(target, { recursive: true, force: true });
+    fs.rmSync(sandbox, { recursive: true, force: true });
   }
 });
 
