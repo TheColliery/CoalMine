@@ -2,12 +2,12 @@
 // Zero-dep (node:test + built-ins), per scripts-quality.md section 2.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_SCHEMA } from './config-schema.mjs';
+import { spawnSandboxed } from './test-sandbox.mjs';
 
 const CONFIGURE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'configure.mjs');
 
@@ -17,21 +17,16 @@ function freshProject() {
   return dir;
 }
 
-// r34 ITEM 2 -- an installer/configurator test NEVER runs against the operator's
-// real HOME. Only the `--global` test below sandboxed it (its whole point is writing
-// to the "global" layer, which without this override IS the real ~/.claude); every
-// other spawn here inherited the real HOME/USERPROFILE unguarded. Nothing in
-// configure.mjs's non-`--global` path reads os.homedir() TODAY, but the property this
-// room wants is structural, not "safe because nothing currently resolves there" --
-// the identical shape as install.test.mjs's `runInstall`, and hooks.test.mjs:33's
-// pre-existing correct pattern. Every CONFIGURE spawn below now goes through this.
+// r34 ITEM 2, rewritten at findings-back (INSPECT MEDIUM-1) -- an installer/
+// configurator test NEVER runs against the operator's real HOME. Every CONFIGURE
+// spawn below goes through the ONE shared `spawnSandboxed` helper (scripts/lib/
+// test-sandbox.mjs) -- the same function install.test.mjs's `runInstall` calls -- so
+// a regression in that helper is caught by BOTH files' own harness-proof probes, not
+// by a per-file literal that merely agreed with it. Nothing in configure.mjs's
+// non-`--global` path reads os.homedir() TODAY, but the property this room wants is
+// structural, not "safe because nothing currently resolves there".
 function runConfigure(args, cwd) {
-  return spawnSync(process.execPath, [CONFIGURE, ...args], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 60000,
-    env: { ...process.env, TEMP: cwd, TMP: cwd, TMPDIR: cwd, USERPROFILE: cwd, HOME: cwd },
-  });
+  return spawnSandboxed(process.execPath, [CONFIGURE, ...args], { cwd, sandboxDir: cwd });
 }
 
 // The read order (namespace campaign #69+#39, owner-designated 2026-08-08):
@@ -107,6 +102,27 @@ test('configure found at another new-shape candidate (.agents) writes back THERE
     assert.ok(!fs.existsSync(path.join(dir, NEW_REL)), 'never force-migrated to .claude — the .agents home is not the LEGACY location');
     assert.ok(!fs.existsSync(path.join(dir, LEGACY_REL)), 'no legacy root file was ever created');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// r34 findings-back MEDIUM-1 -- the same harness-proof probe install.test.mjs carries,
+// so `runConfigure`'s only guard is no longer the destructive `--global` test alone
+// (that test's own green depended on configure.mjs's write succeeding, so deleting
+// the sandbox turned it red only by first overwriting the operator's real global
+// config -- INSPECT, measured). This probe proves the shared helper directly and
+// writes nothing anywhere, pass or fail.
+test('the shared sandbox helper resolves os.homedir() and os.tmpdir() inside the fixture, never the real machine (configure side)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfg-sandbox-probe-'));
+  try {
+    const probe = spawnSandboxed(
+      process.execPath,
+      ['-e', 'console.log(JSON.stringify({home: require("node:os").homedir(), tmp: require("node:os").tmpdir()}))'],
+      { cwd: tmp, sandboxDir: tmp },
+    );
+    assert.strictEqual(probe.status, 0, probe.stderr);
+    const reported = JSON.parse(probe.stdout);
+    assert.strictEqual(reported.home, tmp, 'os.homedir() must resolve inside the fixture, never the operator\'s real home');
+    assert.strictEqual(reported.tmp, tmp, 'os.tmpdir() must resolve inside the fixture, never the operator\'s real temp dir');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
 test('help documents every schema key — drift between table and help is impossible to ship', () => {

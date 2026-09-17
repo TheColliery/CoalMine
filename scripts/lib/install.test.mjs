@@ -3,14 +3,20 @@
 // Covers the manifest-driven clean version transition: renamed/removed skills
 // from a previous install never linger, foreign skills are never touched.
 //
-// r34 ITEM 2, THE RULE: an installer test in this file NEVER runs against the
-// operator's real HOME. `runInstall()` sandboxes it (TEMP/TMP/TMPDIR/USERPROFILE/HOME
-// all pointed at the fixture dir) for every call -- this is the property, not a
-// per-test opt-in, so a future test needs to do nothing extra to stay safe. A manual
-// probe of the installer (outside this file, by hand) does the same: an explicit
-// fixture target and a sandboxed env, never the bare 'claude' keyword against a real
-// machine -- the r31/r33 hazard this rule exists to make structural rather than
-// remembered.
+// r34 ITEM 2, THE RULE (rewritten at findings-back per INSPECT MEDIUM-1/LOW-1): an
+// installer test in this file NEVER runs against the operator's real HOME. Every
+// sandboxed spawn -- `runInstall` AND its own harness-proof probe below -- goes
+// through the ONE shared `spawnSandboxed` helper (scripts/lib/test-sandbox.mjs), so a
+// regression in that helper is a regression the probe can see; the pre-fix shape had
+// each build a separate env literal, so the probe proved only itself. `sandboxDir` is
+// EXPLICIT and separate from `cwd` on every call, defaulting to `cwd` -- a test whose
+// SUBJECT is "what happens when cwd is the live repo" (the self-pollution guard,
+// below) passes cwd=repo but a SEPARATE throwaway sandboxDir, so HOME/TEMP still never
+// resolve into the live tree even though cwd deliberately does. A manual probe of the
+// installer (outside this file, by hand) follows the same shape: an explicit fixture
+// target and an explicit, separate sandbox dir, never the bare 'claude' keyword
+// against a real machine and never cwd doing double duty as the sandbox -- the
+// r31/r33/r34 hazard this rule exists to make structural rather than remembered.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,46 +26,39 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectPresentAgents } from './targets.mjs';
+import { spawnSandboxed } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INSTALL = path.join(repo, 'scripts', 'install.mjs');
 const MANIFEST = '.coalmine-manifest.json';
 
-// r34 ITEM 2 -- an installer test NEVER runs against the operator's real HOME. Every
-// caller here passes an explicit FIXTURE target (never the bare 'claude' keyword,
-// which resolves through TARGETS.claude to the real global ~/.claude/skills/ -- the
-// r33 hazard, recorded in MEMORY.md), so today no test writes there. But
-// `targets.mjs`'s `TARGETS.claude = path.join(os.homedir(), '.claude', 'skills')` is
-// evaluated at IMPORT time inside the SPAWNED CHILD, reading whatever HOME/
-// USERPROFILE the child inherits -- one regression in `all`'s ALL_EXCLUDE, or one new
-// test naming 'claude', and the suite writes into the real home with no signal. Sandbox
-// it the same way hooks.test.mjs:33 already does for the hook spawns: TEMP/TMP/TMPDIR
-// AND USERPROFILE/HOME all point at the fixture dir, so os.homedir() inside the child
-// can never resolve outside it regardless of what any future call site names as target.
-function runInstall(target, cwd, extra = []) {
-  return spawnSync(process.execPath, [INSTALL, ...extra, target], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 60_000,
-    env: { ...process.env, TEMP: cwd, TMP: cwd, TMPDIR: cwd, USERPROFILE: cwd, HOME: cwd },
-  });
+// `targets.mjs`'s `TARGETS.claude = path.join(os.homedir(), '.claude', 'skills')` is a
+// module-level constant evaluated at IMPORT time INSIDE the spawned child, reading
+// whatever HOME/USERPROFILE that child inherits -- one regression in `all`'s
+// ALL_EXCLUDE, or one new test naming 'claude', writes into the real home with no
+// signal unless the child's env is sandboxed regardless of what target it resolves.
+// `sandboxDir` defaults to `cwd` for every ordinary call (the common case: the fixture
+// IS the sandbox); pass it separately only when cwd must be something else (r34 LOW-1).
+function runInstall(target, cwd, extra = [], sandboxDir = cwd) {
+  return spawnSandboxed(process.execPath, [INSTALL, ...extra, target], { cwd, sandboxDir });
 }
 
-// r34 ITEM 2 -- proves the HARNESS, not the installer: spawns a plain node one-liner
-// through the identical env-construction `runInstall` uses, and asserts the CHILD's
-// own os.homedir()/os.tmpdir() resolve inside the fixture. Deliberately does not spawn
-// `install.mjs` itself here -- a red proof for THIS property must never risk writing
-// the real home to demonstrate the bug; a bare `os` probe writes nothing anywhere,
-// pass or fail. Against the pre-fix shape (no `env` override at all) this is RED: the
-// child reports the operator's real home, not the fixture -- reproduced by hand before
-// this fix (`os.homedir()` returned "C:\\Users\\zxc59", not the fixture dir).
-test('the sandbox env itself resolves os.homedir() and os.tmpdir() inside the fixture, never the real machine', () => {
+// r34 ITEM 2 + findings-back MEDIUM-1 -- proves the SHARED HELPER, not a parallel
+// literal: spawns a plain node one-liner through `spawnSandboxed` itself (the exact
+// function `runInstall` calls), and asserts the CHILD's own os.homedir()/os.tmpdir()
+// resolve inside the sandbox. Deliberately does not spawn `install.mjs` here -- a red
+// proof for this property must never risk writing the real home to demonstrate the
+// bug; a bare `os` probe writes nothing anywhere, pass or fail. Re-proven red-first in
+// a throwaway clone by deleting the `env:` line from `spawnSandboxed` itself (never
+// from a copy inside this test) -- see the room craft note / build-note for the exact
+// failing assertion text.
+test('the shared sandbox helper resolves os.homedir() and os.tmpdir() inside the fixture, never the real machine', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-sandbox-probe-'));
   try {
-    const probe = spawnSync(
+    const probe = spawnSandboxed(
       process.execPath,
       ['-e', 'console.log(JSON.stringify({home: require("node:os").homedir(), tmp: require("node:os").tmpdir()}))'],
-      { cwd: tmp, encoding: 'utf8', timeout: 10_000, env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp, USERPROFILE: tmp, HOME: tmp } },
+      { cwd: tmp, sandboxDir: tmp },
     );
     assert.equal(probe.status, 0, probe.stderr);
     const reported = JSON.parse(probe.stdout);
@@ -235,8 +234,11 @@ test('installer run from the CoalMine source repo does NOT drop a project config
   ]);
   const hooksBefore = hookPaths.map(snap);
   try {
-    // cwd === repo → copyDefaultConfig must skip the write entirely.
-    const r = runInstall(target, repo);
+    // cwd === repo → copyDefaultConfig must skip the write entirely. r34 LOW-1: cwd
+    // MUST be the live repo for this test's own subject, so the sandbox dir is passed
+    // SEPARATELY (`target`, already a throwaway fixture dir) -- HOME/TEMP resolve
+    // there, never into the live tree, even though cwd deliberately does not.
+    const r = runInstall(target, repo, [], target);
     assert.equal(r.status, 0, `install from source repo must pass:\n${r.stdout}${r.stderr}`);
     if (cfgBefore === null) {
       assert.ok(!fs.existsSync(rootCfg), 'no .coalmine.json may be created at the source repo root');
