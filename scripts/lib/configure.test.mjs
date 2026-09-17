@@ -17,6 +17,23 @@ function freshProject() {
   return dir;
 }
 
+// r34 ITEM 2 -- an installer/configurator test NEVER runs against the operator's
+// real HOME. Only the `--global` test below sandboxed it (its whole point is writing
+// to the "global" layer, which without this override IS the real ~/.claude); every
+// other spawn here inherited the real HOME/USERPROFILE unguarded. Nothing in
+// configure.mjs's non-`--global` path reads os.homedir() TODAY, but the property this
+// room wants is structural, not "safe because nothing currently resolves there" --
+// the identical shape as install.test.mjs's `runInstall`, and hooks.test.mjs:33's
+// pre-existing correct pattern. Every CONFIGURE spawn below now goes through this.
+function runConfigure(args, cwd) {
+  return spawnSync(process.execPath, [CONFIGURE, ...args], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 60000,
+    env: { ...process.env, TEMP: cwd, TMP: cwd, TMPDIR: cwd, USERPROFILE: cwd, HOME: cwd },
+  });
+}
+
 // The read order (namespace campaign #69+#39, owner-designated 2026-08-08):
 // own-dir (.claude/coal/coalmine.json) is where a never-configured project's
 // config lands, and where a config found at the LEGACY root dotfile migrates
@@ -29,7 +46,7 @@ test('configure writes values, migrates legacy/retired keys, and MOVES a legacy-
   try {
     fs.writeFileSync(path.join(dir, LEGACY_REL),
       JSON.stringify({ disable: ['rot-canary'], conductor: false, tempSweepProbability: 0.5 }), 'utf8');
-    const r = spawnSync(process.execPath, [CONFIGURE, '--language', 'th'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const r = runConfigure(['--language', 'th'], dir);
     assert.strictEqual(r.status, 0, r.stderr);
     const cfg = JSON.parse(fs.readFileSync(path.join(dir, NEW_REL), 'utf8'));
     assert.strictEqual(cfg.language, 'th');
@@ -48,7 +65,7 @@ test('configure fails loud (exit 1) when the existing legacy config is malformed
   try {
     // A truly unparseable config (a bare word, not JSON, no rescuable comments).
     fs.writeFileSync(path.join(dir, LEGACY_REL), 'this is not json at all', 'utf8');
-    const r = spawnSync(process.execPath, [CONFIGURE, '--language', 'en'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const r = runConfigure(['--language', 'en'], dir);
     // scripts-quality §1: a malformed config silently overwritten is a partial failure → non-zero exit.
     assert.strictEqual(r.status, 1, 'a malformed existing config must fail loud (exit 1)');
     assert.match(r.stderr + r.stdout, /malformed/i, 'the user is warned the config was malformed');
@@ -68,7 +85,7 @@ test('configure migrating a LEGACY config in a project that already has .agents/
   try {
     fs.mkdirSync(path.join(dir, '.agents')); // the project already uses this agent dir, never Claude Code
     fs.writeFileSync(path.join(dir, LEGACY_REL), JSON.stringify({ language: 'en' }), 'utf8');
-    const r = spawnSync(process.execPath, [CONFIGURE, '--language', 'th'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const r = runConfigure(['--language', 'th'], dir);
     assert.strictEqual(r.status, 0, r.stderr);
     const migrated = path.join(dir, '.agents', 'coal', 'coalmine.json');
     assert.ok(fs.existsSync(migrated), 'the legacy config migrates under the agent dir the project ALREADY has');
@@ -83,7 +100,7 @@ test('configure found at another new-shape candidate (.agents) writes back THERE
   try {
     fs.mkdirSync(path.join(dir, '.agents', 'coal'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.agents', 'coal', 'coalmine.json'), JSON.stringify({ language: 'auto' }), 'utf8');
-    const r = spawnSync(process.execPath, [CONFIGURE, '--language', 'ja'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const r = runConfigure(['--language', 'ja'], dir);
     assert.strictEqual(r.status, 0, r.stderr);
     const cfg = JSON.parse(fs.readFileSync(path.join(dir, '.agents', 'coal', 'coalmine.json'), 'utf8'));
     assert.strictEqual(cfg.language, 'ja');
@@ -93,20 +110,24 @@ test('configure found at another new-shape candidate (.agents) writes back THERE
 });
 
 test('help documents every schema key — drift between table and help is impossible to ship', () => {
-  const r = spawnSync(process.execPath, [CONFIGURE, '--help'], { encoding: 'utf8', timeout: 60000 });
-  assert.strictEqual(r.status, 0);
-  for (const spec of CONFIG_SCHEMA) {
-    assert.ok(r.stdout.includes(`--${spec.key}`), `help is missing --${spec.key}`);
-  }
-  assert.ok(r.stdout.includes('--global'), 'help is missing the --global target flag');
+  const dir = freshProject();
+  try {
+    const r = runConfigure(['--help'], dir);
+    assert.strictEqual(r.status, 0);
+    for (const spec of CONFIG_SCHEMA) {
+      assert.ok(r.stdout.includes(`--${spec.key}`), `help is missing --${spec.key}`);
+    }
+    assert.ok(r.stdout.includes('--global'), 'help is missing the --global target flag');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('--global writes ~/.claude/.coalmine.json, never the project file (v3.9.0 two-level)', () => {
   const dir = freshProject();
   try {
-    // Sandbox the home dir into the project sandbox so the real ~/.claude is never touched.
-    const env = { ...process.env, USERPROFILE: dir, HOME: dir };
-    const r = spawnSync(process.execPath, [CONFIGURE, '--global', '--language', 'th'], { cwd: dir, encoding: 'utf8', env, timeout: 60000 });
+    // runConfigure already sandboxes USERPROFILE/HOME into `dir` so the real
+    // ~/.claude is never touched -- this test's own point (--global targets "home")
+    // is exactly why it was the one call site that already did this by hand.
+    const r = runConfigure(['--global', '--language', 'th'], dir);
     assert.strictEqual(r.status, 0, r.stderr);
     const globalPath = path.join(dir, '.claude', '.coalmine.json');
     assert.ok(fs.existsSync(globalPath), '--global must create/write the global-layer file (mkdir included)');
@@ -118,11 +139,11 @@ test('--global writes ~/.claude/.coalmine.json, never the project file (v3.9.0 t
 test('configure writes a valid updateMode and rejects an out-of-enum value', () => {
   const dir = freshProject();
   try {
-    const ok = spawnSync(process.execPath, [CONFIGURE, '--updateMode', 'auto'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const ok = runConfigure(['--updateMode', 'auto'], dir);
     assert.strictEqual(ok.status, 0, ok.stderr);
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, NEW_REL), 'utf8')).updateMode, 'auto');
 
-    const bad = spawnSync(process.execPath, [CONFIGURE, '--updateMode', 'sometimes'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const bad = runConfigure(['--updateMode', 'sometimes'], dir);
     assert.notStrictEqual(bad.status, 0, 'an out-of-enum updateMode must fail loud');
     assert.match(bad.stderr, /updateMode/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -131,12 +152,12 @@ test('configure writes a valid updateMode and rejects an out-of-enum value', () 
 test('configure enforces the updateCheckDays minimum (≥ 1)', () => {
   const dir = freshProject();
   try {
-    const bad = spawnSync(process.execPath, [CONFIGURE, '--updateCheckDays', '0'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const bad = runConfigure(['--updateCheckDays', '0'], dir);
     assert.notStrictEqual(bad.status, 0, 'updateCheckDays below the minimum must fail loud');
     assert.match(bad.stderr, /updateCheckDays/);
     assert.ok(!fs.existsSync(path.join(dir, NEW_REL)) && !fs.existsSync(path.join(dir, LEGACY_REL)), 'no config may be written anywhere on a min violation');
 
-    const ok = spawnSync(process.execPath, [CONFIGURE, '--updateCheckDays', '7'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const ok = runConfigure(['--updateCheckDays', '7'], dir);
     assert.strictEqual(ok.status, 0, ok.stderr);
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, NEW_REL), 'utf8')).updateCheckDays, 7);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -145,19 +166,19 @@ test('configure enforces the updateCheckDays minimum (≥ 1)', () => {
 test('configure fails loud on an invalid value and writes nothing', () => {
   const dir = freshProject();
   try {
-    const r = spawnSync(process.execPath, [CONFIGURE, '--defaultTier', 'mega'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const r = runConfigure(['--defaultTier', 'mega'], dir);
     assert.notStrictEqual(r.status, 0);
     assert.match(r.stderr, /defaultTier/);
     assert.ok(!fs.existsSync(path.join(dir, NEW_REL)) && !fs.existsSync(path.join(dir, LEGACY_REL)), 'no config may be written anywhere on failure');
 
     // A trailing list flag with no value must error, not silently clear the list.
-    const r2 = spawnSync(process.execPath, [CONFIGURE, '--disable'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const r2 = runConfigure(['--disable'], dir);
     assert.notStrictEqual(r2.status, 0);
     assert.match(r2.stderr, /disabledCanaries/);
     assert.ok(!fs.existsSync(path.join(dir, NEW_REL)) && !fs.existsSync(path.join(dir, LEGACY_REL)), 'no config may be written anywhere on failure');
 
     // A bool flag with no value (or a non-boolean word) must error, not silently write false.
-    const r3 = spawnSync(process.execPath, [CONFIGURE, '--skipOnboarding'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
+    const r3 = runConfigure(['--skipOnboarding'], dir);
     assert.notStrictEqual(r3.status, 0);
     assert.match(r3.stderr, /skipOnboarding/);
     assert.ok(!fs.existsSync(path.join(dir, NEW_REL)) && !fs.existsSync(path.join(dir, LEGACY_REL)), 'no config may be written anywhere on failure');

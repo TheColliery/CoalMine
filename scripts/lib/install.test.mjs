@@ -2,6 +2,15 @@
 // Run: node --test scripts/lib/install.test.mjs
 // Covers the manifest-driven clean version transition: renamed/removed skills
 // from a previous install never linger, foreign skills are never touched.
+//
+// r34 ITEM 2, THE RULE: an installer test in this file NEVER runs against the
+// operator's real HOME. `runInstall()` sandboxes it (TEMP/TMP/TMPDIR/USERPROFILE/HOME
+// all pointed at the fixture dir) for every call -- this is the property, not a
+// per-test opt-in, so a future test needs to do nothing extra to stay safe. A manual
+// probe of the installer (outside this file, by hand) does the same: an explicit
+// fixture target and a sandboxed env, never the bare 'claude' keyword against a real
+// machine -- the r31/r33 hazard this rule exists to make structural rather than
+// remembered.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,9 +25,48 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const INSTALL = path.join(repo, 'scripts', 'install.mjs');
 const MANIFEST = '.coalmine-manifest.json';
 
+// r34 ITEM 2 -- an installer test NEVER runs against the operator's real HOME. Every
+// caller here passes an explicit FIXTURE target (never the bare 'claude' keyword,
+// which resolves through TARGETS.claude to the real global ~/.claude/skills/ -- the
+// r33 hazard, recorded in MEMORY.md), so today no test writes there. But
+// `targets.mjs`'s `TARGETS.claude = path.join(os.homedir(), '.claude', 'skills')` is
+// evaluated at IMPORT time inside the SPAWNED CHILD, reading whatever HOME/
+// USERPROFILE the child inherits -- one regression in `all`'s ALL_EXCLUDE, or one new
+// test naming 'claude', and the suite writes into the real home with no signal. Sandbox
+// it the same way hooks.test.mjs:33 already does for the hook spawns: TEMP/TMP/TMPDIR
+// AND USERPROFILE/HOME all point at the fixture dir, so os.homedir() inside the child
+// can never resolve outside it regardless of what any future call site names as target.
 function runInstall(target, cwd, extra = []) {
-  return spawnSync(process.execPath, [INSTALL, ...extra, target], { cwd, encoding: 'utf8', timeout: 60_000 });
+  return spawnSync(process.execPath, [INSTALL, ...extra, target], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: { ...process.env, TEMP: cwd, TMP: cwd, TMPDIR: cwd, USERPROFILE: cwd, HOME: cwd },
+  });
 }
+
+// r34 ITEM 2 -- proves the HARNESS, not the installer: spawns a plain node one-liner
+// through the identical env-construction `runInstall` uses, and asserts the CHILD's
+// own os.homedir()/os.tmpdir() resolve inside the fixture. Deliberately does not spawn
+// `install.mjs` itself here -- a red proof for THIS property must never risk writing
+// the real home to demonstrate the bug; a bare `os` probe writes nothing anywhere,
+// pass or fail. Against the pre-fix shape (no `env` override at all) this is RED: the
+// child reports the operator's real home, not the fixture -- reproduced by hand before
+// this fix (`os.homedir()` returned "C:\\Users\\zxc59", not the fixture dir).
+test('the sandbox env itself resolves os.homedir() and os.tmpdir() inside the fixture, never the real machine', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-sandbox-probe-'));
+  try {
+    const probe = spawnSync(
+      process.execPath,
+      ['-e', 'console.log(JSON.stringify({home: require("node:os").homedir(), tmp: require("node:os").tmpdir()}))'],
+      { cwd: tmp, encoding: 'utf8', timeout: 10_000, env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp, USERPROFILE: tmp, HOME: tmp } },
+    );
+    assert.equal(probe.status, 0, probe.stderr);
+    const reported = JSON.parse(probe.stdout);
+    assert.equal(reported.home, tmp, 'os.homedir() must resolve inside the fixture, never the operator\'s real home');
+    assert.equal(reported.tmp, tmp, 'os.tmpdir() must resolve inside the fixture, never the operator\'s real temp dir');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
 
 test('manifest-driven reinstall removes renamed leftovers, spares foreign skills', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-install-'));
