@@ -202,12 +202,12 @@ jobs:
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
-      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+      - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
         with:
           languages: javascript-typescript
           queries: security-and-quality
-      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+      - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         id: analyze
         if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
       # DO NOT ASSERT AN ACTION RAN WITHOUT CONSULTING THE STEP THAT PERFORMS IT (CWK-074).
