@@ -43,6 +43,24 @@ function stripCode(text) {
 const HEADING_RE = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
 const LINK_RE = /\[([^\]]*)\]\(([^)\s]+)(?:[ \t]+"[^"]*")?\)/g;
 const EXTERNAL_RE = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i; // a scheme: or a protocol-relative //
+// CodeQL #68 (js/incomplete-multi-character-sanitization, HIGH) fires here: a single
+// PASS of a paired-delimiter tag-strip could in general leave a re-formed tag behind
+// (`<<a>b>` stripped once -> `<b>`). DISMISSED, not fixed -- the slug rule is held
+// (main's ruling, CWK-098) and this line is not a sanitiser in the sense the query
+// assumes. Two properties make the alert's threat (a re-formed `<script>` surviving
+// into a renderer) unreachable by construction, both true of every call site: (1) the
+// very next filter in this same function, `.replace(/[^\w -]/g, '')`, strips EVERY `<`
+// and `>` unconditionally, regardless of what this line's single pass left behind --
+// so even a re-formed tag never survives slugify() at all, proven by
+// link-check.test.mjs's adversarial pin (`<<a>b>`, `<scr<script>ipt>`, `<<<x>>>`); (2)
+// slugify()'s return value is NEVER used as markup, a shell argument, or a filesystem
+// path -- headingSlugs() only ever inserts it into a Set, and checkFile() only ever
+// calls Set.has() on it. There is no reachable interpreter downstream for a tag to
+// re-form INTO. Both are re-verifiable at source: grep this file for `slugify(` (one
+// caller) and for `headingSlugs(` (two callers, both `.has(...)`, neither an HTML
+// context). Sibling walkers (CoalFace, CoalTipple) use an allowlist keep-filter
+// instead of a paired-delimiter strip and never hit this query at all -- a different
+// mechanism, not a scan gap this room's shape happens to dodge.
 const HTML_TAG_RE = /<\/?[a-z][^>]*>/gi;
 
 // GitHub's own algorithm (documented behaviour of github-slugger, its reference

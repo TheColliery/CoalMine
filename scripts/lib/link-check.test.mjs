@@ -54,6 +54,27 @@ test('headingSlugs: a fenced block INSIDE the doc still hides its own headings e
   assert.ok(slugs.has('real-heading'));
 });
 
+// CodeQL #68 (js/incomplete-multi-character-sanitization, HIGH) dismissal proof, r34
+// ITEM 1. slugify()'s single-pass HTML_TAG_RE strip is not fixed-point, but its own
+// disallowed-char filter two steps later strips every `<`/`>` regardless -- pinned
+// directly against the property the dismissal rests on, not against a specific
+// mechanism, so it stays true even if the internals change. The adversarial shapes
+// are the ones the CodeQL query's own class is about: nested/malformed tags whose
+// single-pass strip could in principle leave a re-formed tag behind.
+test('headingSlugs never yields a slug containing < or > -- CodeQL #68 dismissal proof (r34)', () => {
+  const adversarial = [
+    '# <scr<script>ipt> pilot\n',
+    '# <<a>b>\n',
+    '# <<<x>>>\n',
+    '# a <script b\n',
+  ];
+  for (const heading of adversarial) {
+    for (const slug of headingSlugs(heading)) {
+      assert.ok(!slug.includes('<') && !slug.includes('>'), `slug ${JSON.stringify(slug)} from heading ${JSON.stringify(heading)} contains < or >`);
+    }
+  }
+});
+
 test('extractLinks: basic inline link', () => {
   const links = extractLinks('see [the docs](./docs/README.md) for more');
   assert.deepStrictEqual(links, [{ text: 'the docs', target: './docs/README.md' }]);
