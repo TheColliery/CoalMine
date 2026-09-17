@@ -62,9 +62,21 @@ export function writeHomeReporter(dir) {
 // test in the same process. `fn` is expected to make exactly one wrapper call
 // (runInstall/runConfigure); `spawnSandboxed` spreads `process.env` at call time, so the
 // temporary NODE_OPTIONS reaches the child exactly like every other inherited var.
+//
+// r34 findings-back round 3 (LOW-D): NODE_OPTIONS splits on whitespace, so an unquoted
+// `reporterPath` under an os.tmpdir() containing a space (a real Windows account name,
+// e.g. "C:\Users\John Smith\...") broke into two tokens and the child died on
+// MODULE_NOT_FOUND before running anything -- a portability false-red, not a safety
+// hole, but it failed a real contributor at the pre-commit gate. Quoting alone does NOT
+// fix it: inside a double-quoted NODE_OPTIONS token, `\` is an escape character, so a
+// quoted Windows backslash path is mangled (measured: still MODULE_NOT_FOUND, on a path
+// with no space at all). The only shape measured to work in every case tried -- spaced
+// or not, Windows or POSIX -- is quoted AND forward-slashed; `path.sep` is already `/`
+// on POSIX, so the split/join is a no-op there.
 export function withHomeReporter(reporterPath, fn) {
+  const slashed = reporterPath.split(path.sep).join('/');
   const prev = process.env.NODE_OPTIONS;
-  process.env.NODE_OPTIONS = prev ? `${prev} --require ${reporterPath}` : `--require ${reporterPath}`;
+  process.env.NODE_OPTIONS = prev ? `${prev} --require "${slashed}"` : `--require "${slashed}"`;
   try {
     return fn();
   } finally {

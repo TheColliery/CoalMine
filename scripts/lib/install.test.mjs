@@ -101,6 +101,29 @@ test('runInstall wires the sandbox through to the CHILD it actually spawns -- pr
   }
 });
 
+// r34 findings-back round 3 (LOW-D): RE-INSPECT measured that `withHomeReporter`'s
+// NODE_OPTIONS build broke under a reporter path containing a space -- exactly what a
+// Windows account name with a space in it (e.g. "C:\Users\John Smith\...") produces in
+// `os.tmpdir()` for every fixture in this file. This test pins the fix directly against
+// that shape: a spaced mkdtemp, no install.mjs involved, no fixture outside
+// os.tmpdir(). Goes red on the pre-fix `withHomeReporter` at exactly the assertion the
+// reviewer's own measurement named (`MODULE_NOT_FOUND` -> non-zero status).
+test('withHomeReporter works when its reporter path contains a space (a real Windows account name)', () => {
+  const spaced = fs.mkdtempSync(path.join(os.tmpdir(), 'cm lowd spaced '));
+  try {
+    const reporter = writeHomeReporter(spaced);
+    const r = withHomeReporter(reporter, () =>
+      spawnSandboxed(process.execPath, ['-e', 'console.log("ok")'], { cwd: spaced, sandboxDir: spaced }),
+    );
+    assert.equal(r.status, 0, `child must start despite the space in its reporter's path:\n${r.stdout}${r.stderr}`);
+    const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
+    assert.equal(reported.home, spaced, 'the reporter must still resolve os.homedir() inside the (spaced) sandbox');
+    assert.equal(reported.tmp, spaced, 'the reporter must still resolve os.tmpdir() inside the (spaced) sandbox');
+  } finally {
+    fs.rmSync(spaced, { recursive: true, force: true });
+  }
+});
+
 test('manifest-driven reinstall removes renamed leftovers, spares foreign skills', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-install-'));
   const target = path.join(tmp, 'skills');
