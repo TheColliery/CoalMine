@@ -40,7 +40,7 @@ pre-commit and pre-push then run `scripts/test.mjs`, `scripts/verify.mjs`, and `
 * **Rebuild `plugin/`** after editing `skills/`, `hooks/`, or `.claude-plugin/plugin.json` — it is generated output.
 * **Keep hooks Phoenix-pure:** zero dependencies, fail-silent (wrap in try/catch, never set a non-zero exit, never call `process.exit()`), no network, 100% local. Every hook ships a hermetic spawn test.
 * **Add unit tests:** every shared helper in `scripts/lib/` has a matching `*.test.mjs`.
-* **Sandbox `HOME` in every installer/configure spawn:** a test or a manual probe of `install.mjs`/`configure.mjs` points `TEMP`/`TMP`/`TMPDIR`/`USERPROFILE`/`HOME` at an explicit fixture directory — separate from `cwd`, never folded into it — and never the operator's real machine. An **unsandboxed** spawn naming the bare `claude`/`all` target writes into the real `~/.claude/skills/`, and an unsandboxed `configure.mjs --global` writes `~/.claude/.coalmine.json`; sandboxed, both resolve harmlessly inside the fixture.
+* **Sandbox `HOME` in every installer/configure spawn:** a test or a manual probe of `install.mjs`/`configure.mjs` points `TEMP`/`TMP`/`TMPDIR`/`USERPROFILE`/`HOME` at an explicit throwaway sandbox directory — it may equal the call's own fixture `cwd`, never a real tree — and never the operator's real machine. **Unsandboxed**, a bare `claude` target (or a regression in `targets.mjs`'s `ALL_EXCLUDE`, which excludes `claude` from `all` today) writes into the real `~/.claude/skills/`, and `configure.mjs --global` writes `~/.claude/.coalmine.json`; sandboxed, both resolve harmlessly inside the fixture.
 * **Code style:** 2-space indent, semicolons, single quotes, Node built-ins only.
 * **Language:** shipped source and docs stay in English.
 
