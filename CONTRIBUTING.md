@@ -40,6 +40,7 @@ pre-commit and pre-push then run `scripts/test.mjs`, `scripts/verify.mjs`, and `
 * **Rebuild `plugin/`** after editing `skills/`, `hooks/`, or `.claude-plugin/plugin.json` — it is generated output.
 * **Keep hooks Phoenix-pure:** zero dependencies, fail-silent (wrap in try/catch, never set a non-zero exit, never call `process.exit()`), no network, 100% local. Every hook ships a hermetic spawn test.
 * **Add unit tests:** every shared helper in `scripts/lib/` has a matching `*.test.mjs`.
+* **Sandbox `HOME` in every installer/configure spawn:** a test or a manual probe of `install.mjs`/`configure.mjs` points `TEMP`/`TMP`/`TMPDIR`/`USERPROFILE`/`HOME` at a throwaway fixture directory, never the operator's real machine — `TARGETS.claude` resolves through `os.homedir()` at spawn time, so an unsandboxed run (or a bare `claude` target) writes into the real `~/.claude/skills/` with no signal.
 * **Code style:** 2-space indent, semicolons, single quotes, Node built-ins only.
 * **Language:** shipped source and docs stay in English.
 
