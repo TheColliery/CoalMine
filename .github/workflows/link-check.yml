@@ -1,0 +1,57 @@
+name: link-check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.md'
+
+permissions:
+  contents: read
+
+# cancel-in-progress: TRUE -- this job reads files and publishes nothing (per
+# .github/SKILL-REPO-PATTERN.md's concurrency rule: the discriminator is ATOMICITY, never
+# read-vs-write), so a superseded run leaves no partial external state.
+concurrency:
+  group: link-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: link-check
+        run: |
+          # Scope: this repo's own tracked .md, minus plugin/** -- NOT a byte-mirror
+          # exclusion (build-plugin.mjs RENDERS skills, inlining shared partials; 9 of
+          # 20 skills/*.md <-> plugin/skills/*.md pairs differ by hash). The real reason:
+          # plugin/ is a DERIVED artifact whose SOURCE (skills/**) this gate already
+          # checks -- named residue, not a false byte-identity claim: a dead link
+          # introduced only by the render step (inside an inlined shared partial) is
+          # invisible to this gate. Benign today, measured: 0 finding(s) across the 32
+          # excluded files.
+          files=$(git ls-files '*.md' | grep -v '^plugin/')
+
+          # CWK-079-class fail-open guard -- an empty file list must never read as a clean
+          # pass. Asserted BEFORE the engine ever runs (this room's own RED-PROVE-BOTH-
+          # DIRECTIONS instruction for this ticket), not inferred from the engine's own exit
+          # code, which is a wrapped-and-verified concern handled below.
+          if [ -z "$files" ]; then
+            echo "link-check: file list is EMPTY -- refusing to read that as a clean pass" >&2
+            exit 1
+          fi
+
+          # scripts/lib/link-check.mjs already sets process.exitCode itself on any finding
+          # (unlike a skill-shared engine that always exits 0), so there is deliberately NO
+          # wrap here -- the module owns its own exit code and a bare invocation already
+          # fails the step. Verified both ways: a planted dead link/anchor exits 1, this
+          # repo's own 60-file scope exits 0.
+          node scripts/lib/link-check.mjs $files

@@ -1,0 +1,16 @@
+{
+  "$comment": "GitHub Copilot hooks — place as .github/hooks/coalmine.json (VS Code agent mode) or ~/.copilot/hooks/coalmine.json (CLI). Same stdin-JSON protocol as Claude Code. Adjust the CoalMine path.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"" }]
+      }
+    ]
+  }
+}

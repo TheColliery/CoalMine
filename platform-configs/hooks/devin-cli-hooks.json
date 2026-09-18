@@ -1,0 +1,21 @@
+{
+  "$comment": "Devin CLI hooks — Devin CLI ONLY. Devin Desktop (ex-Windsurf) is a SEPARATE product running its own snake_case 'Cascade Hooks' system (pre_write_code/post_cascade_response-style events, unverified response channel) — no config is shipped for it here (too little verified this pass); a Cascade adapter is future work. Desktop skills still install via the existing windsurf target (node scripts/install.mjs windsurf). Place this file as .devin/hooks.v1.json. PascalCase, Claude-Code-shaped events + the same {type:'command',command} entry, so every script below runs in its plain Claude-Code output shape (Stop -> {\"decision\":\"block\",\"reason\"}); the exact Devin CLI response/inject schema is UNVERIFIED end-to-end (the 'CC format' below is the config side only) — flag if context/re-prompt doesn't land. The conductor's trailing FileCopy argument trims only the CC-plugin self-update offer + its update stamp (a file-copy install cannot run claude plugin update) — keep it; the output shape is unchanged. Adjust the CoalMine path in every command.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" FileCopy" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"" }]
+      }
+    ]
+  }
+}

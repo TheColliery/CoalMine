@@ -1,0 +1,12 @@
+{
+  "$comment": "Cursor hooks — place as <project>/.cursor/hooks.json (or ~/.cursor/hooks.json). afterFileEdit records touched files. Cursor's stop hook cannot block, so the stop command wraps rot-canary-stop.js: it converts the Claude-style {decision:'block', reason} output into Cursor's {followup_message} so the scan request is submitted as the next turn. Adjust the CoalMine path in both commands.",
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      { "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }
+    ],
+    "stop": [
+      { "command": "node -e \"const cp=require('child_process'),fs=require('fs');const r=cp.spawnSync(process.execPath,['C:/path/to/CoalMine/hooks/rot-canary-stop.js'],{input:fs.readFileSync(0),encoding:'utf8'});try{const o=JSON.parse(r.stdout);if(o&&o.reason)console.log(JSON.stringify({followup_message:o.reason}))}catch{}\"" }
+    ]
+  }
+}

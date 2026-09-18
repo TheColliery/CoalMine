@@ -1,0 +1,20 @@
+{
+  "_comment": "Claude Code WITHOUT the plugin route (e.g. skills installed via `node scripts/install.mjs claude`): merge this into ~/.claude/settings.json under \"hooks\" to get the rot-canary auto-cadence. Replace <REPO> with your CoalMine clone path. Keep any hooks you already have. Plugin installs do NOT need this — the plugin wires hooks automatically. Restart the session afterward.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node \"<REPO>\\hooks\\rot-canary-touch.js\"" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"<REPO>\\hooks\\rot-canary-stop.js\"" }
+        ]
+      }
+    ]
+  }
+}

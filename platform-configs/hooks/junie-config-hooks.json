@@ -1,0 +1,11 @@
+{
+  "$comment": "Junie hooks — conductor only: SessionStart is Junie's ONLY hook event (no per-tool/stop event exists), so touch/rot-canary-stop cannot wire here — run /rot-canary manually (e.g. before commit), per cadence.md. USER SCOPE ONLY: merge the \"hooks\" key into ~/.junie/config.json — a PROJECT-scope hooks block is IGNORED by Junie. Response/context-inject channel is UNVERIFIED — ships in the plain Claude-Code stdout shape here as a best-guess; flag if the offer never appears. Skills already install to .junie/skills/<name>/SKILL.md (node scripts/install.mjs junie) — unrelated to this hook wiring. The conductor's trailing FileCopy argument trims only the CC-plugin self-update offer + its update stamp (a file-copy install cannot run claude plugin update) — keep it; the output shape is unchanged. Adjust the CoalMine path.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" FileCopy" }]
+      }
+    ]
+  }
+}

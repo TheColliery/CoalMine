@@ -1,0 +1,226 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+# The ONE room-specific value in the CWK-058 change. DELIBERATELY WIDER than ci.yml's list and
+# the asymmetry is the point: CodeQL analyzes js/ts, so NO markdown anywhere needs a security
+# scan -- while ci.yml must still run on a SHIPPED markdown artifact, because verify.mjs checks
+# dist-sync. Two different questions, two different exempt sets; collapsing them into one
+# shared list would be wrong for whichever workflow lost.
+env:
+  DOCS_GLOBS: "*.md **/*.md LICENSE"
+
+# cancel-in-progress: TRUE -- a superseded CodeQL run simply never uploads its SARIF, and the
+# previous analysis stands; nothing is left half-written. The newer push analyzes the newer tree,
+# which is the state anyone cares about.
+#
+# THIS DISAGREES WITH scorecard.yml, WHICH QUEUES, AND THE DIFFERENCE IS STATED RATHER THAN LEFT
+# TO LOOK LIKE A CONTRADICTION (CWK-074). Both workflows upload a SARIF, so "uploads SARIF" is
+# NOT the discriminator. The discriminator is what ELSE the run publishes: CodeQL writes only to
+# GitHub code scanning, one upload of a complete document -- it either lands or it does not, and
+# not landing leaves the prior analysis intact. Scorecard additionally posts to the OpenSSF API,
+# a third-party endpoint outside our transaction, where a cancellation can leave a partially
+# applied publish. Same artifact type, different blast radius.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # DOC-ONLY DETECTION (CWK-058). Moved here from the workflow-level `paths-ignore` that
+  # used to sit on `on:`. VERIFIED AT SOURCE why it had to move (GitHub's own docs,
+  # content/actions/how-tos/manage-workflow-runs/skip-workflow-runs.md): "If a workflow is
+  # skipped due to path filtering ... then checks associated with that workflow will remain
+  # in a 'Pending' state. A pull request that requires those checks to be successful will be
+  # blocked from merging." A required check that never fires is not a saved minute, it is a
+  # branch that can never merge without an owner bypass -- which is exactly the bypass line
+  # every push to this repo has been echoing.
+  #
+  # DOCS_GLOBS is the only room-specific value here: an adopting room edits this DATA and
+  # nothing else. It must mirror what this workflow's own analysis genuinely does not need.
+  changes:
+    name: changed-paths
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+      files: ${{ steps.detect.outputs.files }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: detect
+        shell: bash
+        env:
+          DOCS_GLOBS: ${{ env.DOCS_GLOBS }}
+        run: |
+          set -euo pipefail
+          # `set -f` (noglob) is LOAD-BEARING, not hygiene. Without it, `for g in $DOCS_GLOBS`
+          # PATHNAME-EXPANDS the patterns against the checked-out tree before the loop runs, so
+          # `*.md` silently becomes "the .md files that happen to exist here" and the comparison
+          # is against filenames rather than patterns. Measured while building this: it made
+          # `commands/stats.md` match by accident and `skills/*/SKILL.md` not match at all.
+          # `set -f` stops the EXPANSION while leaving `case` pattern matching intact, which is
+          # exactly the split we need. (The bug could only ever cause OVER-running, never a
+          # silent skip, because of the fail-safe polarity below -- which is the reason that
+          # polarity is chosen rather than merely preferred.)
+          set -f
+          # FAIL-SAFE POLARITY, and it is the whole safety argument: anything this step
+          # cannot determine counts as CODE, never as docs-only. A wrong "docs-only" skips a
+          # real analysis silently; a wrong "code" costs one cheap job. Never invert this.
+          # RANDOM HEREDOC DELIMITER (CWK-074). A FIXED delimiter is forgeable BY A FILENAME:
+          # `git diff --name-only` emits paths VERBATIM (measured -- it does not quote `$(`,
+          # a backtick, or a bare `EOF`), so a PR adding a file named `EOF` terminates this
+          # heredoc early and the following lines are parsed as fresh $GITHUB_OUTPUT entries.
+          #
+          # WHAT THE OBVIOUS PAYLOAD ACTUALLY DOES, narrowed after INSPECT caught the first
+          # wording overstating it. Files named `EOF` and `code=false` do produce
+          # code=true / files<<EOF / EOF / code=false / <paths> / EOF in the file, and the
+          # runner does take the LATER key (actions/runner FileCommandManager.cs:
+          # `context.DeferredOutputs[pair.Key] = pair.Value;`). But the SAME parser throws
+          # `Invalid format` on a line carrying neither `=` nor `<<`, and this payload leaves
+          # two of them: emit()`s own trailing delimiter, written unconditionally, and any
+          # ordinary path. So `changes` FAILS -- and CWK-058`s guard then makes both required
+          # checks refuse. The result is a RED gate: DENIAL OF ANALYSIS, not a forged green.
+          #
+          # THE FIX STILL STANDS AT FULL STRENGTH, because a THROW-FREE forgery is reachable:
+          # every emitted line must merely parse, and a path containing `=` is a valid pair,
+          # while a file named `files<<EOF` consumes the orphaned delimiter. The defect is the
+          # forgeable delimiter itself, not the one payload that first exposed it.
+          #
+          # WHY RANDOM IS SUFFICIENT -- and the property is ORDERING, not ENTROPY. The
+          # delimiter is generated at RUN TIME, after the attacker`s filenames are already
+          # frozen in the commit, so they cannot name a file after a string that did not exist
+          # when they wrote it. `$RANDOM` not being a CSPRNG is therefore irrelevant here.
+          # Recorded so nobody later "strengthens" a property that never came from entropy.
+          delim="EOF_$(date +%s%N)_${RANDOM}${RANDOM}"
+          emit() { echo "code=$1" >> "$GITHUB_OUTPUT"; echo "files<<$delim" >> "$GITHUB_OUTPUT"; echo "${2:-}" >> "$GITHUB_OUTPUT"; echo "$delim" >> "$GITHUB_OUTPUT"; }
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "not a push event -- treating as code (fail-safe)"; emit true ""; exit 0
+          fi
+          before="${{ github.event.before }}"
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse -q --verify "${before}^{commit}" >/dev/null 2>&1; then
+            echo "no usable base commit -- treating as code (fail-safe)"; emit true ""; exit 0
+          fi
+          changed="$(git diff --name-only "$before" "${{ github.sha }}" || true)"
+          if [ -z "$changed" ]; then
+            echo "empty diff -- treating as code (fail-safe)"; emit true ""; exit 0
+          fi
+          code=false
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            matched=false
+            for g in $DOCS_GLOBS; do
+              # shellcheck disable=SC2254
+              case "$f" in $g) matched=true; break ;; esac
+            done
+            if [ "$matched" = false ]; then code=true; fi
+          done <<< "$changed"
+          echo "changed files:"; echo "$changed"
+          echo "code=$code"
+          emit "$code" "$changed"
+  analyze:
+    name: analyze (javascript)
+    needs: changes
+    # NOTE: the JOB is deliberately NOT `if:`-skipped. It must run so that a check-run named
+    # `analyze (javascript)` exists for the ruleset to evaluate -- and so that the honesty step
+    # below can SAY what happened. A skipped job reports a bare "skipped" with no explanation
+    # anywhere a reader will find it.
+    # `if: always()` for the SAME reason all-green checks its classifier: without it, a FAILED
+    # `changes` job leaves this job skipped, and a skipped required check satisfies the ruleset
+    # -- a green gate with neither a classification nor an analysis behind it. The job now
+    # always runs and decides for itself, refusing below if the classifier did not succeed.
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      # HONESTY STEP (CWK-058), FIRST so it is the first thing a reader sees. This check now
+      # fires on every push, so it must distinguish "analyzed and clean" from "analyzed
+      # nothing" without anyone reading a commit message.
+      - name: what this check actually did
+        # SHELL-INJECTION FIX (CWK-074). The changed-file list is ATTACKER-CONTROLLED by
+        # construction, and a `${{ }}` inside `run:` is TEXT-SUBSTITUTED before bash parses the
+        # line -- so a filename could close the quote and run commands in this job. MEASURED
+        # before fixing, by execution rather than reasoning: `x$(cmd).md`, `x`+chr(96)+`cmd`+chr(96)+`.md` and a
+        # double-quote breakout all RAN; the single-quote payload did not, because this site is
+        # double-quoted. Passing the value through `env:` makes it DATA -- an environment
+        # variable is never re-parsed as script text -- and all four payloads then went inert.
+        env:
+          CHANGED_FILES: ${{ needs.changes.outputs.files }}
+          # LOW-1: `outputs.code` was classified as "our own literal true/false" and that was
+          # WRONG -- a file named `code=x"; cmd; "` injects it through the same heredoc
+          # forgery, and the site below executes it (proven by execution, not argued). The
+          # random delimiter closes that TRANSITIVELY; passing the value as data closes it
+          # INTRINSICALLY, so this site stays safe even if the delimiter defence is ever
+          # weakened or removed. Defence in depth on a value that was mis-classified once.
+          CHANGED_CODE: ${{ needs.changes.outputs.code }}
+        run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            {
+              echo "### analyze (javascript): FAILED -- the path classifier did not run"
+              echo ""
+              echo "\`changed-paths\` finished as \`${{ needs.changes.result }}\`, so this job cannot"
+              echo "tell whether an analysis was needed. It refuses rather than reporting either way."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "changed-paths=${{ needs.changes.result }} -- refusing"
+            exit 1
+          fi
+          if [ "$CHANGED_CODE" = "true" ]; then
+            {
+              echo "### analyze (javascript): a real CodeQL analysis is REQUIRED for this push"
+              echo ""
+              echo "Non-doc paths changed, so init + analyze will run below. **Whether the SARIF"
+              echo "upload actually succeeded is reported by the outcome step at the end of this"
+              echo "job, not here** -- this step runs BEFORE those steps and cannot know."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### analyze (javascript): NO ANALYSIS RAN -- this is not a clean bill of health"
+              echo ""
+              echo "Every changed path is markdown or LICENSE, which CodeQL does not analyze, so"
+              echo "**no query was executed and no SARIF was uploaded.** The previous analysis for"
+              echo "this branch is unchanged and still stands; nothing new was scanned."
+              echo ""
+              echo "This check reports success only so the branch ruleset that requires"
+              echo "\`analyze (javascript)\` is satisfiable on a doc-only change. Read it as"
+              echo "\"there was nothing to analyze\", never as \"the analysis passed\"."
+              echo ""
+              echo "Changed paths:"
+              echo '```'
+              echo "$CHANGED_FILES"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
+      - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        id: analyze
+        if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
+      # DO NOT ASSERT AN ACTION RAN WITHOUT CONSULTING THE STEP THAT PERFORMS IT (CWK-074).
+      # The honesty step above runs FIRST -- deliberately, so a reader sees it first -- which
+      # means it cannot know whether the upload below succeeded. It used to claim "the SARIF
+      # was uploaded" anyway. That claim now comes from the step's own recorded outcome.
+      - name: what the analysis actually did
+        if: always() && needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
+        env:
+          ANALYZE_OUTCOME: ${{ steps.analyze.outcome }}
+        run: |
+          {
+            echo ""
+            echo "**Analysis outcome:** \`${ANALYZE_OUTCOME:-did-not-run}\` -- a SARIF upload is"
+            echo "claimed only when this reads \`success\`."
+          } >> "$GITHUB_STEP_SUMMARY"
