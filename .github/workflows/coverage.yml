@@ -1,0 +1,82 @@
+name: Coverage
+
+# REPORT-ONLY (UMB-120). Publishes one thing: a Cobertura line-coverage report that GitHub's
+# built-in code coverage renders on the pull request. It gates NOTHING -- no threshold, no
+# --test-coverage-* flag, and this workflow is never a required check (a coverage number
+# nothing enforces is a diagnostic; the retired 80% mandate is the standing proof that a
+# mandated number teaches agents mandates are decorative). Node's coverage flag is
+# Stability 1 EXPERIMENTAL, which is exactly why it must stay a report.
+#
+# Needs Code Quality enabled for THIS repository (Settings > Security > Code quality) --
+# that is a per-repository setting, not something a template can carry. Without it the
+# upload is expected to be refused (per the action's own README; not measured here).
+# fail-on-error is off, so a refusal shows as an ::error:: annotation in a green run
+# instead of a red one (a red run has to be fixed the next turn, and "coverage is not
+# switched on here yet" is not a defect in the code).
+#
+# Zero-dependency: the report comes from Node's own test runner (lcov reporter) and a
+# small converter that ships in this repo (.github/scripts/lcov-to-cobertura.mjs) -- no
+# npm install, no npx, no run-time fetch from another repo. Test files are discovered by
+# the runner's own glob, not by scripts/test.mjs's enumerated list (that runner spawns
+# `node --test` itself and cannot pass the coverage flags through) -- so a room's
+# coverage figure counts every *.test.{mjs,cjs,js} on disk; the gate in ci.yml stays the
+# enumerated, fail-loud authority on WHICH tests must run.
+#
+# cancel-in-progress: TRUE -- the upload is atomic per report: a killed run leaves the
+# PRIOR report standing (stale, never corrupt), the same class as codeql.yml. The
+# comparison baseline comes from the push-to-main run, so both triggers are needed.
+#
+# Every step is gated on scripts/test.mjs existing (same gate as ci.yml's Test step): a bare
+# "Use this template" click has no scripts/ yet, and this job then skips cleanly, never red.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: coverage (report only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      code-quality: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The PR HEAD commit, not the merge commit, so coverage line numbers map onto the diff.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up Node (skips cleanly until scripts/test.mjs exists)
+        if: hashFiles('scripts/test.mjs') != ''
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Run tests with coverage (skips cleanly until scripts/test.mjs exists)
+        if: hashFiles('scripts/test.mjs') != ''
+        run: |
+          mkdir -p coverage
+          node --test --experimental-test-coverage \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \
+            "**/*.test.mjs" "**/*.test.cjs" "**/*.test.js"
+      - name: Convert lcov to Cobertura XML
+        if: hashFiles('scripts/test.mjs') != ''
+        run: node .github/scripts/lcov-to-cobertura.mjs coverage/lcov.info coverage/cobertura.xml
+      # A fork PR's token cannot write code-quality, so it is skipped there (the action would
+      # skip it too; guarding here avoids spinning the step up at all).
+      - name: Upload coverage report
+        if: hashFiles('scripts/test.mjs') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/upload-code-coverage@1c15be36fc3733ba839b1dd643bd9556e4426dc1 # v1
+        with:
+          file: coverage/cobertura.xml
+          language: JavaScript
+          label: code-coverage/node-test
+          fail-on-error: false

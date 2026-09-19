@@ -22,5 +22,9 @@ skills-lock.json
 # a build artifact, zipped and attached to the GitHub Release, never committed
 dist-claude-ai/
 
+# Code-coverage output (lcov + Cobertura) written by .github/workflows/coverage.yml and by
+# running that workflow's command locally (UMB-124) -- generated, uploaded by the workflow, never committed
+coverage/
+
 # Working scratch — dispatch prompts, plans, audit JSON. Machine-local, never shipped.
 scratchpad/
