@@ -345,7 +345,7 @@ try {
       ['.claude-plugin/', 'JSON manifests; no comments, and their paths are gate-checked elsewhere'],
       ['.github/FUNDING.yml', 'GitHub config, no prose'],
       ['.github/dependabot.yml', 'GitHub config, no prose'],
-      ['.github/scripts/lcov-to-cobertura.mjs', 'byte-identical copy of the org template\'s converter (UMB-124); its comments cite the template\'s trees, and it must stay byte-identical, so a finding here could only be closed by editing a file this room does not own'],
+      ['.github/scripts/lcov-to-cobertura.mjs', 'byte-identical copy of the org template converter (UMB-124) on no walked surface (DEFAULT_SURFACE_PLAN has no .github/scripts/ row), so the accounting fails without a declaration; its comments hold 0 pointer candidates (re-derive: pointerCandidates over its // and * lines), so nothing is hidden today, and were it ever walked a finding could only be closed by editing a file this room does not own'],
       ['LICENSE', 'legal text, not ours to edit'],
       ['NOTICE', 'legal text, not ours to edit'],
       ['hooks/hooks.json', 'JSON carries no comments'],
