@@ -58,10 +58,17 @@ jobs:
           fetch-depth: 0
       - id: detect
         shell: bash
-        # UMB-154: every `${{ }}` reaches the shell through `env:`, never inside `run:` --
-        # Actions expands `${{ }}` by TEXT SUBSTITUTION before bash parses, so an env var is
-        # data and an inline expansion is code. Same rule, same names as CoalHearth's ci.yml
-        # classify step (the flock exemplar, INSPECT HIGH-1).
+        # UMB-154, THIS STEP ONLY: EVENT_NAME, EVENT_BEFORE and HEAD_SHA arrive as env vars
+        # (data), not as `${{ }}` inside `run:` (text-substituted before bash parses -- the
+        # mechanism is the CWK-074 note at `what this check actually did` below; GitHub's
+        # Actions secure-use guide prescribes the same shape for inline scripts). They are NOT
+        # attacker-shapeable: github.event_name is a fixed enum, github.event.before and
+        # github.sha are GitHub-generated SHAs. So this is consistency and defence in depth,
+        # not a hole closed -- the attacker-controlled input in this step is the changed-file
+        # list, and that is read at run time by `git diff`, never substituted. The names match
+        # CoalHearth's ci.yml `classify` step; the rule above does not depend on that file.
+        # DOCS_GLOBS is the pre-existing (CWK-058) step-level passthrough of the workflow-level
+        # value and is unrelated to this note.
         env:
           DOCS_GLOBS: ${{ env.DOCS_GLOBS }}
           EVENT_NAME: ${{ github.event_name }}

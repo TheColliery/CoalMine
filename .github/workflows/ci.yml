@@ -48,12 +48,17 @@ jobs:
       - id: detect
         # DOCS_GLOBS comes from the workflow-level `env:` above, which GitHub exports into
         # every step's shell -- no per-step re-declaration of IT, which would be one more place
-        # to drift. The block below adds only the three event values (different names, so it
-        # shadows nothing). UMB-154: every `${{ }}` reaches the shell through `env:`, never
-        # inside `run:` -- Actions expands `${{ }}` by TEXT SUBSTITUTION before bash parses, so
-        # an env var is data and an inline expansion is code. Same rule, same names as
-        # CoalHearth's ci.yml classify step (the flock exemplar, INSPECT HIGH-1).
+        # to drift.
         shell: bash
+        # UMB-154, THIS STEP ONLY: the three event values below arrive as env vars (data), not
+        # as `${{ }}` inside `run:` (text-substituted before bash parses -- the mechanism is
+        # the CWK-074 note at `what this check actually did` below; GitHub's Actions secure-use
+        # guide prescribes the same shape for inline scripts). They are NOT attacker-shapeable:
+        # github.event_name is a fixed enum, github.event.before and github.sha are
+        # GitHub-generated SHAs. So this is consistency and defence in depth, not a hole
+        # closed -- the attacker-controlled input in this step is the changed-file list, and
+        # that is read at run time by `git diff`, never substituted. The env names match
+        # CoalHearth's ci.yml `classify` step; the rule above does not depend on that file.
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_BEFORE: ${{ github.event.before }}
