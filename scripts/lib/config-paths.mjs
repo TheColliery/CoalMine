@@ -22,7 +22,9 @@ export const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
 // dir (a dotfiles repo at `~`). Never a project config: configure.mjs migrates
 // a "legacy project config" by moving + deleting it, which would move the
 // user's GLOBAL file out from under the hooks. Identity compare, both sides
-// through realpathSync.native (node/runtime.md §4); unresolvable = not the same.
+// through realpathSync.native (node/runtime.md §4). Unresolvable = "not the same file": the
+// PERMISSIVE answer, and on this WRITE side (the move + delete) the destructive one — unreachable,
+// because every caller runs `existsSync(p)` first and the global side must exist for a collision.
 export function isGlobalCfgFile(p) {
   try {
     return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));

@@ -13,7 +13,9 @@ const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
 // "legacy project config" would move the user's GLOBAL file. Identity compare
 // (node/runtime.md §4: both sides through realpathSync.native), evaluated only
 // once a candidate is known to exist, so a project with no such file pays
-// nothing; an unresolvable pair means "not the same file".
+// nothing. An unresolvable pair means "not the same file" — the PERMISSIVE answer, and on the
+// WRITE side (configure.mjs's move + delete) the destructive one; it is unreachable because
+// `existsSync(p)` precedes every call and the global side must exist for the collision to arise.
 function isGlobalCfgFile(p) {
   try {
     return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
@@ -247,13 +249,25 @@ const UNION_ARRAY_KEYS = {
   scanExcludePaths: { default: [] },
   disabledCanaries: { default: [], lower: true, legacy: 'disable' },
 };
+// UMB-133 findings-back (INSPECT MEDIUM-1): loadCfg takes an OPTIONAL base — the directory the
+// project-config walk starts from. No argument = `process.cwd()`, exactly as before: that is the
+// rot-canary-touch/-stop call shape (PostToolUse/Stop, whose cwd semantics are not this unit's
+// subject) and it must stay behaviour-identical. Only the conductor's AG and Gemini adapters pass
+// one — their hook process does NOT run in the workspace, so reading the project config from
+// `process.cwd()` there read a different project than the one the adapter reports on.
+// The cache is ONE entry keyed to the resolved base (`null` = the process cwd): asking for a
+// different base recomputes and replaces it, so a second base is never served the first base's
+// config; alternating bases thrash (one recompute each, still correct) rather than go stale.
 let _cfg;
-function loadCfg() {
-  if (_cfg !== undefined) return _cfg;
+let _cfgBase;
+function loadCfg(base) {
+  const key = base === undefined ? null : path.resolve(base);
+  if (_cfg !== undefined && _cfgBase === key) return _cfg;
+  _cfgBase = key;
   _cfg = null;
   try {
     const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'));
-    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(process.cwd())));
+    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(base === undefined ? process.cwd() : base)));
     if (globalCfg || projectCfg) {
       const merged = {};
       for (const src of [globalCfg, projectCfg]) {

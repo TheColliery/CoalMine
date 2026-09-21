@@ -208,3 +208,75 @@ test('UMB-133: at root == home the nested legacy path is the GLOBAL config, neve
   assert.ok(r.stdout.includes('[CoalMine]'), 'the conductor still runs');
   assert.equal(migrationNotes(r).length, 0, `the global file must not be called a legacy PROJECT config, got:\n${r.stdout}`);
 });
+
+// --- INSPECT MEDIUM-1 (findings-back): on AG and Gemini the hook process does NOT run in the
+// workspace, so the config that takes effect must be the WORKSPACE's — the same root the adapter
+// already hands to buildLines and the rule-root scan. Every AG/Gemini test above passes a payload
+// path EQUAL to the spawn cwd, which is exactly why the divergence had no coverage; here they differ.
+// `elsewhere` = the directory the hook process is spawned in (a git dir, no config of its own).
+function split(t) {
+  const { home, proj: ws } = sandbox(t);
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfgpath-else-'));
+  t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(elsewhere, '.git'));
+  return { home, ws, elsewhere };
+}
+const agRun = (cwd, home, ws) => run(cwd, home, { args: ['PreInvocation'], input: JSON.stringify({ conversationId: `umb133-${path.basename(ws)}`, workspacePaths: [ws] }) });
+const gemRun = (cwd, home, ws) => run(cwd, home, { args: ['SessionStart'], input: JSON.stringify({ cwd: ws }) });
+const agText = (r) => JSON.parse(r.stdout.trim()).injectSteps[0].ephemeralMessage;
+const gemText = (r) => JSON.parse(r.stdout.trim()).hookSpecificOutput.additionalContext;
+
+for (const [name, runIt, text] of [['Antigravity', agRun, agText], ['Gemini', gemRun, gemText]]) {
+  test(`UMB-133 (split root) ${name}: a nested legacy config in the WORKSPACE is READ when the hook process runs elsewhere — and the notice is then true`, (t) => {
+    const { home, ws, elsewhere } = split(t);
+    put(ws, '.claude/.coalmine.json', { ...QUIET, skipOnboarding: true });
+    const r = runIt(elsewhere, home, ws);
+    assert.equal(r.status, 0);
+    assert.equal(r.stderr, '');
+    const msg = text(r);
+    assert.ok(msg.includes('[CoalMine]'));
+    assert.ok(!msg.includes(ONBOARDING), `the workspace config must take effect (onboarding dropped), got:\n${msg}`);
+    assert.ok(msg.includes('config migration notice') && msg.includes('.claude/.coalmine.json'), 'and the notice that says "still read" is TRUE');
+  });
+
+  test(`UMB-133 (split root) ${name}: the hook process's own cwd config NEVER bleeds into a different workspace`, (t) => {
+    const { home, ws, elsewhere } = split(t);
+    put(elsewhere, '.coalmine.json', { enableConductor: false });   // decoy at the PROCESS cwd: reading it would silence the emit
+    const r = runIt(elsewhere, home, ws);
+    assert.ok(r.stdout.includes('[CoalMine]'), `the workspace has no config, so the conductor must speak, got:\n${r.stdout}`);
+  });
+
+  test(`UMB-133 (split root) ${name}: a workspace config gate (enableConductor:false) silences it — the gates follow the workspace too`, (t) => {
+    const { home, ws, elsewhere } = split(t);
+    put(ws, '.claude/coal/coalmine.json', { enableConductor: false });
+    const r = runIt(elsewhere, home, ws);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '', 'a workspace that opted out of the conductor stays opted out on every adapter');
+  });
+}
+
+// --- the cache: loadCfg(base) is keyed to the base (one entry), so a second base can never be
+// served the first base's config, and the no-arg default is still the process cwd — the
+// rot-canary-touch/-stop call shape. Exercises the PARTIAL itself (the source of truth all three
+// hooks are synced from), in-process, with HOME and cwd sandboxed and restored.
+test('UMB-133: loadCfg(base) never returns another base\'s config, and loadCfg() still reads the process cwd', (t) => {
+  const src = fs.readFileSync(path.join(repo, 'hooks', '_shared', 'node-config.js'), 'utf8');
+  const { loadCfg } = new Function('fs', 'os', 'path', `${src}\nreturn { loadCfg };`)(fs, os, path);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfgpath-lc-home-'));
+  const A = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfgpath-lc-a-'));
+  const B = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfgpath-lc-b-'));
+  const saved = { cwd: process.cwd(), HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  t.after(() => {
+    process.chdir(saved.cwd);
+    for (const k of ['HOME', 'USERPROFILE']) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    for (const d of [home, A, B]) fs.rmSync(d, { recursive: true, force: true });
+  });
+  process.env.HOME = home; process.env.USERPROFILE = home;
+  for (const [d, lang] of [[A, 'A'], [B, 'B']]) { fs.mkdirSync(path.join(d, '.git')); put(d, '.coalmine.json', { language: lang }); }
+  process.chdir(A);
+  assert.equal(loadCfg().language, 'A', 'no arg = the process cwd (unchanged for the touch/stop hooks)');
+  assert.equal(loadCfg(B).language, 'B', 'an explicit base reads THAT base');
+  assert.equal(loadCfg().language, 'A', 'and the default afterwards is still the process cwd, never the last explicit base');
+  assert.equal(loadCfg(B).language, 'B');
+  assert.equal(loadCfg(A).language, 'A');
+});

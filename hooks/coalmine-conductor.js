@@ -41,7 +41,9 @@ const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
 // "legacy project config" would move the user's GLOBAL file. Identity compare
 // (node/runtime.md §4: both sides through realpathSync.native), evaluated only
 // once a candidate is known to exist, so a project with no such file pays
-// nothing; an unresolvable pair means "not the same file".
+// nothing. An unresolvable pair means "not the same file" — the PERMISSIVE answer, and on the
+// WRITE side (configure.mjs's move + delete) the destructive one; it is unreachable because
+// `existsSync(p)` precedes every call and the global side must exist for the collision to arise.
 function isGlobalCfgFile(p) {
   try {
     return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
@@ -275,13 +277,25 @@ const UNION_ARRAY_KEYS = {
   scanExcludePaths: { default: [] },
   disabledCanaries: { default: [], lower: true, legacy: 'disable' },
 };
+// UMB-133 findings-back (INSPECT MEDIUM-1): loadCfg takes an OPTIONAL base — the directory the
+// project-config walk starts from. No argument = `process.cwd()`, exactly as before: that is the
+// rot-canary-touch/-stop call shape (PostToolUse/Stop, whose cwd semantics are not this unit's
+// subject) and it must stay behaviour-identical. Only the conductor's AG and Gemini adapters pass
+// one — their hook process does NOT run in the workspace, so reading the project config from
+// `process.cwd()` there read a different project than the one the adapter reports on.
+// The cache is ONE entry keyed to the resolved base (`null` = the process cwd): asking for a
+// different base recomputes and replaces it, so a second base is never served the first base's
+// config; alternating bases thrash (one recompute each, still correct) rather than go stale.
 let _cfg;
-function loadCfg() {
-  if (_cfg !== undefined) return _cfg;
+let _cfgBase;
+function loadCfg(base) {
+  const key = base === undefined ? null : path.resolve(base);
+  if (_cfg !== undefined && _cfgBase === key) return _cfg;
+  _cfgBase = key;
   _cfg = null;
   try {
     const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'));
-    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(process.cwd())));
+    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(base === undefined ? process.cwd() : base)));
     if (globalCfg || projectCfg) {
       const merged = {};
       for (const src of [globalCfg, projectCfg]) {
@@ -635,9 +649,30 @@ function djb2(s) {
   return h.toString(36);
 }
 
-function agMain(cfg, updateMode) {
+// UMB-133 findings-back (INSPECT MEDIUM-1). On AG and Gemini the hook process does NOT run in the
+// workspace, so the workspace is named by the stdin PAYLOAD — and it is the workspace's config that
+// must take effect, not the hook process's own cwd's. main() therefore reads the payload ONCE, up
+// front, derives the base here, and hands it to loadCfg(base): the config GATES (enableConductor,
+// disabledCanaries, updateMode) and the config the adapter's buildLines uses then come from the same
+// root the adapter already reports on. Deferring the load — rather than re-loading inside each
+// adapter — is what makes the gates follow the workspace too; a re-load in the adapter would leave
+// `enableConductor:false` in the workspace config silently ignored while the notice beside it
+// claimed the config was honoured. A payload that names no workspace yields undefined = the process
+// cwd, unchanged. AG: `workspacePaths[0]` (the current spec's field, re-derived 2026-07-23), `cwd`
+// as the legacy fallback; Gemini: the payload's `cwd`.
+function readPayload() {
   let input = null;
   try { input = JSON.parse(fs.readFileSync(0, 'utf8').trim()); } catch {}
+  return input;
+}
+function payloadBase(mode, input) {
+  if (!input || typeof input !== 'object') return undefined;
+  const ws = mode === 'SessionStart' ? undefined : (Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined);
+  const b = (typeof ws === 'string' && ws) || (typeof input.cwd === 'string' && input.cwd) || undefined;
+  return b;
+}
+
+function agMain(cfg, updateMode, input) {
   if (!input || typeof input !== 'object') return; // no payload → no session key → skip silently (Phoenix #12)
   // conversationId = the CURRENT AG spec's documented session field (re-derived
   // 2026-07-23); the rest stay defensive legacy fallbacks (transcriptPath is
@@ -731,10 +766,7 @@ function agMain(cfg, updateMode) {
   // names the workspace (the hook process's own cwd is the hooks.json dir on AG, not the
   // workspace): `workspacePaths[0]` = the current spec's field (re-derived 2026-07-23),
   // `cwd` kept as the legacy fallback.
-  const ws = Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined;
-  const base = (typeof ws === 'string' && ws)
-    || (typeof input.cwd === 'string' && input.cwd)
-    || process.cwd();
+  const base = payloadBase('PreInvocation', input) || process.cwd();
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
@@ -763,15 +795,13 @@ function agMain(cfg, updateMode) {
 // 2026-07-15) — distinct from AG's flat {"additionalContext": ...}: the bug
 // this adapter fixes, since the old code routed Gemini through agMain, whose
 // flat shape Gemini's SessionStart hook silently drops.
-function geminiMain(cfg, updateMode) {
+function geminiMain(cfg, updateMode, input) {
   // Honor the payload's cwd exactly like agMain (one-flock): the hook process's
   // own cwd is not guaranteed to be the workspace; a stdin payload cwd is
   // authoritative when present. Absent/garbage stdin → fall back to
   // process.cwd() (a no-op when Gemini supplies no cwd). Resolved ONCE, shared
   // by the onboarding check (buildLines) and KIND 2 below.
-  let input = null;
-  try { input = JSON.parse(fs.readFileSync(0, 'utf8').trim()); } catch {}
-  const base = (input && typeof input.cwd === 'string' && input.cwd) || process.cwd();
+  const base = payloadBase('SessionStart', input) || process.cwd();
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
@@ -786,8 +816,14 @@ function main() {
   let updateMode = 'ask';
   let updateCheckDays = 14;
   let cfg = null;
+  // The adapters (Gemini 'SessionStart', AG = any other truthy argv, but not 'FileCopy') take their
+  // workspace from the stdin payload, read once here; CC / FileCopy have no payload base and read
+  // process.cwd() exactly as before.
+  const mode = process.argv[2];
+  const adapter = mode && mode !== 'FileCopy';
+  const payload = adapter ? readPayload() : null;
   try {
-    cfg = loadCfg();
+    cfg = loadCfg(adapter ? payloadBase(mode, payload) : undefined);
     if (cfg && (cfg.enableConductor === false || cfg.conductor === false)) return; // legacy key honored
     const disabled = cfg && (cfg.disabledCanaries !== undefined ? cfg.disabledCanaries : cfg.disable); // legacy key honored
     if (Array.isArray(disabled) && (disabled.includes('conductor') || disabled.includes('all'))) return;
@@ -802,7 +838,7 @@ function main() {
 
   // Gemini mode (argv === 'SessionStart', see the Gemini adapter above) —
   // checked FIRST, before the generic-truthy AG branch below.
-  if (process.argv[2] === 'SessionStart') { geminiMain(cfg, updateMode); return; }
+  if (process.argv[2] === 'SessionStart') { geminiMain(cfg, updateMode, payload); return; }
 
   // File-copy mode (argv === 'FileCopy' — the platform-configs for Copilot CLI /
   // Kiro / Augment / Devin CLI / Junie): platforms whose hook OUTPUT contract is
@@ -822,7 +858,7 @@ function main() {
   // AG mode: any OTHER truthy argv → the Antigravity adapter (once-per-session
   // marker guard + injectSteps emit). The config gates above already ran.
   // Never 'SessionStart' or 'FileCopy' — those argv values are claimed above.
-  if (process.argv[2] && !fileCopy) { agMain(cfg, updateMode); return; }
+  if (process.argv[2] && !fileCopy) { agMain(cfg, updateMode, payload); return; }
 
   // CC / file-copy path: process.cwd() IS the workspace here (unlike AG/Gemini, whose hook
   // process may start elsewhere) — the onboarding check reads it directly, same cwd source
