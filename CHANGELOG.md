@@ -47,6 +47,20 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
     name both shapes, in order.
   - **PowerShell fallback: not ported, and the gap is named** (`alt/powershell/README.md`): the twins still read only
     `<gitroot>/.coalmine.json`, so the second legacy shape is one more config they do not see.
+- **On the Antigravity and Gemini adapters the conductor read the project config from the hook process's own working
+  directory, not from the workspace it was reporting on (UMB-133).** The workspace is named by the hook's stdin payload
+  (Antigravity: `workspacePaths[0]`, falling back to the payload's `cwd`; Gemini: the payload's `cwd`). The conductor now
+  reads that workspace's project config, and **the config gates follow it** -- `enableConductor`, `disabledCanaries`,
+  `updateMode` -- not only the new migration / `IGNORED` lines. Before, the gates and the config both came from wherever
+  the hook process happened to start, while the lines beside them were computed for the workspace, so a workspace's
+  own config had no effect when the two differed. **User-visible:** on those two adapters, a workspace whose config sets
+  `enableConductor: false`, a `disabledCanaries` list or an `updateMode` now takes effect where it silently did not;
+  and a config sitting only in the hook process's start directory no longer governs a different workspace.
+  - **Unchanged:** Claude Code and the file-copy platforms (they read from the process directory as before), a payload that
+    names no workspace (falls back to the process directory), and `rot-canary`'s own hooks (they still read from the
+    process directory).
+  - **The safer-value clamp is unaffected:** it runs inside the config merge for whatever directory is read, so a
+    workspace config can quieten `updateMode` but never escalate it past the global layer.
 - **A Coal* uninstall could delete a repo's own TRACKED hook files (CWK-096).** `uninstallGitHooks()`
   resolves `core.hooksPath` (correct since `d1c917f`) but then unlinked whatever it found there with
   no tracked-ness check -- in any repo whose `core.hooksPath` points at a versioned directory (this
