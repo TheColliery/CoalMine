@@ -35,7 +35,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 
 ## Fix mode (choice-gated)
 
-**Before deciding fix mode:** read `~/.claude/.coalmine.json` then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`; project wins per key); neither present → `autoFixMode` = `interactive`.
+**Before deciding fix mode:** read `~/.claude/.coalmine.json` then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`; project wins per key); neither present → `autoFixMode` = `interactive`.
 
 **Standing consent:** honor `.coalmine.json` `autoFixMode` as the pre-chosen option (the config IS the chosen option) — `off` = report only, no menu · `safe` = apply safe/reversible fixes automatically (still checkpoint → build/test → revert if red) · `interactive` (default) = present the menu below.
 

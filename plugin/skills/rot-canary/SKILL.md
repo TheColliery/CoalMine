@@ -8,7 +8,7 @@ description: >-
 
 **Language:** Generate EVERYTHING at runtime in the user's language — questions, answer options, menu labels, recommendations, report narrative. Detect from their messages; never default to English just because this file is English. English is allowed only for technical terms: commands, paths, code identifiers, severity labels (CRITICAL/HIGH/MEDIUM/LOW), and tier names (Light/Standard/Heavy).
 
-**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`), project wins per key. A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
+**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`), project wins per key. A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
 
 Scan code for rot. Report CONFIRMED findings. Fix on request.
 
@@ -37,7 +37,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 
 ## Fix mode (choice-gated)
 
-**Before deciding fix mode:** read `~/.claude/.coalmine.json` then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`; project wins per key); neither present → `autoFixMode` = `interactive`.
+**Before deciding fix mode:** read `~/.claude/.coalmine.json` then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`; project wins per key); neither present → `autoFixMode` = `interactive`.
 
 **Standing consent:** honor `.coalmine.json` `autoFixMode` as the pre-chosen option (the config IS the chosen option) — `off` = report only, no menu · `safe` = apply safe/reversible fixes automatically (still checkpoint → build/test → revert if red) · `interactive` (default) = present the menu below.
 

@@ -4,7 +4,49 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+- **A project config written where the walk does not read it is now REPORTED, not silently ignored (UMB-133).** The session-start
+  conductor checks a fixed, closed list of plausible wrong homes -- `<project>/.agents/.coalmine.json`,
+  `<project>/.gemini/.coalmine.json`, `<project>/coal/coalmine.json` (agent dir dropped) and
+  `<project>/.claude/coalmine.json` (`coal/` dropped) -- and, if one exists, adds one context line
+  `IGNORED: <path> is not a config path; canonical = .claude/coal/coalmine.json` for the agent to relay (settings in
+  that file have NO effect). It rides the channel each mode already has (Claude Code session context, Antigravity
+  `injectSteps`, Gemini `additionalContext`) -- no new channel, nothing on stderr (Phoenix #13). The probe is
+  `existsSync` on those fixed paths: no directory walk, and the text around each path is constant, so a cloned repo
+  cannot steer what the line says. **HONEST BOUND: a config anywhere outside that list is not reported** -- this is
+  a report of the likely typos, not a search of the project.
+  - **Cost, stated:** a project still on a legacy path (see Deprecated) now carries one extra context line per session
+    start until it migrates (roughly 40 tokens).
+
+### Deprecated
+- **Both legacy per-project config paths -- `<project>/.claude/.coalmine.json` and `<project>/.coalmine.json` (UMB-133).**
+  - **Marker + replacement:** both are marked DEPRECATED in the README's Configure section, which names the canonical path
+    `<project>/.claude/coal/coalmine.json` verbatim as the replacement. A canonical file always wins over both.
+  - **Window:** deprecated at this MINOR, removable no earlier than the next MAJOR -- this series' own SemVer boundary
+    (`scripts-quality.md` §3), not a calendar count. Until then both keep being read, exactly as before.
+  - **Owner:** CoalMine. `node scripts/configure.mjs` moves either legacy file to the canonical path on its next write
+    (nothing is moved on a mere read).
+  - **Channel:** this entry and the README note. **No hook prints a deprecation warning** -- Phoenix #13 keeps hooks
+    silent on stdout/stderr, so nothing appears in the terminal. The one runtime signal is the conductor's single
+    migration-notice context line described under Added, sent only when the config actually read is a legacy one.
+
 ### Fixed
+- **A project config at `<project>/.claude/.coalmine.json` was silently ignored (UMB-133).** It was never a candidate in the
+  per-project read order -- only the root dotfile was honoured as legacy -- so a config written where a user reasonably
+  expects it had no effect and nothing said so. The order is now canonical (own agent dir, then `.agents`, then `.gemini`),
+  then `<project>/.claude/.coalmine.json`, then `<project>/.coalmine.json`; first found wins, and the merge, the safer-value
+  clamp and the global layer are untouched. `configure.mjs` and `install.mjs` honour both shapes too (a writer blind to the
+  nested one would have written a fresh canonical file that shadowed it and silently dropped every setting in it).
+  - **A guard the change needed:** when the project root IS the home directory, `<root>/.claude/.coalmine.json` is the
+    GLOBAL config. It is compared by identity (both sides through `realpathSync.native`) and never treated as a project
+    config, so the walk does not anchor at `~` and `configure.mjs` does not migrate -- move and delete -- the file the
+    hooks read as the global layer.
+  - **The cascade wording on eight agent-instruction surfaces named only ONE legacy shape** -- the shared language header
+    rendered into all nine skills, `rot-canary`'s fix-mode rail, `/coalmine:stats`, `/coalmine:update` and the four
+    `platform-configs/*.template` files -- so an agent following it would have skipped a config the hook reads. All eight now
+    name both shapes, in order.
+  - **PowerShell fallback: not ported, and the gap is named** (`alt/powershell/README.md`): the twins still read only
+    `<gitroot>/.coalmine.json`, so the second legacy shape is one more config they do not see.
 - **A Coal* uninstall could delete a repo's own TRACKED hook files (CWK-096).** `uninstallGitHooks()`
   resolves `core.hooksPath` (correct since `d1c917f`) but then unlinked whatever it found there with
   no tracked-ness check -- in any repo whose `core.hooksPath` points at a versioned directory (this
