@@ -3,6 +3,12 @@
 // suite drives itself: the user remembers no commands, the agent offers the
 // right canary at the right moment, and every costly action asks first.
 // Plain stdout becomes session context. Fail-silent, no network, ~0ms.
+//
+// ponytail: 860 lines at declaration — a Claude Code hook SHIPS AND RUNS AS ONE STANDALONE
+// FILE (build-plugin.mjs INLINES the hooks/_shared partials into it; a split would need a
+// runtime require of a sibling, which breaks the copy-one-file install, or a bundler, which
+// Phoenix #2 forbids). The over-run is the cost of that shipping model — the file is one
+// hook's SessionStart path across its three platform adapters. N is HISTORY; `wc -l` is live.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -20,6 +26,28 @@ const CONDUCTOR_TAIL = [
 ];
 
 // <coalmine-shared: node-config> — synced from hooks/_shared/node-config.js by build-plugin; edit the partial, not this block
+// UMB-133 (2026-09-21): the two LEGACY per-project shapes, in read order — first
+// existing wins, both AFTER the canonical three. Before this the nested shape
+// was no candidate at all, so a config a user reasonably wrote there was
+// silently walked past (the same class as CoalTipple's `fableConsent` that sat
+// dead for 14 days). The flock agrees on both shapes; the migration notice and
+// the README's `### Deprecated` entry name the canonical path.
+const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
+
+// GLOBAL-FILE GUARD: `<root>/.claude/.coalmine.json` IS the global
+// config when `root` is the home dir (a dotfiles repo at `~`, or a non-git dir
+// under it). It must never be taken for a PROJECT config: read as one it is
+// merely the global layer twice (harmless), but a writer that migrates a
+// "legacy project config" would move the user's GLOBAL file. Identity compare
+// (node/runtime.md §4: both sides through realpathSync.native), evaluated only
+// once a candidate is known to exist, so a project with no such file pays
+// nothing; an unresolvable pair means "not the same file".
+function isGlobalCfgFile(p) {
+  try {
+    return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
+  } catch { return false; }
+}
+
 // The three per-agent-dir shapes were added by the namespace campaign
 // (#69+#39, owner-designated 2026-08-08) alongside the LEGACY dotfile: a
 // project configured ONLY through the new shape (no `.git` present) would
@@ -28,6 +56,12 @@ const CONDUCTOR_TAIL = [
 // law) already names for a wrongly-anchored state root. Additive-only: each
 // new marker can only make the walk stop LOWER/narrower, `.git` is checked
 // first and still wins wherever it is present.
+// UMB-133 adds the nested legacy shape for the SAME reason: a project
+// configured ONLY through `.claude/.coalmine.json` (no `.git`) would otherwise
+// anchor nowhere. It is checked separately below, NOT in this list, because it
+// is the one marker that can be the GLOBAL file (see isGlobalCfgFile) — and at
+// the home dir that would make the fallback WIDER than `startDir`, the opposite
+// of "only narrower".
 const ROOT_MARKERS = [
   '.git',
   '.claude/coal/coalmine.json', '.agents/coal/coalmine.json', '.gemini/coal/coalmine.json',
@@ -38,6 +72,10 @@ function findGitRoot(startDir) {
   let dir = path.resolve(startDir);
   while (true) {
     if (ROOT_MARKERS.some((m) => fs.existsSync(path.join(dir, m)))) {
+      return dir;
+    }
+    const nested = path.join(dir, LEGACY_CONFIGS[0]);
+    if (fs.existsSync(nested) && !isGlobalCfgFile(nested)) {
       return dir;
     }
     const parent = path.dirname(dir);
@@ -62,8 +100,11 @@ function findGitRoot(startDir) {
 //      rather than needing a separate check.
 //   2. Other known agent dirs, fixed order: `.claude` -> `.agents` ->
 //      `.gemini` (first FOUND wins).
-//   3. LEGACY: <project>/.<skill-dotfile>.json at the project root (today's
-//      shape) — read normally, no breakage for an existing user.
+//   3. LEGACY, in this order, first FOUND wins (UMB-133 — both shapes, the
+//      whole flock agrees): <project>/.claude/.<skill>.json, then
+//      <project>/.<skill>.json — read normally, no breakage for an existing
+//      user; the conductor names the canonical path on a legacy hit and names
+//      a config at a non-candidate path as IGNORED (see buildLines).
 // WRITE target = where the config was found; absent everywhere, the FIRST
 // agent dir the project already has ON DISK (`.claude` -> `.agents` ->
 // `.gemini`), never a bare "own dir" default — a project that only uses
@@ -75,7 +116,7 @@ function findGitRoot(startDir) {
 const AGENT_DIR_ORDER = ['.claude', '.agents', '.gemini'];
 function projectConfigCandidates(root) {
   const candidates = AGENT_DIR_ORDER.map((d) => path.join(root, d, 'coal', 'coalmine.json'));
-  candidates.push(path.join(root, '.coalmine.json')); // LEGACY, always last
+  for (const l of LEGACY_CONFIGS) candidates.push(path.join(root, l)); // LEGACY, always last, in order
   return candidates;
 }
 // Fresh-default path when NO config exists anywhere (kept in sync by hand
@@ -95,7 +136,7 @@ function ownDirDefault(root) {
 }
 function projectConfigPath(root) {
   const candidates = projectConfigCandidates(root);
-  for (const c of candidates) { if (fs.existsSync(c)) return c; }
+  for (const c of candidates) { if (fs.existsSync(c) && !isGlobalCfgFile(c)) return c; }
   return ownDirDefault(root); // nothing found anywhere -- own-dir is both the read and write target
 }
 
@@ -118,7 +159,7 @@ function readCfgFile(file) {
 // overlaid per key by the project config (project wins). Per-project config
 // now lives under an agent dir (namespace campaign #69+#39, owner-designated
 // 2026-08-08) — see `projectConfigPath`'s own header above for the full read
-// order and the LEGACY root-dotfile fallback it still honors.
+// order and the two LEGACY fallbacks it still honors (UMB-133).
 // __proto__/constructor/prototype keys are dropped at merge (an untrusted
 // project config must not pollute the prototype). Cached — one disk pass per
 // invocation (Phoenix #3: budget the work, not the process).
@@ -522,7 +563,48 @@ function hasVerifiedStamp(roots) {
 function buildLines(cfg, base) {
   let skipOnboarding = false;
   try { skipOnboarding = !!(cfg && cfg.skipOnboarding === true) || hasVerifiedStamp(ruleRoots(findGitRoot(base))); } catch {}
-  return skipOnboarding ? [...CONDUCTOR_HEAD, ...CONDUCTOR_TAIL] : [...CONDUCTOR_HEAD, ONBOARDING, ...CONDUCTOR_TAIL];
+  let notes = [];
+  try { notes = configPathNotes(findGitRoot(base)); } catch {}
+  return skipOnboarding ? [...CONDUCTOR_HEAD, ...notes, ...CONDUCTOR_TAIL] : [...CONDUCTOR_HEAD, ONBOARDING, ...notes, ...CONDUCTOR_TAIL];
+}
+
+// UMB-133 (2026-09-21) — REPORT, never skip. A user who writes a project config
+// where they reasonably expect it and gets no effect is told so, by name, on
+// the one sanctioned channel this hook already has (buildLines feeds all three
+// modes — CC stdout, AG injectSteps, Gemini additionalContext; Phoenix #13: no
+// new channel, no stderr). Two notes, both constant text around a FIXED path
+// from the lists below — never a name taken from the directory, so a cloned
+// repo cannot steer what this line says:
+//   * a LEGACY hit -> one migration notice naming the canonical path;
+//   * a file at a NON-candidate path -> `IGNORED: <path> is not a config path;
+//     canonical = .claude/coal/coalmine.json`.
+// SCOPE = a report, not a crawl: existsSync on a closed list (the roots the
+// walk already reads), no readdir, no walk. NON_CANDIDATE_CFGS is the bounded
+// set of plausible wrong homes: the dotfile shape under the two agent dirs
+// that are NOT candidates for it, a bare `coal/coalmine.json` at the root (an
+// agent dir dropped), and `.claude/coalmine.json` (the `coal/` dir dropped).
+// Entries are filtered against the live candidate list, so a shape promoted to
+// a candidate later can never be reported as ignored. Phoenix #3: ~10 stats on
+// a SessionStart hook, not a PostToolUse one. Fail-silent: a probe that throws
+// costs the conductor nothing (the caller's try/catch, plus this one).
+const CANONICAL_CFG = '.claude/coal/coalmine.json';
+const NON_CANDIDATE_CFGS = ['.agents/.coalmine.json', '.gemini/.coalmine.json', 'coal/coalmine.json', '.claude/coalmine.json'];
+function configPathNotes(root) {
+  const notes = [];
+  try {
+    const rel = (p) => path.relative(root, p).split(path.sep).join('/');
+    const candidates = projectConfigCandidates(root);
+    const found = candidates.find((c) => fs.existsSync(c) && !isGlobalCfgFile(c));
+    if (found && LEGACY_CONFIGS.includes(rel(found))) {
+      notes.push(`- CoalMine config migration notice (relay once, in the user's language): ${rel(found)} is the LEGACY config location — still read, but move it to ${CANONICAL_CFG}.`);
+    }
+    const known = new Set(candidates.map(rel));
+    for (const p of NON_CANDIDATE_CFGS) {
+      if (known.has(p) || !fs.existsSync(path.join(root, p))) continue;
+      notes.push(`- CoalMine config: IGNORED: ${p} is not a config path; canonical = ${CANONICAL_CFG} (relay to the user in their language — settings in it have NO effect).`);
+    }
+  } catch {}
+  return notes;
 }
 
 // --- Antigravity adapter -----------------------------------------------------

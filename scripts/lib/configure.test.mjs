@@ -55,6 +55,44 @@ test('configure writes values, migrates legacy/retired keys, and MOVES a legacy-
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+// UMB-133: the nested legacy shape is a READ candidate, so the CLI writer must see it too — a
+// writer that did not would write a fresh canonical file that then SHADOWS it, silently
+// dropping every setting the user had. Found -> merged into -> migrated -> old file removed.
+// (HOME is a SEPARATE sandbox here: runConfigure() folds HOME into the project dir, and at
+// project == home the nested path IS the global config — that case is the next test.)
+test('UMB-133 configure finds a config at <root>/.claude/.coalmine.json, keeps its settings, and MOVES it to the canonical home', (t) => {
+  const dir = freshProject();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfg-home-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  const nested = path.join(dir, '.claude', '.coalmine.json');
+  fs.mkdirSync(path.dirname(nested), { recursive: true });
+  fs.writeFileSync(nested, JSON.stringify({ skipOnboarding: true, updateCheckDays: 30 }), 'utf8');
+  const r = spawnSandboxed(process.execPath, [CONFIGURE, '--language', 'th'], { cwd: dir, sandboxDir: home });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const cfg = JSON.parse(fs.readFileSync(path.join(dir, NEW_REL), 'utf8'));
+  assert.strictEqual(cfg.language, 'th', 'the requested change is applied');
+  assert.strictEqual(cfg.skipOnboarding, true, 'the user\'s existing settings SURVIVE the migration (not shadowed by a fresh file)');
+  assert.strictEqual(cfg.updateCheckDays, 30);
+  assert.ok(!fs.existsSync(nested), 'the nested legacy file is removed once the canonical home holds the migrated config');
+  assert.match(r.stdout, /Migrated the project config from .*\.coalmine\.json to /);
+});
+
+// The destructive edge the guard exists for: at project == home the nested path is the GLOBAL
+// config, and the migration is move + DELETE. Here runConfigure() puts HOME on the project dir,
+// which is exactly that layout.
+test('UMB-133 configure at project == home never migrates the GLOBAL config out from under the hooks', (t) => {
+  const dir = freshProject(); // HOME == this dir under runConfigure()
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const global = path.join(dir, '.claude', '.coalmine.json');
+  fs.mkdirSync(path.dirname(global), { recursive: true });
+  fs.writeFileSync(global, JSON.stringify({ updateMode: 'off' }), 'utf8');
+  const r = runConfigure(['--language', 'th'], dir);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(global), 'the global config file is still exactly where the hooks read it');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(global, 'utf8')), { updateMode: 'off' }, 'and untouched');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, NEW_REL), 'utf8')).language, 'th', 'the project write landed at the canonical home instead');
+});
+
 test('configure fails loud (exit 1) when the existing legacy config is malformed, backs it up NEXT TO where it was found, migrates the rebuild, and still removes the legacy file', () => {
   const dir = freshProject();
   try {

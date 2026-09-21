@@ -38,6 +38,18 @@ function mkTmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cm-hooktest-'));
 }
 
+// UMB-133: a sandbox whose walk is ANCHORED inside it. runHook fakes HOME/USERPROFILE to the
+// sandbox, so the hook cannot tell the operator's REAL ~/.claude/.coalmine.json (an ancestor
+// of os.tmpdir() on a dev box) from any other project's nested legacy config: unanchored, the
+// findGitRoot walk climbs to it and reads a stranger's config as the project layer. A test
+// whose assertion depends on WHICH root the walk resolves (rule roots, the project config
+// layer) uses this instead of the bare mkTmp(); the ~100 that do not care are unchanged.
+function mkAnchoredTmp() {
+  const dir = mkTmp();
+  fs.mkdirSync(path.join(dir, '.git'));
+  return dir;
+}
+
 // Mirrors hooks/coalmine-conductor.js's djb2 (test-local — the hook doesn't
 // export it). Lets a test plant the EXACT marker path the hook would compute
 // for a given session key, to test the EEXIST branch directly.
@@ -79,7 +91,7 @@ test('conductor drops only the onboarding line when skipOnboarding is set', () =
 });
 
 test('conductor auto-suppresses onboarding once a coalmine: verified stamp exists anywhere in the rule roots (HOOK-LEAN, no manual skipOnboarding needed)', () => {
-  const tmp = mkTmp();
+  const tmp = mkAnchoredTmp();
   try {
     const rulesDir = path.join(tmp, '.claude', 'rules');
     fs.mkdirSync(rulesDir, { recursive: true });
@@ -1979,7 +1991,7 @@ test('touch hook records a MEMORY.md edit as .memmoved marker, never into .touch
 });
 
 test('stop hook routes the memory-drift note to systemMessage, decoupled from the loud scan report (board #82: additionalContext at Stop eats -p results)', () => {
-  const tmp = mkTmp();
+  const tmp = mkAnchoredTmp();
   try {
     fs.writeFileSync(path.join(tmp, 'MEMORY.md'), '# project memory\n'); // project root uses the convention
     plantCodeSession(tmp, 'MD2');
@@ -2004,7 +2016,7 @@ test('stop hook routes the memory-drift note to systemMessage, decoupled from th
 });
 
 test('stop hook drift-only case (code edited then deleted, no MEMORY update) emits ONLY the quiet note, no loud scan block', () => {
-  const tmp = mkTmp();
+  const tmp = mkAnchoredTmp();
   try {
     fs.writeFileSync(path.join(tmp, 'MEMORY.md'), '# project memory\n');
     // Record a code edit whose file no longer exists at stop time (edited then deleted) —
