@@ -23,7 +23,7 @@ Per-stack patterns and the mock-strategy vocabulary: read `references/checks.md`
 
 In Agent Context, after the report, present via `ask_question`:
 
-- **Apply safe refactoring:** extract hardcoded initializations into constructor params (DI) + add interface definitions. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → apply → build + tests → auto-revert if newly red.
+- **Apply safe refactoring:** extract hardcoded initializations into constructor params (DI) + add interface definitions. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → record a build+test BASELINE → apply → build + tests → auto-revert only if a NEW failure appeared versus the baseline.
 - **Let me pick:** user selects specific refactoring moves.
 - **Report only:** exit unchanged.
 

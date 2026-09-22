@@ -15,7 +15,7 @@ Skills live in `.github/skills/` (one `SKILL.md` each). Invoke by keyword; each 
 | `/scale-canary` | loops over growing data, DB queries, caches, event-loop code |
 | `/drift-canary` | DB schema, API contract, serialized payload, required config changes |
 
-**Proactive:** when the conversation moves into one of these areas, OFFER the matching canary via `askQuestions` (Run now / Queue / Skip) — do not run unasked: deps → supply-chain · schema/API → drift · async/retry → resilience · hot loops/queries → scale · tests/coupling → testability · logging/metrics → telemetry.
+**Proactive:** when the conversation moves into one of these areas, OFFER the matching canary via the host's supported question tool — VS Code agent mode: `#tool:vscode/askQuestions`; Copilot CLI: `ask_user`; otherwise a numbered text menu — (Run now / Queue / Skip). Do not run unasked: deps → supply-chain · schema/API → drift · async/retry → resilience · hot loops/queries → scale · tests/coupling → testability · logging/metrics → telemetry.
 
 **First encounter (gold-standard onboarding):** if this project has NO CoalMine-stamped rules yet (no `coalmine: verified` stamp anywhere in the rules home), offer `/gold-standard` ONCE this session via your question tool (Run now / Queue / Skip) — it sets the project's golden rules. Respect a Skip for the rest of the session.
 

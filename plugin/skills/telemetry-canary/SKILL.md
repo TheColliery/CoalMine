@@ -25,7 +25,7 @@ Per-stack grep patterns and right/wrong shapes per category: read `references/ch
 
 In Agent Context, after the report, present via `ask_question`:
 
-- **Apply safe logs:** insert error logging into empty catch blocks (standard logger template) + stack-trace mapping. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → apply → build + tests → auto-revert if newly red.
+- **Apply safe logs:** insert error logging into empty catch blocks (standard logger template) + stack-trace mapping. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → record a build+test BASELINE → apply → build + tests → auto-revert only if a NEW failure appeared versus the baseline.
 - **Let me pick:** user selects which telemetry gaps to resolve.
 - **Report only:** exit unchanged.
 
@@ -73,5 +73,5 @@ Per-platform Heavy levers + Heavy-run durability: read `references/escalation.md
 
 **Entanglement:** after the report, if confirmed findings fall in another canary's domain, offer it once via `ask_question` (one line, max one offer): perf/N+1 → scale-canary · contract/serialization/config → drift-canary · failure-path/retry → resilience-audit · logging/metrics → telemetry-canary · coupling/DI → testability-canary · dependency/CVE → supply-chain-audit · unverified version-sensitive claim → source-grounding · missing/stale rule → gold-standard.
 
-**Self error-report:** if this skill misbehaves (contradictory instruction, broken procedure, wrong finding class), OFFER to file it at https://github.com/HetCreep/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit, never include unapproved code or paths.
+**Self error-report:** if this skill misbehaves (contradictory instruction, broken procedure, wrong finding class), OFFER to file it at https://github.com/TheColliery/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit, never include unapproved code or paths.
 

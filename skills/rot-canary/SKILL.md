@@ -39,7 +39,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 
 **Standing consent:** honor `.coalmine.json` `autoFixMode` as the pre-chosen option (the config IS the chosen option) — `off` = report only, no menu · `safe` = apply safe/reversible fixes automatically (still checkpoint → build/test → revert if red) · `interactive` (default) = present the menu below.
 
-After any scan report in an interactive session — manual run OR hook-nudged auto-scan — you **MUST** present this menu via `ask_question` (skip only when findings are zero, no user is present, or `autoFixMode` pre-decided above):
+After any scan report where the session is interactive (a user is present) — manual run OR hook-nudged auto-scan — you **MUST** present this menu via `ask_question` (skip only when findings are zero or `autoFixMode` pre-decided above; a non-interactive hook-nudged scan is report-only, per the Hook Context rule below):
 
 - **Apply safe fixes:** mechanical, fully reversible edits only (dead imports, commented-out blocks, formatting). Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git exists) → apply → build + tests → auto-revert if newly red.
 - **Let me pick:** list findings; user selects.

@@ -5,16 +5,60 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 ## [Unreleased]
 
 ### Changed
-- **CWK-121 (b) — the shipped `.claude-plugin/plugin.json` `homepage`/`repository` fields and
-  `coalmine-conductor.js`'s self-error-report URL still pointed at the pre-transfer
-  `github.com/HetCreep/CoalMine` address (redirects, but the dist should carry the live one). Both now
-  read `github.com/TheColliery/CoalMine`. `plugin.json`'s `author.name` ("HetCreep") is left unchanged —
-  it names the person, not the repo address.**
+- **CWK-121 (b) — the shipped `.claude-plugin/plugin.json` `homepage`/`repository` fields,
+  `coalmine-conductor.js`'s self-error-report URL, `commands/update.md`'s latest-tag check, and the
+  shared `escalation-footer.md`'s self-error-report URL (renders into all 9 canary `SKILL.md` bodies)
+  still pointed at the pre-transfer `github.com/HetCreep/CoalMine` address (redirects, but the dist
+  should carry the live one). All now read `github.com/TheColliery/CoalMine`. `plugin.json`'s
+  `author.name` ("HetCreep") is left unchanged — it names the person, not the repo address.**
 
-<!-- CWK-120's 12 CodeRabbit-row fixes (rows 1/4/8/9/11/16/17/18/19/20/21/25) touch no file build-plugin.mjs
-copies into plugin/ -- per scripts-quality.md §3 ("a change that does not reach the shipped dist does
-not get a version at all... no [Unreleased] CHANGELOG entry either"), they are NOT listed here. Full
-per-row disposition: scratchpad/cwk120/build-note.md. -->
+### Fixed
+- **CWK-120 row 10 — `commands/update.md`'s latest-tag check could select an annotated tag's peeled
+  `^{}` deref record instead of the release tag itself**, since `git ls-remote --tags | head -1` has
+  no guarantee the plain and `^{}` lines for one tag sort adjacently. Filtered with
+  `awk '!/\^\{\}$/ { print; exit }'` before selecting — test: none (a shell-pipeline correctness fix,
+  no test harness covers `commands/*.md` prose).
+- **CWK-120 row 5 — `rot-canary/SKILL.md`'s Fix-mode menu condition was self-contradictory**: it opened
+  "in an interactive session" and then separately listed "no user is present" as a skip clause inside
+  that already-interactive scope. Reworded to one non-overlapping condition, matching the shared
+  `escalation-footer.md` Hook Context rule's own vocabulary — no behavior change, the menu still offers
+  on any interactive session (manual or hook-nudged) and stays report-only when non-interactive — test:
+  none (a legibility fix, no test harness reads SKILL.md prose for this condition).
+- **CWK-120 row 6 — `scale-canary/SKILL.md`'s Fix-mode checkpoint instructed `git stash`/`git commit`
+  as an ad-hoc backup**, which can hide (`stash`) or include (`commit`) unrelated staged/unstaged user
+  work sitting in the same repo. Changed to: back up only the touched file(s), or use an isolated
+  worktree — never `git stash`/`git commit` — test: none (a prose safety-instruction fix).
+- **CWK-120 row 7 — `telemetry-canary/SKILL.md` and `testability-canary/SKILL.md`'s Fix-mode
+  "auto-revert if newly red" had no baseline to compare against**, so the agent could not tell a
+  post-edit failure was NEW versus already-failing before the edit. Both now record a build+test
+  baseline before applying, and auto-revert only on a failure that is new versus that baseline — test:
+  none (a prose safety-instruction fix).
+- **CWK-120 row 23 — `rot-canary/references/tooling.md`'s Python row listed bare `python -W error`
+  as a project check**, which runs no project code, tests, or static analysis (it starts the REPL in
+  an interactive shell). Replaced with the project's own test command + `-W error` (e.g.
+  `python -m pytest -W error`) — test: none (a reference-table content fix).
+- **CWK-120 row 14 — the Antigravity auto-cadence status in `rot-canary/references/cadence.md`
+  (shipped) cited only the 2026-07-12 pilot's live fire, omitting the 2026-08-04 isolated re-test that
+  recorded ZERO fires on a real AG 2.0 install.** `platform-configs/hooks/antigravity-hooks.json`'s own
+  `$comment` already discloses both measurements; the shipped cadence reference and the root README's
+  `primed` definition and `platform-configs/hooks/README.md`'s AG row (neither ships into `plugin/`)
+  now say the same: firing is UNRESOLVED, not verified, and a reader is told to probe their own copy
+  before relying on it — test: none (an accuracy fix; no fabricated resolution of the contested fact).
+- **CWK-120 rows 22/24 — four `coalmine: verified` reference stamps re-verified content-first, not
+  merely re-dated** (`drift-canary/references/checks.md`, `gold-standard/references/method.md`,
+  `telemetry-canary/references/checks.md`, `supply-chain-audit/references/tooling.md`, all `revalidate
+  90d`, all overdue since 2026-09-10): each file's content was re-read in full and confirmed still
+  accurate before its stamp moved to `2026-09-22`. `skills/_shared/references/escalation.md` (`revalidate
+  30d`, overdue since 2026-08-22) is left EXPIRED and undisposed here — its per-platform Heavy-tier
+  levers (Cursor Max Mode, Amp Oracle, GitHub Copilot `/fleet`, …) are exactly the fast-moving
+  version-sensitive claims this room's own doctrine says need a live source-grounding pass, not a
+  same-unit rubber-stamp; the file's own text already tells a reader to verify live rather than trust
+  it. Routed upward as a pending decision — test: none (stamp-and-content maintenance).
+
+<!-- CWK-120's remaining 6 CodeRabbit-row fixes (rows 2/3/12/13/15) touch platform-configs/ only, which
+build-plugin.mjs does not copy into plugin/ -- per scripts-quality.md §3 ("a change that does not reach
+the shipped dist does not get a version at all... no [Unreleased] CHANGELOG entry either"), they are NOT
+listed here. Full per-row disposition: scratchpad/cwk120/docs-note.md. -->
 
 ## [3.20.0] - 2026-09-21
 

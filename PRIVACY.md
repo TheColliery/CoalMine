@@ -9,4 +9,4 @@
 - **Error reports are manual.** When a component misbehaves, your agent may OFFER to open a pre-filled GitHub issue form; nothing is ever submitted automatically, and you see and edit the full contents before sending.
 - **Local files only.** Per-project state lives in files you can read: the config (`<project>/.claude/coal/coalmine.json` by default — or another known agent dir, or a deprecated legacy `<project>/.claude/.coalmine.json` / `<project>/.coalmine.json` (the latter from before 2026-08-08) — see README's Configure section for the full read order), `.coalmine-manifest.json` (per install target), and temp session markers that self-clean within 7 days.
 
-Questions: open an issue at <https://github.com/HetCreep/CoalMine/issues>.
+Questions: open an issue at <https://github.com/TheColliery/CoalMine/issues>.

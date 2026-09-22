@@ -23,7 +23,7 @@ Per-ORM N+1 shapes, per-stack blocking patterns, and what NOT to flag: read `ref
 
 In Agent Context, after the report, present via `ask_question`:
 
-- **Apply safe optimizations:** async-ify synchronous file ops; insert `finally` blocks for stream closing. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → apply → build + tests → auto-revert if newly red.
+- **Apply safe optimizations:** async-ify synchronous file ops; insert `finally` blocks for stream closing. Each fix: checkpoint (copy the touched file(s) aside, or use an isolated worktree — never `git stash`/`git commit`, which can hide or include unrelated staged/unstaged user work) → apply → build + tests → auto-revert if newly red.
 - **Let me pick:** user selects specific optimizations.
 - **Report only:** exit unchanged.
 

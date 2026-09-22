@@ -16,8 +16,8 @@ Save the pick (no forced check — the chosen mode drives future sessions):
 
 **auto** (the version CHECK — the only token spend, standing-consented):
 1. Get the latest published tag (graceful — never assume git/network is present):
-   `git ls-remote --tags --sort=-v:refname https://github.com/HetCreep/CoalMine.git | head -1`
-   (parse the trailing `vX.Y.Z`; ignore `^{}` deref lines).
+   `git ls-remote --tags --sort=-v:refname https://github.com/TheColliery/CoalMine.git | awk '!/\^\{\}$/ { print; exit }'`
+   (the `awk` filter drops the peeled `^{}` deref record before selecting; parse the trailing `vX.Y.Z`).
 2. Compare to the installed version in `.claude-plugin/plugin.json` (the plugin cache copy, or the repo copy if working from source).
 3. If a newer tag exists → OFFER (don't auto-run): `claude plugin update coalmine@coalmine` then `/reload-plugins`. If current → "up to date." 
 4. **Graceful fallback (no-external-assumption):** if `git ls-remote` fails, git is missing, or there is no network, say "Can't check for updates offline — update manually with `claude plugin update coalmine@coalmine` when you're back online" and stop. Never crash, never assume a version.

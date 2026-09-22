@@ -1,4 +1,4 @@
-<!-- coalmine: verified 2026-06-12 · revalidate 90d · definition file for supply-chain-audit -->
+<!-- coalmine: verified 2026-09-22 · revalidate 90d · definition file for supply-chain-audit -->
 # Supply-chain audit — per-ecosystem tooling
 
 | Ecosystem | vuln | license | outdated |
