@@ -41,7 +41,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 
 After any scan report where the session is interactive (a user is present) — manual run OR hook-nudged auto-scan — you **MUST** present this menu via `ask_question` (skip only when findings are zero or `autoFixMode` pre-decided above; a non-interactive hook-nudged scan is report-only, per the Hook Context rule below):
 
-- **Apply safe fixes:** mechanical, fully reversible edits only (dead imports, commented-out blocks, formatting). Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git exists) → apply → build + tests → auto-revert if newly red.
+- **Apply safe fixes:** mechanical, fully reversible edits only (dead imports, commented-out blocks, formatting). Each fix: checkpoint (copy the touched file(s) aside, or use an isolated worktree — never `git stash`/`git commit`, which can hide or include unrelated staged/unstaged user work) → apply → build + tests → auto-revert if newly red.
 - **Let me pick:** list findings; user selects.
 - **Report only:** exit unchanged.
 

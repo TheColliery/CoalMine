@@ -28,7 +28,7 @@ Expand/contract migration rules, per-format serialization fallbacks, and the bre
 
 In Agent Context, after the report, present via `ask_question`:
 
-- **Apply safe deprecations:** mark endpoints/methods deprecated + add backward-compatibility mapping wrappers. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → apply → build + tests → auto-revert if newly red.
+- **Apply safe deprecations:** mark endpoints/methods deprecated + add backward-compatibility mapping wrappers. Each fix: checkpoint (copy the touched file(s) aside, or use an isolated worktree — never `git stash`/`git commit`, which can hide or include unrelated staged/unstaged user work) → apply → build + tests → auto-revert if newly red.
 - **Let me pick:** user selects specific compatibility fixes.
 - **Report only:** exit unchanged.
 

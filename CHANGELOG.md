@@ -54,6 +54,24 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
   version-sensitive claims this room's own doctrine says need a live source-grounding pass, not a
   same-unit rubber-stamp; the file's own text already tells a reader to verify live rather than trust
   it. Routed upward as a pending decision — test: none (stamp-and-content maintenance).
+- **CWK-120 SAME-BATCH CLASS SWEEP — the two overclaims rows 2/15 and row 6 fixed on one surface each
+  stood uncorrected on their siblings, against this room's own MUST-class ONE FLOCK ONE COLOR rule
+  (`AGENTS.md`, consequence (1): a fix is swept to every sibling surface IN THE SAME BATCH).**
+  Re-derived both surface sets fresh by grep rather than trusting the prior unit's own count (which
+  undercounted the second class by one). **The config-cascade "project wins per key" overclaim** —
+  checked against `hooks/_shared/node-config.js`'s real clamp code, not restated by feel — corrected
+  on `platform-configs/copilot-instructions.template`, `platform-configs/cursor.mdc.template`,
+  `commands/stats.md`, `commands/update.md`, and the shared `skills/_shared/language-header.md`
+  (renders into all 9 canary `SKILL.md` bodies — the highest-blast-radius instance of this class).
+  **`skills/rot-canary/SKILL.md:38`'s own "project wins per key" is DIFFERENT and left alone**: it
+  scopes to `autoFixMode` alone, which is genuinely unclamped (not one of the 6 `SAFER_ENUM`/
+  `UNION_ARRAY_KEYS` keys) — the claim is true as written for that one key, not the same overclaim.
+  **The `git stash`/`git commit` checkpoint data-integrity hazard** — corrected on
+  `drift-canary/SKILL.md`, `rot-canary/SKILL.md`, `telemetry-canary/SKILL.md`, and
+  `testability-canary/SKILL.md` (4 siblings, one more than the prior unit's own estimate of 3 —
+  `drift-canary` was the uncounted instance). Same correction text as the exemplar fix in both
+  classes, no rewording en route — test: none (prose safety/precedence-instruction fixes, no test
+  harness reads SKILL.md/command prose for this content).
 
 <!-- CWK-120's remaining 6 CodeRabbit-row fixes (rows 2/3/12/13/15) touch platform-configs/ only, which
 build-plugin.mjs does not copy into plugin/ -- per scripts-quality.md §3 ("a change that does not reach
