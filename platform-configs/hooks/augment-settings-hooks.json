@@ -1,0 +1,21 @@
+{
+  "$comment": "Augment Code hooks — a MERGE SNIPPET: merge the \"hooks\" key into ~/.augment/settings.json (user) or <workspace>/.augment/settings.json (project). PascalCase events, same matcher+hooks[] entry shape as Claude Code. Verified 2026-07-15: SessionStart injects context via stdout (matches the plain Claude-Code shape below) · PreToolUse can block via exit 2 · Stop can prevent stopping — but the exact Stop response JSON schema is UNVERIFIED, so rot-canary-stop.js ships in its plain Claude-Code {\"decision\":\"block\",\"reason\"} shape here as a best-guess; flag if Stop doesn't actually re-prompt. Install the canaries to .augment/skills/<name>/SKILL.md (node scripts/install.mjs augment). The conductor's trailing FileCopy argument trims only the CC-plugin self-update offer + its update stamp (a file-copy install cannot run claude plugin update) — keep it; the output shape is unchanged. Adjust the CoalMine path in every command.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" FileCopy", "timeout": 10 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"", "timeout": 10 }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"", "timeout": 10 }]
+      }
+    ]
+  }
+}

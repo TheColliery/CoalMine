@@ -1,0 +1,1 @@
+{ "lightIntent": "Spot coupling check, key classes only", "standardIntent": "Balanced decoupling audit, multi-category", "heavyIntent": "Full 5-category audit + adversarial verify" }

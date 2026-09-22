@@ -1,0 +1,30 @@
+name: markdownlint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.md'
+
+permissions:
+  contents: read
+
+# cancel-in-progress: TRUE -- a lint run reads files and publishes nothing, so a superseded
+# run has no partial state to leave behind.
+concurrency:
+  group: markdownlint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
+        continue-on-error: true  # report-only: a focused markdownlint cleanup is a separate pass
+        with:
+          globs: '**/*.md'

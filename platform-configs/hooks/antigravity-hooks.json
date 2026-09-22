@@ -1,0 +1,19 @@
+{
+  "$comment": "\u26a0 2026-08-04 RE-TEST DISAGREES WITH THE 2026-07-12 PILOT BELOW, READ THIS FIRST: a controlled isolation test on a real AG 2.0 install (global AND workspace hooks.json, a PostToolUse hook matched two ways — wildcard '*' and the exact tool name — plus a no-matcher PreInvocation hook) recorded ZERO fires across a real tool call in a fresh session, while an identical probe command run directly from the OS wrote its file fine (so the shell/command layer was never in question). This is a FIRING failure, not the already-known delivery-not-validated gap noted below. Do not assume this file's auto-cadence half is running on your install — drop a benign probe command (e.g. append-to-file) into a copy of this config and confirm it actually writes before relying on it; the 9 canary SKILL.md contracts are unaffected either way (they load and run on invocation regardless of hooks.json). Neither measurement has been retracted; both are recorded so a reader sees the disagreement rather than only the older, rosier one. Antigravity 2.0 hooks — full CoalMine auto-cadence (conductor + rot-canary). Copy into <workspace>/.agents/hooks.json (project) or ~/.gemini/config/hooks.json (global); both load. Replace C:/path/to/CoalMine with your clone (or the ~/.gemini/config/skills install) path. Shape rules (empirically verified 2026-07-12 + antigravity.google/docs/hooks): the top-level NAMED GROUP wrapper is required (events at top level fail to load); commands must run an EXTERNAL script — never inline node -e; PreToolUse/PostToolUse take the nested matcher shape, simple events (PreInvocation/Stop) take a flat handler array. The trailing event-name argument switches the CoalMine hooks to AG mode (once-per-session conductor guard on PreInvocation, injectSteps/ephemeralMessage emit — the current PreInvocation output contract; the Stop hook emits the explicit no-op {} since the current engine has no Stop inject channel; input payload is camelCase protojson: conversationId, workspacePaths[], transcriptPath) — keep it. AG never fires SessionStart, so the conductor rides the first PreInvocation. Tool names in the PostToolUse matcher are best-effort — verify against your install's tool list; a wrong name just means no recording (safe degrade). Delivery of the injected context (injectSteps/ephemeralMessage) to the agent is emit-per-spec, not validated end-to-end — and per the 2026-08-04 re-test above, firing itself is now in question too.",
+  "coalmine": {
+    "PreInvocation": [
+      { "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" PreInvocation", "timeout": 30 }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|write_file|replace_file_content|replace|edit_file|edit|multi_edit",
+        "hooks": [
+          { "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\" PostToolUse", "timeout": 30 }
+        ]
+      }
+    ],
+    "Stop": [
+      { "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\" Stop", "timeout": 30 }
+    ]
+  }
+}

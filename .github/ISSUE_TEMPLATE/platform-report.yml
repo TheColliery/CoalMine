@@ -1,0 +1,54 @@
+name: "Platform field report"
+description: "Report how CoalMine behaves on your AI agent (works / breaks / partially works)"
+title: "[platform] <agent name>: <one-line result>"
+labels: ["platform-report"]
+body:
+  - type: dropdown
+    id: agent
+    attributes:
+      label: AI agent
+      options:
+        - Claude Code
+        - Cursor
+        - Windsurf
+        - GitHub Copilot
+        - Cline
+        - Gemini CLI
+        - Goose
+        - Amp
+        - Junie
+        - Codex CLI
+        - Antigravity
+        - Other (name it below)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CoalMine version + agent version
+      placeholder: "CoalMine v3.20.1 · Cursor 2.4"  # version-pin: tracks .claude-plugin/plugin.json — bump on release
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: What were you testing?
+      options:
+        - Skill discovery (agent sees the 9 skills)
+        - Skill behavior (tier menu, fix menu, language mirroring)
+        - rot-canary auto-cadence hooks
+        - Installer / uninstaller
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened
+      description: "What worked, what didn't — paste exact output/screenshots where possible."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected (if different)

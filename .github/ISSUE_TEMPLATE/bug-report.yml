@@ -1,0 +1,36 @@
+name: "Bug report"
+description: "A canary, hook, or script misbehaves"
+title: "[bug] <component>: <one-line summary>"
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - a canary skill (which one — say below)
+        - hooks (rot-canary-touch / rot-canary-stop)
+        - installer (install.mjs)
+        - verify gate (verify.mjs)
+        - plugin / marketplace packaging
+        - docs
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CoalMine version + platform
+      placeholder: "v3.20.1 · Claude Code (plugin) on Windows 11"  # version-pin: tracks .claude-plugin/plugin.json — bump on release
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce + what happened
+      description: "Exact commands/inputs and exact output. For skill behavior, the prompt you used."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior

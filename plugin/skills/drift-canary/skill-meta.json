@@ -1,0 +1,1 @@
+{ "lightIntent": "Spot contract check, key interfaces only", "standardIntent": "Balanced drift audit, multi-category", "heavyIntent": "Full 5-category audit + adversarial compatibility verify" }

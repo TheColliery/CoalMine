@@ -1,0 +1,30 @@
+# Internal governance + design notes — machine-local, never shipped to the public repo
+CLAUDE.md
+MEMORY*.md
+AGENTS.md
+.claude/
+.agents/
+
+# Generated SkillSpector scan reports (provenance recorded in SECURITY.md; the raw report is not shipped)
+skillspector-*
+
+# Editor/OS junk — untracked, so it can otherwise sit inside plugin/ and trip the
+# dist-vs-CHANGELOG gate (scripts/lib/dist-changelog.mjs) with no real dist change behind it
+.DS_Store
+*.swp
+Thumbs.db
+
+
+# CC platform-generated skill lockfile (machine-local, never ship)
+skills-lock.json
+
+# claude.ai ZIP-packaging staging dir (scripts/build-claude-ai-zips.mjs, board #40) —
+# a build artifact, zipped and attached to the GitHub Release, never committed
+dist-claude-ai/
+
+# Code-coverage output (lcov + Cobertura) written by .github/workflows/coverage.yml and by
+# running that workflow's command locally (UMB-124) -- generated, uploaded by the workflow, never committed
+coverage/
+
+# Working scratch — dispatch prompts, plans, audit JSON. Machine-local, never shipped.
+scratchpad/

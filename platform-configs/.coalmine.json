@@ -1,0 +1,167 @@
+{
+  // =========================================================================
+  // SECTION 1: SYSTEM & INTERACTIVE BEHAVIORS (พฤติกรรมและการโต้ตอบของเอเจนต์)
+  // =========================================================================
+
+  // ## The language to use for conductor prompts, agent interactions, and canary nudge messages.
+  // # Setting type: String (auto, th, en, ja, zh, es)
+  // # Default value: auto (heuristic detection based on environment and docs)
+  "language": "auto",
+
+  // ## Enable or disable the always-on conductor rules injection at session start.
+  // # Setting type: Boolean
+  // # Default value: true
+  "enableConductor": true,
+
+  // ## Whether to completely skip the gold-standard onboarding rules offer at session start.
+  // # Setting type: Boolean
+  // # Default value: false
+  "skipOnboarding": false,
+
+  // ## Default execution tier to override the recommendation rubric for all canary scans.
+  // # Setting type: String (Light, Standard, Heavy, auto)
+  // # Default value: auto (interpreted dynamically by the AI Agent based on the skill's rubric)
+  "defaultTier": "auto",
+
+  // =========================================================================
+  // SECTION 2: AUTOMATIC SCAN & FILE WATCH LIMITS (การสแกนและขีดจำกัดไฟล์)
+  // =========================================================================
+
+  // ## rot-canary auto-scan mode (auto = scan touched files at session end, manual = on request only, off = fully disabled).
+  // # Setting type: String (auto, manual, off)
+  // # Default value: auto
+  "rotCanaryMode": "auto",
+
+  // ## Quiet session-end advisory when code changed this session but no MEMORY.md was updated. Not part of the rot-canary scan report and never blocks; needs a MEMORY.md at the project root to ever fire (and shares rot-canary's auto mode gate).
+  // # Setting type: Boolean
+  // # Default value: true
+  "memoryDriftNudge": true,
+
+  // ## Maximum number of edited files allowed to be scanned automatically at session end.
+  // # Setting type: Int32
+  // # Default value: 10
+  "autoScanFileCap": 10,
+
+  // ## Number of files to slice the scan to when edited files exceed the cap.
+  // # Setting type: Int32
+  // # Default value: 5
+  "autoScanFileCapSlice": 5,
+
+  // ## Maximum file size in KB for editor tripwire smells check (e.g. merge conflict markers).
+  // # Setting type: Int32
+  // # Default value: 100 (100KB)
+  "tripwireMaxFileSizeKb": 100,
+
+  // ## Maximum line count for a source file before flagging it as a code-health warning/smell.
+  // ## Exempt: test files, and files declaring the over-run with a top-of-file "ponytail:/waiver: <N> lines" comment.
+  // # Setting type: Int32
+  // # Default value: 800 (800 lines)
+  "tripwireMaxLines": 800,
+
+  // ## Number of days before temporary session files in the OS temp directory are flagged as stale and swept.
+  // # Setting type: Int32 (minimum 1 — 0 would sweep every temp incl. the current session's own marker)
+  // # Default value: 7
+  "tempSweepStaleDays": 7,
+
+  // ## Custom list of file extensions that the touch hook monitors (empty array uses defaults).
+  // # Setting type: Array of Strings
+  // # Default value: []
+  "watchedExtensions": [],
+
+  // ## Path fragments/globs (* wildcard; use "/" as the separator — it works on every OS)
+  // ## skipped by the session-end auto-scan — for throwaway LAB TOOLING ONLY (scratch
+  // ## probes, one-shot harnesses). Shipped/tracked source is never excluded by this key.
+  // ## Filtered before the autoScanFileCap slice. Global + project layers UNION (a
+  // ## project may only ADD exclusions, never remove a global one).
+  // # Setting type: Array of Strings
+  // # Default value: []
+  "scanExcludePaths": [],
+
+  // ## scanEverything — the OVERRIDE. true bypasses EVERY scan-scope cut for the run:
+  // ## scanExcludePaths is ignored and autoScanFileCap is not applied. The antivirus shape
+  // ## — keep your exclusions for everyday use, and turn this on when you want a scanner
+  // ## with no holes in it. Positive polarity: true = MORE scanning.
+  // ## It does NOT re-enable a disabled canary (disabledCanaries / rotCanaryMode off|manual
+  // ## are an on/off switch, not a scope cut), and it does NOT reach watchedExtensions or
+  // ## the tmpdir exclusion — those decide what the touch hook RECORDS, which happens
+  // ## before a stop-time key can be read — nor the tripwireMaxFileSizeKb cap (an over-cap
+  // ## file IS recorded and IS scanned; only its edit-time pre-flag is skipped).
+  // ## CASCADE: this key is CLAMPED safer-value-wins. A project-level true is forced back
+  // ## to false unless your GLOBAL layer also says true — so a cloned repo cannot make your
+  // ## machine run a full scan. Your own global true is never clamped by a project's silence.
+  // # Setting type: Boolean
+  // # Default value: false
+  "scanEverything": false,
+
+  // =========================================================================
+  // SECTION 3: UPDATE & REVALIDATION CADENCES (ความถี่การอัปเดตกฎและคำนิยาม)
+  // =========================================================================
+
+  // ## How CoalMine keeps itself current, surfaced by the conductor at session start (consent-gated, silent until due).
+  // # ask    = ask once how you want updates handled, then save your pick (auto / remind / off).
+  // # auto   = the agent web-checks for a newer CoalMine on the cadence below and offers the update (~1-2K tokens/check).
+  // # remind = a free periodic reminder to run `claude plugin update coalmine@coalmine` yourself (no agent check, no tokens).
+  // # off    = no update nudges at all.
+  // # Setting type: String (ask, auto, remind, off)
+  // # Default value: ask
+  "updateMode": "ask",
+
+  // ## Days between self-update checks (auto) or reminders (remind). Also throttles the nudge so it never re-nags within the window.
+  // # Setting type: Int32 (minimum 1)
+  // # Default value: 14
+  "updateCheckDays": 14,
+
+  // ## Number of days before stable engineering/general rules are flagged as stale and require re-validation. Consumed by BOTH surfaces: the session-start auto-nudge (as its only fallback, used when a stamp omits its own "revalidate Nd") and the manual /coalmine:stats report (as the threshold for revalidate-90d-class stamps).
+  // # Setting type: Int32
+  // # Default value: 90
+  "ruleRevalidateDays": 90,
+
+  // ## Number of days before fast-moving platform/model rules are flagged as stale and require re-validation. /coalmine:stats-ONLY (the threshold for revalidate-30d-class stamps) — the session-start auto-nudge does not read this key; it always uses each stamp's own literal "revalidate Nd" instead.
+  // # Setting type: Int32
+  // # Default value: 30
+  "platformRuleRevalidateDays": 30,
+
+  // ## Number of days before general reference definitions (antivirus patterns) are flagged as stale. /coalmine:stats-ONLY — governs the installed skills' references/*.md files, a corpus the session-start auto-nudge never scans.
+  // # Setting type: Int32
+  // # Default value: 90
+  "definitionRevalidateDays": 90,
+
+  // ## Number of days before fast-moving platform definitions are flagged as stale. /coalmine:stats-ONLY — same scope as definitionRevalidateDays (installed skills' references/*.md, not scanned by the auto-nudge).
+  // # Setting type: Int32
+  // # Default value: 30
+  "platformDefinitionRevalidateDays": 30,
+
+  // =========================================================================
+  // SECTION 4: CUSTOM CANARY PATHS & SCOPES (การกำหนดขอบเขตและโดเมนของโครงการ)
+  // =========================================================================
+
+  // ## Features to disable. Mechanically enforced for the hook-driven canaries — "rot-canary" (the auto-scan hooks) and "conductor" — plus "all"; the on-demand skill-canaries honor it advisorily. E.g. ["rot-canary"] or ["all"].
+  // # Setting type: Array of Strings
+  // # Default value: []
+  "disabledCanaries": [],
+
+  // ## Default behavior for the rot-canary fix mode menu (interactive = ask user, safe = auto-apply safe fixes, off = report only).
+  // # Setting type: String (interactive, safe, off)
+  // # Default value: interactive
+  "autoFixMode": "interactive",
+
+  // ## Custom glob paths pointing to database schema files or API specifications (GraphQL, OpenAPI, etc.).
+  // # Setting type: Array of Strings
+  // # Default value: []
+  "schemaPaths": [],
+
+  // ## Custom directory paths containing database migration scripts.
+  // # Setting type: Array of Strings
+  // # Default value: []
+  "migrationDirs": [],
+
+  // ## Custom paths pointing to package manifests / dependency lockfiles to scan.
+  // # Setting type: Array of Strings
+  // # Default value: []
+  "packageManifests": [],
+
+  // ## Additional trusted documentation or internal wiki domains for source grounding.
+  // # Setting type: Array of Strings
+  // # Default value: []
+  "trustedDomains": []
+}

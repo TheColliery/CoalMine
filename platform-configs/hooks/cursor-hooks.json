@@ -1,0 +1,12 @@
+{
+  "$comment": "Cursor hooks — place as <project>/.cursor/hooks.json (or ~/.cursor/hooks.json). afterFileEdit records touched files. Cursor's stop hook cannot block, so the stop command wraps rot-canary-stop.js: it converts the Claude-style {decision:'block', reason} output into Cursor's {followup_message} so the scan request is submitted as the next turn. The spawnSync call is bounded at 5s (timeout) so a hung child cannot stall the wrapper itself; on ETIMEDOUT the wrapper exits quietly (no followup_message) rather than surfacing a partial/garbled result. Adjust the CoalMine path in both commands.",
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      { "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }
+    ],
+    "stop": [
+      { "command": "node -e \"const cp=require('child_process'),fs=require('fs');const r=cp.spawnSync(process.execPath,['C:/path/to/CoalMine/hooks/rot-canary-stop.js'],{input:fs.readFileSync(0),encoding:'utf8',timeout:5000});if(r.error&&r.error.code==='ETIMEDOUT'){process.exit(0)}try{const o=JSON.parse(r.stdout);if(o&&o.reason)console.log(JSON.stringify({followup_message:o.reason}))}catch{}\"" }
+    ]
+  }
+}

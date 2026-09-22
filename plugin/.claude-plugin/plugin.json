@@ -1,0 +1,27 @@
+{
+  "name": "coalmine",
+  "version": "3.20.1",
+  "description": "CoalMine — 9 quality-canary skills for coding agents: rot-canary (code-health audit + auto-cadence hooks), gold-standard (world-class completeness; fills & adopts rules), source-grounding (anti-hallucination sourcing), supply-chain-audit (deps/build/artifact trust), resilience-audit (failure-mode FMEA), telemetry-canary (observability/logging), testability-canary (decoupling/DI), scale-canary (perf scaling), drift-canary (contract/schema drift). Sub-agent + model-aware, cross-platform, report-not-fix.",
+  "author": {
+    "name": "HetCreep"
+  },
+  "homepage": "https://github.com/TheColliery/CoalMine",
+  "repository": "https://github.com/TheColliery/CoalMine",
+  "license": "Apache-2.0",
+  "keywords": [
+    "code-review",
+    "code-health",
+    "quality",
+    "audit",
+    "dead-code",
+    "supply-chain",
+    "resilience",
+    "hallucination",
+    "observability",
+    "testability",
+    "performance",
+    "drift",
+    "skills",
+    "hooks"
+  ]
+}
