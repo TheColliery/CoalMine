@@ -119,7 +119,7 @@ async function main() {
   }
   const body = bodyFile ? fs.readFileSync(bodyFile, 'utf8') : '';
   try {
-    const result = await publishRelease({ owner: 'HetCreep', repo: 'CoalMine', tag, title, body, token });
+    const result = await publishRelease({ owner: 'TheColliery', repo: 'CoalMine', tag, title, body, token });
     console.log(`${result.action === 'create' ? 'Created' : 'Updated'} the release for ${tag}: ${result.html_url}`);
   } catch (e) {
     console.error(`Error: ${e.message}`);

@@ -59,5 +59,6 @@ jobs:
           # (unlike a skill-shared engine that always exits 0), so there is deliberately NO
           # wrap here -- the module owns its own exit code and a bare invocation already
           # fails the step. Verified both ways: a planted dead link/anchor exits 1, this
-          # repo's own 60-file scope exits 0.
+          # repo's own live scope (re-derive, never trust a pinned count: the mapfile
+          # above, `${#files[@]}`) exits 0.
           node scripts/lib/link-check.mjs "${files[@]}"
