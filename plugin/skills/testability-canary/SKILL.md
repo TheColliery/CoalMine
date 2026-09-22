@@ -8,7 +8,7 @@ description: >-
 
 **Language:** Generate EVERYTHING at runtime in the user's language — questions, answer options, menu labels, recommendations, report narrative. Detect from their messages; never default to English just because this file is English. English is allowed only for technical terms: commands, paths, code identifiers, severity labels (CRITICAL/HIGH/MEDIUM/LOW), and tier names (Light/Standard/Heavy).
 
-**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate, an explicit global), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops). A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
+**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate; an absent global reads as the schema default and is clamped the same way), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops). A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
 
 Audit code to ensure it is decoupled, modular, and easy to cover with automated tests.
 
@@ -33,7 +33,7 @@ In Agent Context, after the report, present via `ask_question`:
 | class | step it powers | grant | on denial |
 |---|---|---|---|
 | read | scan coupling/DI surfaces for the categories above | `Read`·`Grep`·`Glob` | refuse that file, name it — never a clean bill |
-| write | Fix mode's safe-refactor apply, incl. checkpoint → build+tests → auto-revert if newly red | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
+| write | Fix mode's safe-refactor apply, incl. checkpoint → baseline → build+tests → auto-revert only on a NEW failure | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
 
 A denial reaches the WORKER as a visible message and propagates no further — never to a
 caller, never as a catchable condition. Every row above states a grant or an explicit death;

@@ -246,9 +246,11 @@ CoalMine is the quality-safeguard canary suite of a family of sibling skills bui
 - [CoalFace](https://github.com/TheColliery/CoalFace) — fan-out discipline
 - [CoalWash](https://github.com/TheColliery/CoalWash) — memory defrag
 - [CoalLedger](https://github.com/TheColliery/CoalLedger) — docs health
-- **[CoalGob](https://github.com/TheColliery/CoalGob)** (OS-trash delete guard, PUBLIC BETA v0.1.0-beta.1)
 
 Install one, it stands alone; install all, they compose without conflict.
+
+Also part of the family, not yet installable: **[CoalGob](https://github.com/TheColliery/CoalGob)**
+(OS-trash delete guard, PUBLIC BETA v0.1.0-beta.1) — engine + tests ship, no skill/hook surface yet.
 
 The shared doctrine: Phoenix-13 hooks (zero-dependency, no network, fail-silent, no child processes, deterministic), single-source-of-truth config schemas, and a strict no-overkill discipline. More at [TheColliery](https://github.com/TheColliery).
 

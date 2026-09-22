@@ -72,11 +72,35 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
   `drift-canary` was the uncounted instance). Same correction text as the exemplar fix in both
   classes, no rewording en route — test: none (prose safety/precedence-instruction fixes, no test
   harness reads SKILL.md/command prose for this content).
+- **CWK-120 FINDINGS-BACK — the class sweep above shipped a clamp correction that was ITSELF wrong,
+  in the PERMISSIVE direction, on all 18 surfaces it touched.** The new text read "…can only quieten,
+  never escalate, an explicit global…", implying the safety clamp does not bind when the global layer
+  is unset. Measured against `hooks/_shared/node-config.js:290`
+  (`const globalValue = globalVal !== undefined ? globalVal : def;`): an ABSENT global reads as the
+  SCHEMA DEFAULT and the clamp still binds — with no global config at all, a project's
+  `scanEverything: true` still resolves to `false`. `README.md:189` already states this correctly; the
+  swept text disagreed with this repo's own README. Corrected on the same 7 source files (7 →
+  18 with their `plugin/` mirrors and shared-partial renders): "(a project can only quieten, never
+  escalate; an absent global reads as the schema default and is clamped the same way)" — derived from
+  `README.md:189` and the clamp code directly, not a third composed wording — test: none (prose
+  correctness fix; `hooks/_shared/node-config.js` itself is untouched and its own test suite covers
+  the clamp behavior this text now accurately describes).
+- **CWK-120 FINDINGS-BACK — row 7's build+test-baseline fix had a third, unswept sibling set, and two
+  files now contradicted THEMSELVES.** `telemetry-canary/SKILL.md` and `testability-canary/SKILL.md`
+  had their Fix-mode bullet (`:26`) updated to require a baseline while their own grants table
+  (`:34`, eight lines below) still read "auto-revert if newly red" — an agent reading the second half
+  of the file got back the exact defect row 7 removed from the first half. Closed together with the
+  unswept class: `drift-canary/SKILL.md`, `rot-canary/SKILL.md` (both its Fix-mode bullet and its
+  standing-consent line), and `scale-canary/SKILL.md` all gained the same baseline-before-revert
+  language, and all five files' grants tables now read "checkpoint → baseline → build+tests →
+  auto-revert only on a NEW failure" — test: none (prose safety-instruction fix, matching row 7's own
+  test disposition).
 
-<!-- CWK-120's remaining 6 CodeRabbit-row fixes (rows 2/3/12/13/15) touch platform-configs/ only, which
-build-plugin.mjs does not copy into plugin/ -- per scripts-quality.md §3 ("a change that does not reach
-the shipped dist does not get a version at all... no [Unreleased] CHANGELOG entry either"), they are NOT
-listed here. Full per-row disposition: scratchpad/cwk120/docs-note.md. -->
+<!-- CWK-120's remaining CodeRabbit-row fixes and findings-back items (rows 2/3/12/13/15;
+MEDIUM-2/MEDIUM-4/LOW-5 from the findings-back round) touch platform-configs/, SECURITY.md, or
+README.md only, none of which build-plugin.mjs copies into plugin/ -- per scripts-quality.md §3 ("a
+change that does not reach the shipped dist does not get a version at all... no [Unreleased] CHANGELOG
+entry either"), they are NOT listed here. Full per-item disposition: scratchpad/cwk120/docs-note.md. -->
 
 ## [3.20.0] - 2026-09-21
 
