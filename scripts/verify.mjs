@@ -352,7 +352,7 @@ try {
       ['hooks/settings.snippet.json', 'JSON carries no comments'],
       ['skill-meta.json', 'three intent strings per skill; JSON, no comments'],
       ['.gitbook.yaml', 'UMB-169: three fixed keys, no comments, no pointer candidates'],
-      ['SUMMARY.md', 'UMB-169: a GitBook nav list, not ship-text prose; its links were hand-verified to resolve against a tracked-file listing at authoring time (docs-note.md), and it is not in DEFAULT_SURFACE_PLAN so this gate does not re-check them'],
+      ['SUMMARY.md', 'UMB-169: a GitBook nav list, not ship-text prose; not in DEFAULT_SURFACE_PLAN because pointerCandidates() over it returns 0 (a plan row would be vacuous), but its links ARE re-checked on every push by link-check.mjs (see .github/workflows/link-check.yml), which fails on a dead entry -- coverage lives in a live gate, not a one-time human check'],
     ];
     const declaredOut = (f) => DECLARED_OUT.some(([pre]) => f.startsWith(pre) || f.endsWith('/' + pre));
     const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
