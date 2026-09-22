@@ -95,10 +95,31 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
   language, and all five files' grants tables now read "checkpoint → baseline → build+tests →
   auto-revert only on a NEW failure" — test: none (prose safety-instruction fix, matching row 7's own
   test disposition).
+- **CWK-120 FINDINGS-BACK ROUND 2 — the round-1 baseline-class sweep (row 7 + its findings-back close)
+  had a THIRD unswept form, a comma/space spelling neither grep pass matched: `gold-standard/SKILL.md`
+  and `resilience-audit/SKILL.md` (2 sites) still read "checkpoint → [fix] → build+tests → revert if
+  newly red" with no baseline concept anywhere in either file.** Closed the same way as the rest of the
+  class: both now record a build+test BASELINE before applying and revert only on a failure new versus
+  it, in both the Fix-mode bullet and (for `resilience-audit`) its grants-table row. A form-independent
+  sweep (`grep -rln "revert\|rollback\|undo" skills/*/SKILL.md`) confirms exactly these 7 files carry
+  the class now (`drift-canary`, `gold-standard`, `resilience-audit`, `rot-canary`, `scale-canary`,
+  `telemetry-canary`, `testability-canary`) and no eighth shape — `supply-chain-audit` is correctly
+  outside the class (`checkpoint → apply → verify`, no build/test revert step at all) — test: none
+  (prose safety-instruction fix, matching the rest of the class's own disposition).
+- **CWK-120 FINDINGS-BACK ROUND 2 — the permissive-clamp correction (round 1's findings-back) read as
+  EXHAUSTIVE, and a real, pre-existing, code-side gap sits behind that reading.** `node-config.js:293`
+  (`if (gi === -1 || pi === -1) continue;`) lets an unrecognized project value escape the clamp
+  entirely and win the plain merge — a value outside the enum, not merely a louder one inside it. The
+  ship-text fix is TEXT-ONLY, per the reviewer's own explicit bound (the clamp's behavior is a shipped
+  safety guard and is not changed here, unproven, at the tail of a five-commit unit): the same 18
+  surfaces now add "…among the clamp's own known values… — an unrecognized project value is not
+  validated here", so the sentence no longer implies exhaustiveness it does not have. **Whether the
+  clamp should fail closed on an unknown value is a CODE decision, named as next-touch, not settled by
+  this unit** — test: none (prose scope-correction; the clamp code itself is untouched).
 
 <!-- CWK-120's remaining CodeRabbit-row fixes and findings-back items (rows 2/3/12/13/15;
-MEDIUM-2/MEDIUM-4/LOW-5 from the findings-back round) touch platform-configs/, SECURITY.md, or
-README.md only, none of which build-plugin.mjs copies into plugin/ -- per scripts-quality.md §3 ("a
+MEDIUM-2/MEDIUM-4/LOW-5 from round 1's findings-back; MEDIUM-A from round 2) touch platform-configs/ or
+SECURITY.md only, none of which build-plugin.mjs copies into plugin/ -- per scripts-quality.md §3 ("a
 change that does not reach the shipped dist does not get a version at all... no [Unreleased] CHANGELOG
 entry either"), they are NOT listed here. Full per-item disposition: scratchpad/cwk120/docs-note.md. -->
 

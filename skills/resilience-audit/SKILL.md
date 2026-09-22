@@ -35,7 +35,7 @@ Per-stack timeout/atomicity/idempotency patterns to grep: read `references/check
 
 ## Fix mode (choice-gated)
 After the report, present via `ask_question`:
-- **Fix safe ones** — add missing timeout, null/input validation, clear error+log on unhandled path. Each: checkpoint → fix → build+tests → revert if newly red.
+- **Fix safe ones** — add missing timeout, null/input validation, clear error+log on unhandled path. Each: checkpoint → record a build+test BASELINE → fix → build+tests → revert only if a NEW failure appeared versus the baseline.
 - **Let me pick** — user-selected fixes only.
 - **Report only** — change nothing.
 
@@ -45,7 +45,7 @@ NEVER auto-fix: retry/rollback/recovery/atomicity logic (semantic changes can in
 | class | step it powers | grant | on denial |
 |---|---|---|---|
 | read | trace failure paths for the 8 categories above | `Read`·`Grep`·`Glob` | refuse that file, name it — never a clean bill |
-| write | Fix mode's safe-guard apply, incl. checkpoint → build+tests → revert if newly red | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
+| write | Fix mode's safe-guard apply, incl. checkpoint → baseline → build+tests → revert only on a NEW failure | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
 
 <!-- SHARED:CLASSIFY_BLOCK -->
 
