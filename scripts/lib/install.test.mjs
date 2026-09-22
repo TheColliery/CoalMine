@@ -33,11 +33,17 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectPresentAgents } from './targets.mjs';
+import { listSkills } from './render.mjs';
 import { spawnSandboxed, writeHomeReporter, withHomeReporter } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INSTALL = path.join(repo, 'scripts', 'install.mjs');
 const MANIFEST = '.coalmine-manifest.json';
+// CWK-120 row 25: install.mjs itself enumerates skills/ with listSkills() and writes
+// that dynamic list to the manifest -- a bare `9` here is a SECOND, independent
+// enumeration that drifts the moment a canary is added or removed. Derived once,
+// shared by every assertion below that counts the manifest's skills.
+const SKILL_COUNT = listSkills(path.join(repo, 'skills')).length;
 
 // `targets.mjs`'s `TARGETS.claude = path.join(os.homedir(), '.claude', 'skills')` is a
 // module-level constant evaluated at IMPORT time INSIDE the spawned child, reading
@@ -132,7 +138,7 @@ test('manifest-driven reinstall removes renamed leftovers, spares foreign skills
     const first = runInstall(target, tmp);
     assert.equal(first.status, 0, `first install must pass:\n${first.stdout}${first.stderr}`);
     const manifest1 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
-    assert.equal(manifest1.skills.length, 9, 'manifest records all 9 skills');
+    assert.equal(manifest1.skills.length, SKILL_COUNT, `manifest records all ${SKILL_COUNT} skills`);
     assert.ok(manifest1.version, 'manifest records the version');
 
     // 2. Simulate a pre-rename install: plant a legacy skill dir and list it
@@ -150,7 +156,7 @@ test('manifest-driven reinstall removes renamed leftovers, spares foreign skills
     assert.ok(!fs.existsSync(path.join(target, 'old-renamed-skill')), 'manifest-listed legacy skill removed');
     assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill must never be touched');
     const manifest2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
-    assert.equal(manifest2.skills.length, 9, 'new manifest lists only the current set');
+    assert.equal(manifest2.skills.length, SKILL_COUNT, 'new manifest lists only the current set');
     assert.ok(!manifest2.skills.includes('old-renamed-skill'), 'legacy name gone from manifest');
 
     // 4. Uninstall → manifest-listed skills + manifest gone, foreign survives.
@@ -265,7 +271,7 @@ test('corrupt manifest entries can never escape the target directory', () => {
     assert.ok(fs.existsSync(path.join(sentinel, 'keep.txt')), 'escape via .. must be impossible');
     assert.ok(fs.existsSync(path.join(target, 'rot-canary', 'SKILL.md')), 'valid entries still install');
     const after = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
-    assert.equal(after.skills.length, 9, 'manifest rebuilt with the clean current set');
+    assert.equal(after.skills.length, SKILL_COUNT, 'manifest rebuilt with the clean current set');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -461,6 +467,52 @@ test('a genuinely foreign hook is still backed up and restored (the ownership ch
     assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
     assert.equal(fs.readFileSync(hookPath, 'utf8'), FOREIGN_HOOK, 'the user\'s hook is restored');
     assert.ok(!fs.existsSync(hookPath + '.pre-coalmine'), 'the backup is consumed');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('CWK-120 row 4: a failed backup blocks the overwrite -- a foreign hook is never clobbered when it cannot be verified saved', () => {
+  // A directory-permission probe (chmod the hooks dir read-only) does NOT reproduce
+  // reliably: measured on this box, Windows' read-only DIRECTORY attribute does not
+  // block child-file creation, so the probe always reports "not blocked" and the test
+  // would only ever run on POSIX -- one platform standing in for three (node/runtime.md
+  // §6). A `--require` preload monkeypatching `fs.copyFileSync` (the same NODE_OPTIONS
+  // mechanism `withHomeReporter` already uses in this file) is deterministic on every
+  // platform, because it never depends on the volume's own permission semantics.
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-backupfail-'));
+  const hooksDir = path.join(proj, '.git', 'hooks');
+  const hookPath = path.join(hooksDir, 'pre-commit');
+  const preloadPath = path.join(proj, 'fail-copy.cjs');
+  try {
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(hookPath, FOREIGN_HOOK, 'utf8');
+    // Fails ONLY the `.pre-coalmine` backup copy -- every other fs.copyFileSync call
+    // the installer makes (skill install, etc.) is untouched, so this isolates the one
+    // call site row 4 is about.
+    fs.writeFileSync(
+      preloadPath,
+      "const fs = require('node:fs'); const orig = fs.copyFileSync; " +
+      "fs.copyFileSync = (src, dest, ...rest) => { if (String(dest).endsWith('.pre-coalmine')) { " +
+      "throw Object.assign(new Error('EACCES: simulated backup failure'), { code: 'EACCES' }); } " +
+      "return orig(src, dest, ...rest); };",
+      'utf8',
+    );
+
+    const slashed = preloadPath.split(path.sep).join('/');
+    const prevOpts = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = prevOpts ? `${prevOpts} --require "${slashed}"` : `--require "${slashed}"`;
+    let res;
+    try {
+      res = runInstall(path.join(proj, 'skills'), proj);
+    } finally {
+      if (prevOpts === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = prevOpts;
+    }
+
+    assert.notEqual(res.status, 0, `a backup failure must fail loud (non-zero), not report success:\n${res.stdout}${res.stderr}`);
+    assert.equal(fs.readFileSync(hookPath, 'utf8'), FOREIGN_HOOK, 'the foreign hook must survive a failed backup UNCHANGED');
+    assert.ok(!fs.existsSync(hookPath + '.pre-coalmine'), 'no backup exists -- the copy itself is what failed');
   } finally {
     fs.rmSync(proj, { recursive: true, force: true });
   }

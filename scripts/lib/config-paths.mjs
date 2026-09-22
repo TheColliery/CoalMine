@@ -5,9 +5,31 @@
 // scripts/lib module) — keep the two in sync by hand if the read order itself
 // ever changes.
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 export const AGENT_DIR_ORDER = ['.claude', '.agents', '.gemini'];
+
+// UMB-133 (2026-09-21) — the two LEGACY shapes, in read order, first existing
+// wins, both AFTER the canonical three. The hooks' own copy is
+// hooks/_shared/node-config.js (LEGACY_CONFIGS + isGlobalCfgFile): keep the
+// three in step by hand. CLI writers matter here more than the hooks do: a
+// writer that did not see `.claude/.coalmine.json` would write a fresh
+// canonical file that then SHADOWS it, silently dropping the user's settings.
+export const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
+
+// `<root>/.claude/.coalmine.json` IS the GLOBAL config when root is the home
+// dir (a dotfiles repo at `~`). Never a project config: configure.mjs migrates
+// a "legacy project config" by moving + deleting it, which would move the
+// user's GLOBAL file out from under the hooks. Identity compare, both sides
+// through realpathSync.native (node/runtime.md §4). Unresolvable = "not the same file": the
+// PERMISSIVE answer, and on this WRITE side (the move + delete) the destructive one — unreachable,
+// because every caller runs `existsSync(p)` first and the global side must exist for a collision.
+export function isGlobalCfgFile(p) {
+  try {
+    return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
+  } catch { return false; }
+}
 
 // Namespace campaign (#69+#39, owner-designated 2026-08-08). Per-project
 // config lives under an agent dir, never bare at the project root any more.
@@ -20,8 +42,9 @@ export const AGENT_DIR_ORDER = ['.claude', '.agents', '.gemini'];
 //      first entry of step 2 below rather than needing a separate check.
 //   2. Other known agent dirs, fixed order: `.claude` -> `.agents` ->
 //      `.gemini` (first FOUND wins).
-//   3. LEGACY: <project>/.coalmine.json at the project root (the
-//      pre-2026-08-08 shape) — read normally, no breakage for an existing user.
+//   3. LEGACY, in this order, first FOUND wins (UMB-133): <project>/.claude/.coalmine.json,
+//      then <project>/.coalmine.json (the pre-2026-08-08 root shape) — read
+//      normally, no breakage for an existing user.
 // WRITE target = where the config was found; absent everywhere, the FIRST
 // agent dir the project already has ON DISK (`.claude` -> `.agents` ->
 // `.gemini`), never a bare "own dir" default — a project that only uses
@@ -30,7 +53,7 @@ export const AGENT_DIR_ORDER = ['.claude', '.agents', '.gemini'];
 // as before this fix. See ownDirDefault() below.
 export function projectConfigCandidates(root) {
   const candidates = AGENT_DIR_ORDER.map((d) => path.join(root, d, 'coal', 'coalmine.json'));
-  candidates.push(path.join(root, '.coalmine.json')); // LEGACY, always last
+  for (const l of LEGACY_CONFIGS) candidates.push(path.join(root, l)); // LEGACY, always last, in order
   return candidates;
 }
 
@@ -53,6 +76,6 @@ export function ownDirDefault(root) {
 
 export function projectConfigPath(root) {
   const candidates = projectConfigCandidates(root);
-  for (const c of candidates) { if (fs.existsSync(c)) return c; }
+  for (const c of candidates) { if (fs.existsSync(c) && !isGlobalCfgFile(c)) return c; }
   return ownDirDefault(root); // nothing found anywhere -- own-dir is both the read and write target
 }

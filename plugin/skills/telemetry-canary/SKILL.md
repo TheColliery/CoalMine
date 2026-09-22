@@ -8,7 +8,7 @@ description: >-
 
 **Language:** Generate EVERYTHING at runtime in the user's language — questions, answer options, menu labels, recommendations, report narrative. Detect from their messages; never default to English just because this file is English. English is allowed only for technical terms: commands, paths, code identifiers, severity labels (CRITICAL/HIGH/MEDIUM/LOW), and tier names (Light/Standard/Heavy).
 
-**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`), project wins per key. A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
+**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate, among the clamp's own known values; an absent global reads as the schema default and is clamped the same way — an unrecognized project value is not validated here), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops). A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
 
 Audit code for proper telemetry instrumentation — ensure the app is not a black box in production.
 
@@ -25,7 +25,7 @@ Per-stack grep patterns and right/wrong shapes per category: read `references/ch
 
 In Agent Context, after the report, present via `ask_question`:
 
-- **Apply safe logs:** insert error logging into empty catch blocks (standard logger template) + stack-trace mapping. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → apply → build + tests → auto-revert if newly red.
+- **Apply safe logs:** insert error logging into empty catch blocks (standard logger template) + stack-trace mapping. Each fix: checkpoint (copy the touched file(s) aside, or use an isolated worktree — never `git stash`/`git commit`, which can hide or include unrelated staged/unstaged user work) → record a build+test BASELINE → apply → build + tests → auto-revert only if a NEW failure appeared versus the baseline.
 - **Let me pick:** user selects which telemetry gaps to resolve.
 - **Report only:** exit unchanged.
 
@@ -33,7 +33,7 @@ In Agent Context, after the report, present via `ask_question`:
 | class | step it powers | grant | on denial |
 |---|---|---|---|
 | read | scan logging/metrics/error paths for the categories above | `Read`·`Grep`·`Glob` | refuse that file, name it — never a clean bill |
-| write | Fix mode's safe-log apply, incl. checkpoint → build+tests → auto-revert if newly red | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
+| write | Fix mode's safe-log apply, incl. checkpoint → baseline → build+tests → auto-revert only on a NEW failure | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
 
 A denial reaches the WORKER as a visible message and propagates no further — never to a
 caller, never as a catchable condition. Every row above states a grant or an explicit death;
@@ -73,5 +73,5 @@ Per-platform Heavy levers + Heavy-run durability: read `references/escalation.md
 
 **Entanglement:** after the report, if confirmed findings fall in another canary's domain, offer it once via `ask_question` (one line, max one offer): perf/N+1 → scale-canary · contract/serialization/config → drift-canary · failure-path/retry → resilience-audit · logging/metrics → telemetry-canary · coupling/DI → testability-canary · dependency/CVE → supply-chain-audit · unverified version-sensitive claim → source-grounding · missing/stale rule → gold-standard.
 
-**Self error-report:** if this skill misbehaves (contradictory instruction, broken procedure, wrong finding class), OFFER to file it at https://github.com/HetCreep/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit, never include unapproved code or paths.
+**Self error-report:** if this skill misbehaves (contradictory instruction, broken procedure, wrong finding class), OFFER to file it at https://github.com/TheColliery/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit, never include unapproved code or paths.
 

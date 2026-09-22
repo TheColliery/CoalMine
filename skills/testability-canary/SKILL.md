@@ -23,7 +23,7 @@ Per-stack patterns and the mock-strategy vocabulary: read `references/checks.md`
 
 In Agent Context, after the report, present via `ask_question`:
 
-- **Apply safe refactoring:** extract hardcoded initializations into constructor params (DI) + add interface definitions. Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git) → apply → build + tests → auto-revert if newly red.
+- **Apply safe refactoring:** extract hardcoded initializations into constructor params (DI) + add interface definitions. Each fix: checkpoint (copy the touched file(s) aside, or use an isolated worktree — never `git stash`/`git commit`, which can hide or include unrelated staged/unstaged user work) → record a build+test BASELINE → apply → build + tests → auto-revert only if a NEW failure appeared versus the baseline.
 - **Let me pick:** user selects specific refactoring moves.
 - **Report only:** exit unchanged.
 
@@ -31,7 +31,7 @@ In Agent Context, after the report, present via `ask_question`:
 | class | step it powers | grant | on denial |
 |---|---|---|---|
 | read | scan coupling/DI surfaces for the categories above | `Read`·`Grep`·`Glob` | refuse that file, name it — never a clean bill |
-| write | Fix mode's safe-refactor apply, incl. checkpoint → build+tests → auto-revert if newly red | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
+| write | Fix mode's safe-refactor apply, incl. checkpoint → baseline → build+tests → auto-revert only on a NEW failure | `Edit`·`Bash` (checkpoint/build/revert need exec) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done |
 
 <!-- SHARED:CLASSIFY_BLOCK -->
 

@@ -7,7 +7,7 @@ import os from 'os';
 import path from 'path';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
 import { stripJsonc } from './lib/jsonc.mjs';
-import { projectConfigPath, ownDirDefault } from './lib/config-paths.mjs';
+import { projectConfigPath, ownDirDefault, LEGACY_CONFIGS, isGlobalCfgFile } from './lib/config-paths.mjs';
 
 // The three per-agent-dir shapes were added by the namespace campaign
 // (#69+#39, owner-designated 2026-08-08) alongside the LEGACY dotfile: a
@@ -29,6 +29,12 @@ function findGitRoot(startDir) {
   let dir = path.resolve(startDir);
   while (true) {
     if (ROOT_MARKERS.some((m) => fs.existsSync(path.join(dir, m)))) {
+      return dir;
+    }
+    // UMB-133: the nested legacy shape anchors too, except when it is the GLOBAL
+    // file (root = `~`) — see hooks/_shared/node-config.js's findGitRoot.
+    const nested = path.join(dir, LEGACY_CONFIGS[0]);
+    if (fs.existsSync(nested) && !isGlobalCfgFile(nested)) {
       return dir;
     }
     const parent = path.dirname(dir);
@@ -118,7 +124,7 @@ function main() {
   //
   // Per-project READ follows projectConfigPath's rail (namespace campaign
   // #69+#39, owner-designated 2026-08-08 — see lib/config-paths.mjs for the
-  // full precedence): own-dir -> other known agent dirs -> LEGACY root
+  // full precedence): own-dir -> other known agent dirs -> LEGACY (nested, then root)
   // dotfile. WRITE goes back to wherever the config was found, EXCEPT a
   // config found at the LEGACY location migrates on this write (INSPECT
   // MEDIUM 2, 2026-08-08: to ownDirDefault, the first agent dir the project
@@ -133,13 +139,16 @@ function main() {
   const isGlobal = globalIdx !== -1;
   if (isGlobal) args.splice(globalIdx, 1);
   const projectRoot = findGitRoot(process.cwd());
-  const legacyPath = path.join(projectRoot, '.coalmine.json');
+  // UMB-133: BOTH legacy shapes migrate (`.claude/.coalmine.json`, then the
+  // root dotfile). Never on the --global layer: with a project root of `~` the
+  // nested shape IS the global file, and moving it would orphan the hooks' read.
+  const isLegacyRead = (p) => !isGlobal && LEGACY_CONFIGS.some((l) => path.join(projectRoot, l) === p);
   const readPath = isGlobal
     ? path.join(os.homedir(), '.claude', '.coalmine.json')
     : projectConfigPath(projectRoot);
   const writePath = isGlobal
     ? readPath
-    : (readPath === legacyPath ? ownDirDefault(projectRoot) : readPath);
+    : (isLegacyRead(readPath) ? ownDirDefault(projectRoot) : readPath);
 
   let cfg = {};
   let hadComments = false;
@@ -151,7 +160,20 @@ function main() {
       const content = rawConfig;
       hadComments = content.includes('//');
       const cleanJson = stripJsonc(content);
-      cfg = JSON.parse(cleanJson) || {};
+      // CWK-120 row 16 / ride-along (a): `JSON.parse(x) || {}` lets any TRUTHY
+      // non-object root (a string, a number, `true`, an array) through as `cfg` --
+      // `[]`/`"auto"`/`42` all pass `|| {}` unchanged. `cfg[spec.key] = ...` below
+      // then throws an uncaught strict-mode TypeError on a primitive root (the user
+      // sees a stack trace, not the backed-up rebuild this block already promises
+      // for malformed JSON), and an array root silently gets written back as an
+      // array. Thrown INSIDE this try so the existing catch's backup-and-rebuild
+      // path runs -- the malformed-root case and the wrong-type-root case now
+      // degrade the same way.
+      const parsed = JSON.parse(cleanJson);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('the config root must be a JSON object');
+      }
+      cfg = parsed;
       // Migrate legacy/retired keys to their current forms.
       if (cfg.conductor !== undefined) {
         cfg.enableConductor = cfg.enableConductor ?? cfg.conductor;
@@ -225,9 +247,9 @@ function main() {
     // writePath moved away from it). Best-effort — a failed delete here still
     // leaves a correctly-written new config; the stray legacy file is simply
     // not cleaned up this run.
-    if (readPath === legacyPath && writePath !== legacyPath) {
-      try { fs.rmSync(legacyPath, { force: true }); } catch {}
-      console.log(`Migrated the project config from ${legacyPath} to ${writePath}.`);
+    if (isLegacyRead(readPath) && writePath !== readPath) {
+      try { fs.rmSync(readPath, { force: true }); } catch {}
+      console.log(`Migrated the project config from ${readPath} to ${writePath}.`);
     }
     if (hadComments) {
       console.warn('Note: inline comments were stripped (this tool writes plain JSON). Every key stays documented in platform-configs/.coalmine.json.');

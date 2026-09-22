@@ -4,7 +4,7 @@ description: CoalMine self-update — check for a newer CoalMine version and off
 
 CoalMine keeps itself current through the conductor (session start), gated by `.coalmine.json` `updateMode` (ask | auto | remind | off, default ask) and throttled to once per `updateCheckDays` (default 14). This command is the agent procedure each mode triggers — and a manual entry point. Always answer in the user's language; offer choices via your question tool; never spend tokens or change config without a chosen option.
 
-**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`), project wins per key. A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
+**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate, among the clamp's own known values; an absent global reads as the schema default and is clamped the same way — an unrecognized project value is not validated here), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops). A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
 
 **ask** — present the 3-way choice via your question tool:
 - **auto** — the agent web-checks on a ~`updateCheckDays` cadence and offers updates (~1-2K tokens/check).
@@ -16,8 +16,8 @@ Save the pick (no forced check — the chosen mode drives future sessions):
 
 **auto** (the version CHECK — the only token spend, standing-consented):
 1. Get the latest published tag (graceful — never assume git/network is present):
-   `git ls-remote --tags --sort=-v:refname https://github.com/HetCreep/CoalMine.git | head -1`
-   (parse the trailing `vX.Y.Z`; ignore `^{}` deref lines).
+   `git ls-remote --tags --sort=-v:refname https://github.com/TheColliery/CoalMine.git | awk '!/\^\{\}$/ { print; exit }'`
+   (the `awk` filter drops the peeled `^{}` deref record before selecting; parse the trailing `vX.Y.Z`).
 2. Compare to the installed version in `.claude-plugin/plugin.json` (the plugin cache copy, or the repo copy if working from source).
 3. If a newer tag exists → OFFER (don't auto-run): `claude plugin update coalmine@coalmine` then `/reload-plugins`. If current → "up to date." 
 4. **Graceful fallback (no-external-assumption):** if `git ls-remote` fails, git is missing, or there is no network, say "Can't check for updates offline — update manually with `claude plugin update coalmine@coalmine` when you're back online" and stop. Never crash, never assume a version.

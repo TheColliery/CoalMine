@@ -12,7 +12,7 @@ Count every CoalMine canary invocation visible in this session (manual or hook-n
 Grep the project's rules home (`.claude/rules/`, `.agents/rules/`, `AGENTS.md`) for `coalmine: verified` stamps. For each stamped rule:
 | rule (file) | verified | revalidate | status |
 Status = ✅ current · ⚠️ due within 7 days · ❌ OVERDUE.
-**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`), project wins per key. A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
+**Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate, among the clamp's own known values; an absent global reads as the schema default and is clamped the same way — an unrecognized project value is not validated here), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops). A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
 
 To calculate the revalidation threshold (days) for each rule:
 - If the stamp has `revalidate 30d` (platform rule), check `platformRuleRevalidateDays` from `.coalmine.json` (default: 30).

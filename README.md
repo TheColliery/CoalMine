@@ -6,7 +6,7 @@
 
 **9 Quality-Safeguard Canaries for AI Coding Agents** — Detect code rot, weak rules, hallucinations, supply-chain vulnerabilities, brittle architectures, and API contract drift before they pollute your codebase.
 
-![version](https://img.shields.io/github/v/tag/HetCreep/CoalMine?label=version&color=blue)
+![version](https://img.shields.io/github/v/tag/TheColliery/CoalMine?label=version&color=blue)
 ![license](https://img.shields.io/badge/license-Apache_2.0-blue)
 ![status](https://img.shields.io/badge/status-live-brightgreen)
 ![SKILL.md](https://img.shields.io/badge/SKILL.md-open_standard_·_major_agents-success)
@@ -21,7 +21,9 @@
 ![Copilot](https://img.shields.io/badge/Copilot-works_with-blue)
 ![claude.ai](https://img.shields.io/badge/claude.ai-works_with-blue)
 
-[Design Principles](https://github.com/TheColliery/.github/blob/main/DESIGN-PRINCIPLES.md) · [Benchmark](https://github.com/TheColliery/.github/tree/main/benchmarks/CoalMine) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [Releases](https://github.com/HetCreep/CoalMine/releases)
+[Design Principles](https://github.com/TheColliery/.github/blob/main/DESIGN-PRINCIPLES.md) · [Benchmark](https://github.com/TheColliery/.github/tree/main/benchmarks/CoalMine) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [Releases](https://github.com/TheColliery/CoalMine/releases)
+
+**Docs:** [thecolliery.gitbook.io/thecolliery-docs/tools/coalmine](https://thecolliery.gitbook.io/thecolliery-docs/tools/coalmine) *(publishing soon)*
 
 **Part of [TheColliery](https://github.com/TheColliery)** — siblings: **[CoalTipple](https://github.com/TheColliery/CoalTipple)** (model/effort routing) · **[CoalBoard](https://github.com/TheColliery/CoalBoard)** (consensus & debate board) · **[CoalHearth](https://github.com/TheColliery/CoalHearth)** (session warm-resume) · **[CoalFace](https://github.com/TheColliery/CoalFace)** (fan-out discipline) · **[CoalWash](https://github.com/TheColliery/CoalWash)** (memory defrag) · **[CoalLedger](https://github.com/TheColliery/CoalLedger)** (docs health).
 
@@ -96,16 +98,16 @@
 
 | Platform | Tier | Install |
 |---|---|---|
-| **Claude Code** | validated | `/plugin marketplace add HetCreep/CoalMine` → `/plugin install coalmine@coalmine` (Option A) — auto-wires the `rot-canary` Stop-hook |
+| **Claude Code** | validated | `/plugin marketplace add TheColliery/CoalMine` → `/plugin install coalmine@coalmine` (Option A) — auto-wires the `rot-canary` Stop-hook |
 | **Antigravity** | validated (canaries) · **primed** (auto-cadence) | file-copy the skills to the global `~/.gemini/config/skills/` **or** per-project `<workspace>/.agents/skills/` (`node scripts/install.mjs antigravity`); for the full auto-cadence (conductor + rot-canary) on AG 2.0's hook engine, copy [`platform-configs/hooks/antigravity-hooks.json`](platform-configs/hooks/antigravity-hooks.json) to `<workspace>/.agents/hooks.json` or `~/.gemini/config/hooks.json` and adjust the CoalMine path |
 | **Cursor · Codex · Cline · Copilot · Gemini CLI · …** | works with | `node scripts/install.mjs <agent>` — file-copy into the agent's skills folder (targets in [Universal Agent Support](#-universal-agent-support)) |
-| **claude.ai** (web / app) | works with | Download a per-skill ZIP from [Releases](https://github.com/HetCreep/CoalMine/releases) and upload as a custom skill (Option A3) — read/analyze skills only, manual invocation, no hooks |
+| **claude.ai** (web / app) | works with | Download a per-skill ZIP from [Releases](https://github.com/TheColliery/CoalMine/releases) and upload as a custom skill (Option A3) — read/analyze skills only, manual invocation, no hooks |
 
-**primed** (the Antigravity auto-cadence status — a feature-automation marker, never a platform-trust tier; Antigravity's own platform tier is `validated` above, independent of this) = built + hermetically tested against the empirically-verified AG 2.0 hook spec (pilot 2026-07-12 — which did fire CoalMine's Stop cadence live on AG; corroborated against the official docs 2026-07-13). Delivery of the injected context into the agent is emitted per spec but not yet confirmed end-to-end — one real AG session run flips it to confirmed. The 9 canaries themselves are already validated on AG.
+**primed** (the Antigravity auto-cadence status — a feature-automation marker, never a platform-trust tier; Antigravity's own platform tier is `validated` above, independent of this) = built + hermetically tested against the AG 2.0 hook spec (corroborated against the official docs 2026-07-13). **Firing itself is UNRESOLVED, not confirmed:** a 2026-07-12 pilot fired CoalMine's Stop cadence live on AG; a more isolated 2026-08-04 re-test on a real AG 2.0 install recorded ZERO fires across a real tool call. Neither measurement is retracted — see [`antigravity-hooks.json`](platform-configs/hooks/antigravity-hooks.json)'s own `$comment` — probe a copy of your own config before relying on it. Delivery of the injected context into the agent is separately unconfirmed end-to-end even when firing does occur. The 9 canaries themselves are already validated on AG — skill invocation, not the auto-cadence hooks, is what that covers.
 
 ### Option A — Claude Code Plugin (No clone needed)
 ```text
-/plugin marketplace add HetCreep/CoalMine
+/plugin marketplace add TheColliery/CoalMine
 /plugin install coalmine@coalmine
 ```
 
@@ -113,17 +115,17 @@
 
 ### Option A2 — skills.sh (One line)
 ```bash
-npx skills add HetCreep/CoalMine
+npx skills add TheColliery/CoalMine
 ```
 
 ### Option A3 — claude.ai (web / desktop app)
-Download a canary's ZIP from the [Releases page](https://github.com/HetCreep/CoalMine/releases) (one asset per skill, built by CI on every tag) and upload it as a custom skill (Settings → Capabilities → Skills). Manual invocation only — no hooks there. **Don't hand-zip `skills/` yourself** — our own frontmatter `description` runs up to our 1024-char cap, well past claude.ai's 200-char skill-listing limit; every published ZIP has its description deterministically trimmed to fit (`scripts/build-claude-ai-zips.mjs`, source `skills/*/SKILL.md` files are never edited). Each Release also carries a `SHA256SUMS.txt` covering every ZIP — you'll typically have just the one skill's ZIP, not all nine, so verify with `sha256sum --ignore-missing -c SHA256SUMS.txt` (the plain `-c` form reports the other eight as FAILED). On Windows: `$f='rot-canary.zip'; (Get-FileHash $f).Hash -ieq (Select-String $f SHA256SUMS.txt).Line.Split()[0]` (swap in the ZIP you downloaded). Steps + capability notes: [CLAUDE-AI-INSTALL](https://github.com/TheColliery/.github/blob/main/CLAUDE-AI-INSTALL.md).
+Download a canary's ZIP from the [Releases page](https://github.com/TheColliery/CoalMine/releases) (one asset per skill, built by CI on every tag) and upload it as a custom skill (Settings → Capabilities → Skills). Manual invocation only — no hooks there. **Don't hand-zip `skills/` yourself** — our own frontmatter `description` runs up to our 1024-char cap, well past claude.ai's 200-char skill-listing limit; every published ZIP has its description deterministically trimmed to fit (`scripts/build-claude-ai-zips.mjs`, source `skills/*/SKILL.md` files are never edited). Each Release also carries a `SHA256SUMS.txt` covering every ZIP — you'll typically have just the one skill's ZIP, not all nine, so verify with `sha256sum --ignore-missing -c SHA256SUMS.txt` (the plain `-c` form reports the other eight as FAILED). On Windows: `$f='rot-canary.zip'; (Get-FileHash $f).Hash -ieq (Select-String $f SHA256SUMS.txt).Line.Split()[0]` (swap in the ZIP you downloaded). Steps + capability notes: [CLAUDE-AI-INSTALL](https://github.com/TheColliery/.github/blob/main/CLAUDE-AI-INSTALL.md).
 
 ### Option B — Universal Installer
 
 #### 1. Clone the Repository
 ```bash
-git clone https://github.com/HetCreep/CoalMine.git
+git clone https://github.com/TheColliery/CoalMine.git
 ```
 
 #### 2. Run the Installer
@@ -173,7 +175,7 @@ Installing is the power button. The agent conducts the canaries and asks for con
 Zero-config to start — and two config levels when you want them: a global `~/.claude/.coalmine.json` overlaid per key by the project config (project wins), so a globally-installed CoalMine can be tuned or **shut off per project** — a project that doesn't need it stops loading (and burning tokens) there (`disabledCanaries: ["all"]` is the full off-switch; `enableConductor: false` silences only the session-start conductor, leaving rot-canary's auto-scan running).
 
 <!-- namespace-campaign rail: this wording is copied verbatim into every sibling room's README Configure section, one flock -->
-**Where the per-project config lives — the read order (identical across the series, one flock):** (1) `<project>/.<the running agent's own dir>/coal/coalmine.json` — the dir of the agent actually executing (Claude Code: `.claude`); (2) other known agent dirs, fixed order `.claude` → `.agents` → `.gemini` (first found wins); (3) LEGACY: `<project>/.coalmine.json` at the project root (the pre-2026-08-08 shape) — still read normally, no breakage for an existing config. The installer generates the default at the new own-dir home for a never-configured project (an existing config at any candidate, including the legacy path, is left alone); `node scripts/configure.mjs` writes back wherever the config was found, migrating a legacy-location config to the new own-dir home on that write (nothing is auto-moved on a mere read). Write the global layer with `node scripts/configure.mjs --global <flags>`. The high-impact keys:
+**Where the per-project config lives — the read order (identical across the series, one flock):** (1) `<project>/.<the running agent's own dir>/coal/coalmine.json` — the dir of the agent actually executing (Claude Code: `.claude`, i.e. `<project>/.claude/coal/coalmine.json` — the canonical path); (2) other known agent dirs, fixed order `.claude` → `.agents` → `.gemini` (first found wins); (3) LEGACY, both **DEPRECATED**: `<project>/.claude/.coalmine.json`, then `<project>/.coalmine.json` at the project root (the pre-2026-08-08 shape) — first found wins after the three above, both still read normally, no breakage for an existing config. **Deprecation notice:** the replacement is the canonical path `<project>/.claude/coal/coalmine.json`; both legacy paths are deprecated as of the release named by the `### Deprecated` entry in [CHANGELOG.md](CHANGELOG.md) and removable no earlier than the next MAJOR (deprecated at a MINOR, removable at a MAJOR — this series' SemVer boundary, not a calendar window); CoalMine owns the migration (`configure.mjs`, below). **No runtime warning is printed:** hooks stay silent (Phoenix #13), so nothing appears in your terminal — this note and the CHANGELOG are the channel. The one runtime signal is a single line in the session-start conductor's context asking the agent to relay the move, and a config sitting at a path the walk never reads (for example `<project>/.agents/.coalmine.json`) is reported the same way as IGNORED, since its settings have no effect. The installer generates the default at the new own-dir home for a never-configured project (an existing config at any candidate, including either legacy path, is left alone); `node scripts/configure.mjs` writes back wherever the config was found, migrating a legacy-location config to the new own-dir home on that write (nothing is auto-moved on a mere read). Write the global layer with `node scripts/configure.mjs --global <flags>`. The high-impact keys:
 
 | Key | Default | What it does |
 |---|---|---|
@@ -246,6 +248,9 @@ CoalMine is the quality-safeguard canary suite of a family of sibling skills bui
 - [CoalLedger](https://github.com/TheColliery/CoalLedger) — docs health
 
 Install one, it stands alone; install all, they compose without conflict.
+
+Also part of the family, not yet installable: **[CoalGob](https://github.com/TheColliery/CoalGob)**
+(OS-trash delete guard, PUBLIC BETA v0.1.0-beta.1) — engine + tests ship, no skill/hook surface yet.
 
 The shared doctrine: Phoenix-13 hooks (zero-dependency, no network, fail-silent, no child processes, deterministic), single-source-of-truth config schemas, and a strict no-overkill discipline. More at [TheColliery](https://github.com/TheColliery).
 

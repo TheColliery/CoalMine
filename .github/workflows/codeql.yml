@@ -58,8 +58,22 @@ jobs:
           fetch-depth: 0
       - id: detect
         shell: bash
+        # UMB-154, THIS STEP ONLY: EVENT_NAME, EVENT_BEFORE and HEAD_SHA arrive as env vars
+        # (data), not as `${{ }}` inside `run:` (text-substituted before bash parses -- the
+        # mechanism is the CWK-074 note at `what this check actually did` below; GitHub's
+        # Actions secure-use guide prescribes the same shape for inline scripts). They are NOT
+        # attacker-shapeable: github.event_name is a fixed enum, github.event.before and
+        # github.sha are GitHub-generated SHAs. So this is consistency and defence in depth,
+        # not a hole closed -- the attacker-controlled input in this step is the changed-file
+        # list, and that is read at run time by `git diff`, never substituted. The names match
+        # CoalHearth's ci.yml `classify` step; the rule above does not depend on that file.
+        # DOCS_GLOBS is the pre-existing (CWK-058) step-level passthrough of the workflow-level
+        # value and is unrelated to this note.
         env:
           DOCS_GLOBS: ${{ env.DOCS_GLOBS }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           # `set -f` (noglob) is LOAD-BEARING, not hygiene. Without it, `for g in $DOCS_GLOBS`
@@ -102,15 +116,14 @@ jobs:
           # Recorded so nobody later "strengthens" a property that never came from entropy.
           delim="EOF_$(date +%s%N)_${RANDOM}${RANDOM}"
           emit() { echo "code=$1" >> "$GITHUB_OUTPUT"; echo "files<<$delim" >> "$GITHUB_OUTPUT"; echo "${2:-}" >> "$GITHUB_OUTPUT"; echo "$delim" >> "$GITHUB_OUTPUT"; }
-          if [ "${{ github.event_name }}" != "push" ]; then
+          if [ "$EVENT_NAME" != "push" ]; then
             echo "not a push event -- treating as code (fail-safe)"; emit true ""; exit 0
           fi
-          before="${{ github.event.before }}"
-          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
-             || ! git rev-parse -q --verify "${before}^{commit}" >/dev/null 2>&1; then
+          if [ -z "$EVENT_BEFORE" ] || [ "$EVENT_BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse -q --verify "${EVENT_BEFORE}^{commit}" >/dev/null 2>&1; then
             echo "no usable base commit -- treating as code (fail-safe)"; emit true ""; exit 0
           fi
-          changed="$(git diff --name-only "$before" "${{ github.sha }}" || true)"
+          changed="$(git diff --name-only "$EVENT_BEFORE" "$HEAD_SHA" || true)"
           if [ -z "$changed" ]; then
             echo "empty diff -- treating as code (fail-safe)"; emit true ""; exit 0
           fi
@@ -141,6 +154,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       security-events: write
     steps:
       # HONESTY STEP (CWK-058), FIRST so it is the first thing a reader sees. This check now

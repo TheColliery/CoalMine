@@ -35,13 +35,13 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 
 ## Fix mode (choice-gated)
 
-**Before deciding fix mode:** read `~/.claude/.coalmine.json` then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`; project wins per key); neither present → `autoFixMode` = `interactive`.
+**Before deciding fix mode:** read `~/.claude/.coalmine.json` then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`; project wins per key); neither present → `autoFixMode` = `interactive`.
 
-**Standing consent:** honor `.coalmine.json` `autoFixMode` as the pre-chosen option (the config IS the chosen option) — `off` = report only, no menu · `safe` = apply safe/reversible fixes automatically (still checkpoint → build/test → revert if red) · `interactive` (default) = present the menu below.
+**Standing consent:** honor `.coalmine.json` `autoFixMode` as the pre-chosen option (the config IS the chosen option) — `off` = report only, no menu · `safe` = apply safe/reversible fixes automatically (still checkpoint → baseline → build/test → revert only on a new failure) · `interactive` (default) = present the menu below.
 
-After any scan report in an interactive session — manual run OR hook-nudged auto-scan — you **MUST** present this menu via `ask_question` (skip only when findings are zero, no user is present, or `autoFixMode` pre-decided above):
+After any scan report where the session is interactive (a user is present) — manual run OR hook-nudged auto-scan — you **MUST** present this menu via `ask_question` (skip only when findings are zero or `autoFixMode` pre-decided above; a non-interactive hook-nudged scan is report-only, per the Hook Context rule below):
 
-- **Apply safe fixes:** mechanical, fully reversible edits only (dead imports, commented-out blocks, formatting). Each fix: checkpoint (git stash/commit in a git repo; else copy the file aside — never assume git exists) → apply → build + tests → auto-revert if newly red.
+- **Apply safe fixes:** mechanical, fully reversible edits only (dead imports, commented-out blocks, formatting). Each fix: checkpoint (copy the touched file(s) aside, or use an isolated worktree — never `git stash`/`git commit`, which can hide or include unrelated staged/unstaged user work) → record a build+test BASELINE → apply → build + tests → auto-revert only if a NEW failure appeared versus the baseline.
 - **Let me pick:** list findings; user selects.
 - **Report only:** exit unchanged.
 
@@ -51,7 +51,7 @@ NEVER auto-fix: live/reachable path · logic change · "API looks wrong" (ground
 | class | step it powers | grant | on denial |
 |---|---|---|---|
 | read | scan the touched/named files for the categories above | `Read`·`Grep`·`Glob`·`Bash` (read-only) | refuse that file, name it in the report — never a clean bill |
-| write | Fix mode's safe/interactive apply, incl. checkpoint → build+tests → auto-revert if newly red | `Edit`·`Bash` (checkpoint/build/revert need exec, not just file-write) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done — this skill runs unattended on the Stop hook under `autoFixMode: safe`, with no interactive user to notice a denial, so the report line is the only signal and it says so |
+| write | Fix mode's safe/interactive apply, incl. checkpoint → baseline → build+tests → auto-revert only on a NEW failure | `Edit`·`Bash` (checkpoint/build/revert need exec, not just file-write) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done — this skill runs unattended on the Stop hook under `autoFixMode: safe`, with no interactive user to notice a denial, so the report line is the only signal and it says so |
 
 <!-- SHARED:CLASSIFY_BLOCK -->
 

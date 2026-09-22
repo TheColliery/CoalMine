@@ -2,9 +2,186 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.20.1] - 2026-09-22
+
+### Changed
+- **CWK-121 (b) — the shipped `.claude-plugin/plugin.json` `homepage`/`repository` fields,
+  `coalmine-conductor.js`'s self-error-report URL, `commands/update.md`'s latest-tag check, and the
+  shared `escalation-footer.md`'s self-error-report URL (renders into all 9 canary `SKILL.md` bodies)
+  still pointed at the pre-transfer `github.com/HetCreep/CoalMine` address (redirects, but the dist
+  should carry the live one). All now read `github.com/TheColliery/CoalMine`. `plugin.json`'s
+  `author.name` ("HetCreep") is left unchanged — it names the person, not the repo address.**
 
 ### Fixed
+- **CWK-120 row 10 — `commands/update.md`'s latest-tag check could select an annotated tag's peeled
+  `^{}` deref record instead of the release tag itself**, since `git ls-remote --tags | head -1` has
+  no guarantee the plain and `^{}` lines for one tag sort adjacently. Filtered with
+  `awk '!/\^\{\}$/ { print; exit }'` before selecting — test: none (a shell-pipeline correctness fix,
+  no test harness covers `commands/*.md` prose).
+- **CWK-120 row 5 — `rot-canary/SKILL.md`'s Fix-mode menu condition was self-contradictory**: it opened
+  "in an interactive session" and then separately listed "no user is present" as a skip clause inside
+  that already-interactive scope. Reworded to one non-overlapping condition, matching the shared
+  `escalation-footer.md` Hook Context rule's own vocabulary — no behavior change, the menu still offers
+  on any interactive session (manual or hook-nudged) and stays report-only when non-interactive — test:
+  none (a legibility fix, no test harness reads SKILL.md prose for this condition).
+- **CWK-120 row 6 — `scale-canary/SKILL.md`'s Fix-mode checkpoint instructed `git stash`/`git commit`
+  as an ad-hoc backup**, which can hide (`stash`) or include (`commit`) unrelated staged/unstaged user
+  work sitting in the same repo. Changed to: back up only the touched file(s), or use an isolated
+  worktree — never `git stash`/`git commit` — test: none (a prose safety-instruction fix).
+- **CWK-120 row 7 — `telemetry-canary/SKILL.md` and `testability-canary/SKILL.md`'s Fix-mode
+  "auto-revert if newly red" had no baseline to compare against**, so the agent could not tell a
+  post-edit failure was NEW versus already-failing before the edit. Both now record a build+test
+  baseline before applying, and auto-revert only on a failure that is new versus that baseline — test:
+  none (a prose safety-instruction fix).
+- **CWK-120 row 23 — `rot-canary/references/tooling.md`'s Python row listed bare `python -W error`
+  as a project check**, which runs no project code, tests, or static analysis (it starts the REPL in
+  an interactive shell). Replaced with the project's own test command + `-W error` (e.g.
+  `python -m pytest -W error`) — test: none (a reference-table content fix).
+- **CWK-120 row 14 — the Antigravity auto-cadence status in `rot-canary/references/cadence.md`
+  (shipped) cited only the 2026-07-12 pilot's live fire, omitting the 2026-08-04 isolated re-test that
+  recorded ZERO fires on a real AG 2.0 install.** `platform-configs/hooks/antigravity-hooks.json`'s own
+  `$comment` already discloses both measurements; the shipped cadence reference and the root README's
+  `primed` definition and `platform-configs/hooks/README.md`'s AG row (neither ships into `plugin/`)
+  now say the same: firing is UNRESOLVED, not verified, and a reader is told to probe their own copy
+  before relying on it — test: none (an accuracy fix; no fabricated resolution of the contested fact).
+- **CWK-120 rows 22/24 — four `coalmine: verified` reference stamps re-verified content-first, not
+  merely re-dated** (`drift-canary/references/checks.md`, `gold-standard/references/method.md`,
+  `telemetry-canary/references/checks.md`, `supply-chain-audit/references/tooling.md`, all `revalidate
+  90d`, all overdue since 2026-09-10): each file's content was re-read in full and confirmed still
+  accurate before its stamp moved to `2026-09-22`. `skills/_shared/references/escalation.md` (`revalidate
+  30d`, overdue since 2026-08-22) is left EXPIRED and undisposed here — its per-platform Heavy-tier
+  levers (Cursor Max Mode, Amp Oracle, GitHub Copilot `/fleet`, …) are exactly the fast-moving
+  version-sensitive claims this room's own doctrine says need a live source-grounding pass, not a
+  same-unit rubber-stamp; the file's own text already tells a reader to verify live rather than trust
+  it. Routed upward as a pending decision — test: none (stamp-and-content maintenance).
+- **CWK-120 SAME-BATCH CLASS SWEEP — the two overclaims rows 2/15 and row 6 fixed on one surface each
+  stood uncorrected on their siblings, against this room's own MUST-class ONE FLOCK ONE COLOR rule
+  (`AGENTS.md`, consequence (1): a fix is swept to every sibling surface IN THE SAME BATCH).**
+  Re-derived both surface sets fresh by grep rather than trusting the prior unit's own count (which
+  undercounted the second class by one). **The config-cascade "project wins per key" overclaim** —
+  checked against `hooks/_shared/node-config.js`'s real clamp code, not restated by feel — corrected
+  on `platform-configs/copilot-instructions.template`, `platform-configs/cursor.mdc.template`,
+  `commands/stats.md`, `commands/update.md`, and the shared `skills/_shared/language-header.md`
+  (renders into all 9 canary `SKILL.md` bodies — the highest-blast-radius instance of this class).
+  **`skills/rot-canary/SKILL.md:38`'s own "project wins per key" is DIFFERENT and left alone**: it
+  scopes to `autoFixMode` alone, which is genuinely unclamped (not one of the 6 `SAFER_ENUM`/
+  `UNION_ARRAY_KEYS` keys) — the claim is true as written for that one key, not the same overclaim.
+  **The `git stash`/`git commit` checkpoint data-integrity hazard** — corrected on
+  `drift-canary/SKILL.md`, `rot-canary/SKILL.md`, `telemetry-canary/SKILL.md`, and
+  `testability-canary/SKILL.md` (4 siblings, one more than the prior unit's own estimate of 3 —
+  `drift-canary` was the uncounted instance). Same correction text as the exemplar fix in both
+  classes, no rewording en route — test: none (prose safety/precedence-instruction fixes, no test
+  harness reads SKILL.md/command prose for this content).
+- **CWK-120 FINDINGS-BACK — the class sweep above shipped a clamp correction that was ITSELF wrong,
+  in the PERMISSIVE direction, on all 18 surfaces it touched.** The new text read "…can only quieten,
+  never escalate, an explicit global…", implying the safety clamp does not bind when the global layer
+  is unset. Measured against `hooks/_shared/node-config.js:290`
+  (`const globalValue = globalVal !== undefined ? globalVal : def;`): an ABSENT global reads as the
+  SCHEMA DEFAULT and the clamp still binds — with no global config at all, a project's
+  `scanEverything: true` still resolves to `false`. `README.md:189` already states this correctly; the
+  swept text disagreed with this repo's own README. Corrected on the same 7 source files (7 →
+  18 with their `plugin/` mirrors and shared-partial renders): "(a project can only quieten, never
+  escalate; an absent global reads as the schema default and is clamped the same way)" — derived from
+  `README.md:189` and the clamp code directly, not a third composed wording — test: none (prose
+  correctness fix; `hooks/_shared/node-config.js` itself is untouched and its own test suite covers
+  the clamp behavior this text now accurately describes).
+- **CWK-120 FINDINGS-BACK — row 7's build+test-baseline fix had a third, unswept sibling set, and two
+  files now contradicted THEMSELVES.** `telemetry-canary/SKILL.md` and `testability-canary/SKILL.md`
+  had their Fix-mode bullet (`:26`) updated to require a baseline while their own grants table
+  (`:34`, eight lines below) still read "auto-revert if newly red" — an agent reading the second half
+  of the file got back the exact defect row 7 removed from the first half. Closed together with the
+  unswept class: `drift-canary/SKILL.md`, `rot-canary/SKILL.md` (both its Fix-mode bullet and its
+  standing-consent line), and `scale-canary/SKILL.md` all gained the same baseline-before-revert
+  language, and all five files' grants tables now read "checkpoint → baseline → build+tests →
+  auto-revert only on a NEW failure" — test: none (prose safety-instruction fix, matching row 7's own
+  test disposition).
+- **CWK-120 FINDINGS-BACK ROUND 2 — the round-1 baseline-class sweep (row 7 + its findings-back close)
+  had a THIRD unswept form, a comma/space spelling neither grep pass matched: `gold-standard/SKILL.md`
+  and `resilience-audit/SKILL.md` (2 sites) still read "checkpoint → [fix] → build+tests → revert if
+  newly red" with no baseline concept anywhere in either file.** Closed the same way as the rest of the
+  class: both now record a build+test BASELINE before applying and revert only on a failure new versus
+  it, in both the Fix-mode bullet and (for `resilience-audit`) its grants-table row. A form-independent
+  sweep (`grep -rln "revert\|rollback\|undo" skills/*/SKILL.md`) confirms exactly these 7 files carry
+  the class now (`drift-canary`, `gold-standard`, `resilience-audit`, `rot-canary`, `scale-canary`,
+  `telemetry-canary`, `testability-canary`) and no eighth shape — `supply-chain-audit` is correctly
+  outside the class (`checkpoint → apply → verify`, no build/test revert step at all) — test: none
+  (prose safety-instruction fix, matching the rest of the class's own disposition).
+- **CWK-120 FINDINGS-BACK ROUND 2 — the permissive-clamp correction (round 1's findings-back) read as
+  EXHAUSTIVE, and a real, pre-existing, code-side gap sits behind that reading.** `node-config.js:293`
+  (`if (gi === -1 || pi === -1) continue;`) lets an unrecognized project value escape the clamp
+  entirely and win the plain merge — a value outside the enum, not merely a louder one inside it. The
+  ship-text fix is TEXT-ONLY, per the reviewer's own explicit bound (the clamp's behavior is a shipped
+  safety guard and is not changed here, unproven, at the tail of a five-commit unit): the same 18
+  surfaces now add "…among the clamp's own known values… — an unrecognized project value is not
+  validated here", so the sentence no longer implies exhaustiveness it does not have. **Whether the
+  clamp should fail closed on an unknown value is a CODE decision, named as next-touch, not settled by
+  this unit** — test: none (prose scope-correction; the clamp code itself is untouched).
+
+<!-- CWK-120's remaining CodeRabbit-row fixes and findings-back items (rows 2/3/12/13/15;
+MEDIUM-2/MEDIUM-4/LOW-5 from round 1's findings-back; MEDIUM-A from round 2) touch platform-configs/ or
+SECURITY.md only, none of which build-plugin.mjs copies into plugin/ -- per scripts-quality.md §3 ("a
+change that does not reach the shipped dist does not get a version at all... no [Unreleased] CHANGELOG
+entry either"), they are NOT listed here. Full per-item disposition: scratchpad/cwk120/docs-note.md. -->
+
+## [3.20.0] - 2026-09-21
+
+### Added
+- **A project config written where the walk does not read it is now REPORTED, not silently ignored (UMB-133).** The session-start
+  conductor checks a fixed, closed list of plausible wrong homes -- `<project>/.agents/.coalmine.json`,
+  `<project>/.gemini/.coalmine.json`, `<project>/coal/coalmine.json` (agent dir dropped) and
+  `<project>/.claude/coalmine.json` (`coal/` dropped) -- and, if one exists, adds one context line
+  `IGNORED: <path> is not a config path; canonical = .claude/coal/coalmine.json` for the agent to relay (settings in
+  that file have NO effect). It rides the channel each mode already has (Claude Code session context, Antigravity
+  `injectSteps`, Gemini `additionalContext`) -- no new channel, nothing on stderr (Phoenix #13). The probe is
+  `existsSync` on those fixed paths: no directory walk, and the text around each path is constant, so a cloned repo
+  cannot steer what the line says. **HONEST BOUND: a config anywhere outside that list is not reported** -- this is
+  a report of the likely typos, not a search of the project.
+  - **Cost, stated:** a project still on a legacy path (see Deprecated) now carries one extra context line per session
+    start until it migrates (roughly 40 tokens).
+
+### Deprecated
+- **Both legacy per-project config paths -- `<project>/.claude/.coalmine.json` and `<project>/.coalmine.json` (UMB-133).**
+  - **Marker + replacement:** both are marked DEPRECATED in the README's Configure section, which names the canonical path
+    `<project>/.claude/coal/coalmine.json` verbatim as the replacement. A canonical file always wins over both.
+  - **Window:** deprecated at this MINOR, removable no earlier than the next MAJOR -- this series' own SemVer boundary
+    (`scripts-quality.md` §3), not a calendar count. Until then both keep being read, exactly as before.
+  - **Owner:** CoalMine. `node scripts/configure.mjs` moves either legacy file to the canonical path on its next write
+    (nothing is moved on a mere read).
+  - **Channel:** this entry and the README note. **No hook prints a deprecation warning** -- Phoenix #13 keeps hooks
+    silent on stdout/stderr, so nothing appears in the terminal. The one runtime signal is the conductor's single
+    migration-notice context line described under Added, sent only when the config actually read is a legacy one.
+
+### Fixed
+- **A project config at `<project>/.claude/.coalmine.json` was silently ignored (UMB-133).** It was never a candidate in the
+  per-project read order -- only the root dotfile was honoured as legacy -- so a config written where a user reasonably
+  expects it had no effect and nothing said so. The order is now canonical (own agent dir, then `.agents`, then `.gemini`),
+  then `<project>/.claude/.coalmine.json`, then `<project>/.coalmine.json`; first found wins, and the merge, the safer-value
+  clamp and the global layer are untouched. `configure.mjs` and `install.mjs` honour both shapes too (a writer blind to the
+  nested one would have written a fresh canonical file that shadowed it and silently dropped every setting in it).
+  - **A guard the change needed:** when the project root IS the home directory, `<root>/.claude/.coalmine.json` is the
+    GLOBAL config. It is compared by identity (both sides through `realpathSync.native`) and never treated as a project
+    config, so the walk does not anchor at `~` and `configure.mjs` does not migrate -- move and delete -- the file the
+    hooks read as the global layer.
+  - **The cascade wording on eight agent-instruction surfaces named only ONE legacy shape** -- the shared language header
+    rendered into all nine skills, `rot-canary`'s fix-mode rail, `/coalmine:stats`, `/coalmine:update` and the four
+    `platform-configs/*.template` files -- so an agent following it would have skipped a config the hook reads. All eight now
+    name both shapes, in order.
+  - **PowerShell fallback: not ported, and the gap is named** (`alt/powershell/README.md`): the twins still read only
+    `<gitroot>/.coalmine.json`, so the second legacy shape is one more config they do not see.
+- **On the Antigravity and Gemini adapters the conductor read the project config from the hook process's own working
+  directory, not from the workspace it was reporting on (UMB-133).** The workspace is named by the hook's stdin payload
+  (Antigravity: `workspacePaths[0]`, falling back to the payload's `cwd`; Gemini: the payload's `cwd`). The conductor now
+  reads that workspace's project config, and **the config gates follow it** -- `enableConductor`, `disabledCanaries`,
+  `updateMode` -- not only the new migration / `IGNORED` lines. Before, the gates and the config both came from wherever
+  the hook process happened to start, while the lines beside them were computed for the workspace, so a workspace's
+  own config had no effect when the two differed. **User-visible:** on those two adapters, a workspace whose config sets
+  `enableConductor: false`, a `disabledCanaries` list or an `updateMode` now takes effect where it silently did not;
+  and a config sitting only in the hook process's start directory no longer governs a different workspace.
+  - **Unchanged:** Claude Code and the file-copy platforms (they read from the process directory as before), a payload that
+    names no workspace (falls back to the process directory), and `rot-canary`'s own hooks (they still read from the
+    process directory).
+  - **The safer-value clamp is unaffected:** it runs inside the config merge for whatever directory is read, so a
+    workspace config can quieten `updateMode` but never escalate it past the global layer.
 - **A Coal* uninstall could delete a repo's own TRACKED hook files (CWK-096).** `uninstallGitHooks()`
   resolves `core.hooksPath` (correct since `d1c917f`) but then unlinked whatever it found there with
   no tracked-ness check -- in any repo whose `core.hooksPath` points at a versioned directory (this

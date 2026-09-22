@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { loadShared as loadSharedFrom, listSkills, installSkillDir } from './lib/render.mjs';
 import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
-import { projectConfigCandidates, ownDirDefault } from './lib/config-paths.mjs';
+import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const skillsSrc = path.join(repo, 'skills');
@@ -210,6 +210,11 @@ function installGitHooks() {
       // Back up a pre-existing hook that isn't ours instead of clobbering it. If the
       // backup slot is already taken, REFUSE rather than destroy the only copy —
       // the same rule as the foreign-skill-dir guard.
+      // CWK-120 row 4: a failure INSIDE this block (the ownership read, or the backup
+      // copy itself) used to be swallowed and execution fell through to the write below
+      // anyway -- so a foreign hook we could not verify, or could not back up, still got
+      // overwritten. The block must be able to BLOCK the write, not merely log past it.
+      let backupFailed = false;
       try {
         if (fs.existsSync(hookPath) && !isOwnHook(fs.readFileSync(hookPath, 'utf8'))) {
           const backup = hookPath + '.pre-coalmine';
@@ -222,8 +227,11 @@ function installGitHooks() {
           console.log(`  backed up existing ${hookName} → ${backup}`);
         }
       } catch (err) {
-        console.warn(`  [warn] failed to check or create hook backup: ${err.message}`);
+        console.warn(`  [warn] refused to overwrite ${hookName}: could not verify or back it up (${err.message})`);
+        process.exitCode = 1;
+        backupFailed = true;
       }
+      if (backupFailed) continue;
       fs.writeFileSync(hookPath, hookContent);
       // mode option only applies on file creation — set it explicitly so an
       // overwritten hook is executable on Unix too.
@@ -511,8 +519,8 @@ function copyDefaultConfig() {
   // full rail. Anchored at process.cwd() directly, matching this function's
   // pre-migration behavior (never findGitRoot) — only the candidate SET
   // (existence check + fresh-install write target) changed: a project already
-  // configured anywhere (own-dir, another known agent dir, or the LEGACY root
-  // dotfile) is left alone; a never-configured project now gets the NEW shape
+  // configured anywhere (own-dir, another known agent dir, or either LEGACY
+  // shape) is left alone; a never-configured project now gets the NEW shape
   // instead of the retired root dotfile, so a fresh install stops
   // perpetuating the shape this campaign is migrating off. The write target
   // is ownDirDefault (INSPECT MEDIUM 2, 2026-08-08), not a bare candidates[0]
@@ -530,7 +538,7 @@ function copyDefaultConfig() {
   }
   try {
     const candidates = projectConfigCandidates(process.cwd());
-    const existing = candidates.find((c) => fs.existsSync(c));
+    const existing = candidates.find((c) => fs.existsSync(c) && !isGlobalCfgFile(c)); // UMB-133: at cwd == home the nested legacy path is the GLOBAL file, not a project config
     if (existing) {
       console.log(`  settings file already exists at ${existing}`);
       return;

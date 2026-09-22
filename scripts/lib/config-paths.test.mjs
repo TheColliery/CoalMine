@@ -23,16 +23,60 @@ test('AGENT_DIR_ORDER is .claude -> .agents -> .gemini, fixed', () => {
   assert.deepStrictEqual(AGENT_DIR_ORDER, ['.claude', '.agents', '.gemini']);
 });
 
-test('projectConfigCandidates: the rail order is .claude -> .agents -> .gemini -> LEGACY, always relative to root', () => {
+test('projectConfigCandidates: the rail order is .claude -> .agents -> .gemini -> LEGACY (nested, then root), always relative to root', () => {
   const root = sandbox();
   try {
     assert.deepStrictEqual(projectConfigCandidates(root), [
       path.join(root, '.claude', 'coal', 'coalmine.json'),
       path.join(root, '.agents', 'coal', 'coalmine.json'),
       path.join(root, '.gemini', 'coal', 'coalmine.json'),
-      path.join(root, '.coalmine.json'),
+      path.join(root, '.claude', '.coalmine.json'), // UMB-133: the nested legacy shape
+      path.join(root, '.coalmine.json'),            // today's legacy stays LAST
     ]);
   } finally { clean(root); }
+});
+
+// UMB-133: hole (2). The nested legacy shape is a candidate, and it outranks the
+// root dotfile but never a canonical shape.
+test('UMB-133 projectConfigPath: a config at <root>/.claude/.coalmine.json is FOUND (it was silently ignored before)', () => {
+  const root = sandbox();
+  try {
+    writeJson(path.join(root, '.claude', '.coalmine.json'), { language: 'nested-legacy' });
+    assert.strictEqual(projectConfigPath(root), path.join(root, '.claude', '.coalmine.json'));
+  } finally { clean(root); }
+});
+
+test('UMB-133 projectConfigPath: the nested legacy wins over the root legacy, and a canonical shape wins over both', () => {
+  const root = sandbox();
+  try {
+    writeJson(path.join(root, '.claude', '.coalmine.json'), { language: 'nested-legacy' });
+    writeJson(path.join(root, '.coalmine.json'), { language: 'root-legacy' });
+    assert.strictEqual(projectConfigPath(root), path.join(root, '.claude', '.coalmine.json'), 'nested before root');
+    writeJson(path.join(root, '.gemini', 'coal', 'coalmine.json'), { language: 'canonical' });
+    assert.strictEqual(projectConfigPath(root), path.join(root, '.gemini', 'coal', 'coalmine.json'), 'any canonical shape before either legacy');
+  } finally { clean(root); }
+});
+
+// The nested legacy path IS the global config when root is the home dir. Read
+// as a project config it must never be one: configure.mjs migrates a legacy
+// project config by MOVING + DELETING it, which would take the global file.
+test('UMB-133 projectConfigPath: a candidate that IS the global ~/.claude/.coalmine.json is never a project config', (t) => {
+  const home = sandbox();
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home; process.env.USERPROFILE = home;
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    clean(home);
+  });
+  writeJson(path.join(home, '.claude', '.coalmine.json'), { language: 'GLOBAL' });
+  assert.strictEqual(os.homedir(), home, 'precondition: the sandbox is the home dir');
+  assert.strictEqual(projectConfigPath(home), path.join(home, '.claude', 'coal', 'coalmine.json'),
+    'root == home: the global file is skipped, so the resolver falls to the own-dir default');
+  // ...and a REAL project elsewhere with the same shape is still found.
+  const proj = sandbox();
+  t.after(() => clean(proj));
+  writeJson(path.join(proj, '.claude', '.coalmine.json'), { language: 'project' });
+  assert.strictEqual(projectConfigPath(proj), path.join(proj, '.claude', '.coalmine.json'));
 });
 
 test('projectConfigPath precedence 1/3: own-dir (.claude) wins even when every other candidate, including LEGACY, also exists', () => {

@@ -3,6 +3,12 @@
 // suite drives itself: the user remembers no commands, the agent offers the
 // right canary at the right moment, and every costly action asks first.
 // Plain stdout becomes session context. Fail-silent, no network, ~0ms.
+//
+// ponytail: 860 lines at declaration — a Claude Code hook SHIPS AND RUNS AS ONE STANDALONE
+// FILE (build-plugin.mjs INLINES the hooks/_shared partials into it; a split would need a
+// runtime require of a sibling, which breaks the copy-one-file install, or a bundler, which
+// Phoenix #2 forbids). The over-run is the cost of that shipping model — the file is one
+// hook's SessionStart path across its three platform adapters. N is HISTORY; `wc -l` is live.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -16,10 +22,34 @@ const CONDUCTOR_HEAD = [
 const CONDUCTOR_TAIL = [
   '- Specialists — offer on domain entry (never auto-run): deps/packages → supply-chain-audit · schema/contract/serialization → drift-canary · async/retry/failure paths → resilience-audit · hot loops/queries/caches → scale-canary · tests/coupling/DI → testability-canary · logging/metrics/tracing → telemetry-canary · version-sensitive facts → source-grounding.',
   '- Honor every .coalmine.json override if present (the installed commented file documents all keys).',
-  '- Self error-report: if a CoalMine component misbehaves, OFFER to file it at https://github.com/HetCreep/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit.',
+  '- Self error-report: if a CoalMine component misbehaves, OFFER to file it at https://github.com/TheColliery/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit.',
 ];
 
 // <coalmine-shared: node-config> — synced from hooks/_shared/node-config.js by build-plugin; edit the partial, not this block
+// UMB-133 (2026-09-21): the two LEGACY per-project shapes, in read order — first
+// existing wins, both AFTER the canonical three. Before this the nested shape
+// was no candidate at all, so a config a user reasonably wrote there was
+// silently walked past (the same class as CoalTipple's `fableConsent` that sat
+// dead for 14 days). The flock agrees on both shapes; the migration notice and
+// the README's `### Deprecated` entry name the canonical path.
+const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
+
+// GLOBAL-FILE GUARD: `<root>/.claude/.coalmine.json` IS the global
+// config when `root` is the home dir (a dotfiles repo at `~`, or a non-git dir
+// under it). It must never be taken for a PROJECT config: read as one it is
+// merely the global layer twice (harmless), but a writer that migrates a
+// "legacy project config" would move the user's GLOBAL file. Identity compare
+// (node/runtime.md §4: both sides through realpathSync.native), evaluated only
+// once a candidate is known to exist, so a project with no such file pays
+// nothing. An unresolvable pair means "not the same file" — the PERMISSIVE answer, and on the
+// WRITE side (configure.mjs's move + delete) the destructive one; it is unreachable because
+// `existsSync(p)` precedes every call and the global side must exist for the collision to arise.
+function isGlobalCfgFile(p) {
+  try {
+    return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
+  } catch { return false; }
+}
+
 // The three per-agent-dir shapes were added by the namespace campaign
 // (#69+#39, owner-designated 2026-08-08) alongside the LEGACY dotfile: a
 // project configured ONLY through the new shape (no `.git` present) would
@@ -28,6 +58,12 @@ const CONDUCTOR_TAIL = [
 // law) already names for a wrongly-anchored state root. Additive-only: each
 // new marker can only make the walk stop LOWER/narrower, `.git` is checked
 // first and still wins wherever it is present.
+// UMB-133 adds the nested legacy shape for the SAME reason: a project
+// configured ONLY through `.claude/.coalmine.json` (no `.git`) would otherwise
+// anchor nowhere. It is checked separately below, NOT in this list, because it
+// is the one marker that can be the GLOBAL file (see isGlobalCfgFile) — and at
+// the home dir that would make the fallback WIDER than `startDir`, the opposite
+// of "only narrower".
 const ROOT_MARKERS = [
   '.git',
   '.claude/coal/coalmine.json', '.agents/coal/coalmine.json', '.gemini/coal/coalmine.json',
@@ -38,6 +74,10 @@ function findGitRoot(startDir) {
   let dir = path.resolve(startDir);
   while (true) {
     if (ROOT_MARKERS.some((m) => fs.existsSync(path.join(dir, m)))) {
+      return dir;
+    }
+    const nested = path.join(dir, LEGACY_CONFIGS[0]);
+    if (fs.existsSync(nested) && !isGlobalCfgFile(nested)) {
       return dir;
     }
     const parent = path.dirname(dir);
@@ -62,8 +102,11 @@ function findGitRoot(startDir) {
 //      rather than needing a separate check.
 //   2. Other known agent dirs, fixed order: `.claude` -> `.agents` ->
 //      `.gemini` (first FOUND wins).
-//   3. LEGACY: <project>/.<skill-dotfile>.json at the project root (today's
-//      shape) — read normally, no breakage for an existing user.
+//   3. LEGACY, in this order, first FOUND wins (UMB-133 — both shapes, the
+//      whole flock agrees): <project>/.claude/.<skill>.json, then
+//      <project>/.<skill>.json — read normally, no breakage for an existing
+//      user; the conductor names the canonical path on a legacy hit and names
+//      a config at a non-candidate path as IGNORED (see buildLines).
 // WRITE target = where the config was found; absent everywhere, the FIRST
 // agent dir the project already has ON DISK (`.claude` -> `.agents` ->
 // `.gemini`), never a bare "own dir" default — a project that only uses
@@ -75,7 +118,7 @@ function findGitRoot(startDir) {
 const AGENT_DIR_ORDER = ['.claude', '.agents', '.gemini'];
 function projectConfigCandidates(root) {
   const candidates = AGENT_DIR_ORDER.map((d) => path.join(root, d, 'coal', 'coalmine.json'));
-  candidates.push(path.join(root, '.coalmine.json')); // LEGACY, always last
+  for (const l of LEGACY_CONFIGS) candidates.push(path.join(root, l)); // LEGACY, always last, in order
   return candidates;
 }
 // Fresh-default path when NO config exists anywhere (kept in sync by hand
@@ -95,7 +138,7 @@ function ownDirDefault(root) {
 }
 function projectConfigPath(root) {
   const candidates = projectConfigCandidates(root);
-  for (const c of candidates) { if (fs.existsSync(c)) return c; }
+  for (const c of candidates) { if (fs.existsSync(c) && !isGlobalCfgFile(c)) return c; }
   return ownDirDefault(root); // nothing found anywhere -- own-dir is both the read and write target
 }
 
@@ -118,7 +161,7 @@ function readCfgFile(file) {
 // overlaid per key by the project config (project wins). Per-project config
 // now lives under an agent dir (namespace campaign #69+#39, owner-designated
 // 2026-08-08) — see `projectConfigPath`'s own header above for the full read
-// order and the LEGACY root-dotfile fallback it still honors.
+// order and the two LEGACY fallbacks it still honors (UMB-133).
 // __proto__/constructor/prototype keys are dropped at merge (an untrusted
 // project config must not pollute the prototype). Cached — one disk pass per
 // invocation (Phoenix #3: budget the work, not the process).
@@ -234,13 +277,25 @@ const UNION_ARRAY_KEYS = {
   scanExcludePaths: { default: [] },
   disabledCanaries: { default: [], lower: true, legacy: 'disable' },
 };
+// UMB-133 findings-back (INSPECT MEDIUM-1): loadCfg takes an OPTIONAL base — the directory the
+// project-config walk starts from. No argument = `process.cwd()`, exactly as before: that is the
+// rot-canary-touch/-stop call shape (PostToolUse/Stop, whose cwd semantics are not this unit's
+// subject) and it must stay behaviour-identical. Only the conductor's AG and Gemini adapters pass
+// one — their hook process does NOT run in the workspace, so reading the project config from
+// `process.cwd()` there read a different project than the one the adapter reports on.
+// The cache is ONE entry keyed to the resolved base (`null` = the process cwd): asking for a
+// different base recomputes and replaces it, so a second base is never served the first base's
+// config; alternating bases thrash (one recompute each, still correct) rather than go stale.
 let _cfg;
-function loadCfg() {
-  if (_cfg !== undefined) return _cfg;
+let _cfgBase;
+function loadCfg(base) {
+  const key = base === undefined ? null : path.resolve(base);
+  if (_cfg !== undefined && _cfgBase === key) return _cfg;
+  _cfgBase = key;
   _cfg = null;
   try {
     const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'));
-    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(process.cwd())));
+    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(base === undefined ? process.cwd() : base)));
     if (globalCfg || projectCfg) {
       const merged = {};
       for (const src of [globalCfg, projectCfg]) {
@@ -522,7 +577,48 @@ function hasVerifiedStamp(roots) {
 function buildLines(cfg, base) {
   let skipOnboarding = false;
   try { skipOnboarding = !!(cfg && cfg.skipOnboarding === true) || hasVerifiedStamp(ruleRoots(findGitRoot(base))); } catch {}
-  return skipOnboarding ? [...CONDUCTOR_HEAD, ...CONDUCTOR_TAIL] : [...CONDUCTOR_HEAD, ONBOARDING, ...CONDUCTOR_TAIL];
+  let notes = [];
+  try { notes = configPathNotes(findGitRoot(base)); } catch {}
+  return skipOnboarding ? [...CONDUCTOR_HEAD, ...notes, ...CONDUCTOR_TAIL] : [...CONDUCTOR_HEAD, ONBOARDING, ...notes, ...CONDUCTOR_TAIL];
+}
+
+// UMB-133 (2026-09-21) — REPORT, never skip. A user who writes a project config
+// where they reasonably expect it and gets no effect is told so, by name, on
+// the one sanctioned channel this hook already has (buildLines feeds all three
+// modes — CC stdout, AG injectSteps, Gemini additionalContext; Phoenix #13: no
+// new channel, no stderr). Two notes, both constant text around a FIXED path
+// from the lists below — never a name taken from the directory, so a cloned
+// repo cannot steer what this line says:
+//   * a LEGACY hit -> one migration notice naming the canonical path;
+//   * a file at a NON-candidate path -> `IGNORED: <path> is not a config path;
+//     canonical = .claude/coal/coalmine.json`.
+// SCOPE = a report, not a crawl: existsSync on a closed list (the roots the
+// walk already reads), no readdir, no walk. NON_CANDIDATE_CFGS is the bounded
+// set of plausible wrong homes: the dotfile shape under the two agent dirs
+// that are NOT candidates for it, a bare `coal/coalmine.json` at the root (an
+// agent dir dropped), and `.claude/coalmine.json` (the `coal/` dir dropped).
+// Entries are filtered against the live candidate list, so a shape promoted to
+// a candidate later can never be reported as ignored. Phoenix #3: ~10 stats on
+// a SessionStart hook, not a PostToolUse one. Fail-silent: a probe that throws
+// costs the conductor nothing (the caller's try/catch, plus this one).
+const CANONICAL_CFG = '.claude/coal/coalmine.json';
+const NON_CANDIDATE_CFGS = ['.agents/.coalmine.json', '.gemini/.coalmine.json', 'coal/coalmine.json', '.claude/coalmine.json'];
+function configPathNotes(root) {
+  const notes = [];
+  try {
+    const rel = (p) => path.relative(root, p).split(path.sep).join('/');
+    const candidates = projectConfigCandidates(root);
+    const found = candidates.find((c) => fs.existsSync(c) && !isGlobalCfgFile(c));
+    if (found && LEGACY_CONFIGS.includes(rel(found))) {
+      notes.push(`- CoalMine config migration notice (relay once, in the user's language): ${rel(found)} is the LEGACY config location — still read, but move it to ${CANONICAL_CFG}.`);
+    }
+    const known = new Set(candidates.map(rel));
+    for (const p of NON_CANDIDATE_CFGS) {
+      if (known.has(p) || !fs.existsSync(path.join(root, p))) continue;
+      notes.push(`- CoalMine config: IGNORED: ${p} is not a config path; canonical = ${CANONICAL_CFG} (relay to the user in their language — settings in it have NO effect).`);
+    }
+  } catch {}
+  return notes;
 }
 
 // --- Antigravity adapter -----------------------------------------------------
@@ -553,9 +649,30 @@ function djb2(s) {
   return h.toString(36);
 }
 
-function agMain(cfg, updateMode) {
+// UMB-133 findings-back (INSPECT MEDIUM-1). On AG and Gemini the hook process does NOT run in the
+// workspace, so the workspace is named by the stdin PAYLOAD — and it is the workspace's config that
+// must take effect, not the hook process's own cwd's. main() therefore reads the payload ONCE, up
+// front, derives the base here, and hands it to loadCfg(base): the config GATES (enableConductor,
+// disabledCanaries, updateMode) and the config the adapter's buildLines uses then come from the same
+// root the adapter already reports on. Deferring the load — rather than re-loading inside each
+// adapter — is what makes the gates follow the workspace too; a re-load in the adapter would leave
+// `enableConductor:false` in the workspace config silently ignored while the notice beside it
+// claimed the config was honoured. A payload that names no workspace yields undefined = the process
+// cwd, unchanged. AG: `workspacePaths[0]` (the current spec's field, re-derived 2026-07-23), `cwd`
+// as the legacy fallback; Gemini: the payload's `cwd`.
+function readPayload() {
   let input = null;
   try { input = JSON.parse(fs.readFileSync(0, 'utf8').trim()); } catch {}
+  return input;
+}
+function payloadBase(mode, input) {
+  if (!input || typeof input !== 'object') return undefined;
+  const ws = mode === 'SessionStart' ? undefined : (Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined);
+  const b = (typeof ws === 'string' && ws) || (typeof input.cwd === 'string' && input.cwd) || undefined;
+  return b;
+}
+
+function agMain(cfg, updateMode, input) {
   if (!input || typeof input !== 'object') return; // no payload → no session key → skip silently (Phoenix #12)
   // conversationId = the CURRENT AG spec's documented session field (re-derived
   // 2026-07-23); the rest stay defensive legacy fallbacks (transcriptPath is
@@ -649,10 +766,7 @@ function agMain(cfg, updateMode) {
   // names the workspace (the hook process's own cwd is the hooks.json dir on AG, not the
   // workspace): `workspacePaths[0]` = the current spec's field (re-derived 2026-07-23),
   // `cwd` kept as the legacy fallback.
-  const ws = Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined;
-  const base = (typeof ws === 'string' && ws)
-    || (typeof input.cwd === 'string' && input.cwd)
-    || process.cwd();
+  const base = payloadBase('PreInvocation', input) || process.cwd();
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
@@ -681,15 +795,13 @@ function agMain(cfg, updateMode) {
 // 2026-07-15) — distinct from AG's flat {"additionalContext": ...}: the bug
 // this adapter fixes, since the old code routed Gemini through agMain, whose
 // flat shape Gemini's SessionStart hook silently drops.
-function geminiMain(cfg, updateMode) {
+function geminiMain(cfg, updateMode, input) {
   // Honor the payload's cwd exactly like agMain (one-flock): the hook process's
   // own cwd is not guaranteed to be the workspace; a stdin payload cwd is
   // authoritative when present. Absent/garbage stdin → fall back to
   // process.cwd() (a no-op when Gemini supplies no cwd). Resolved ONCE, shared
   // by the onboarding check (buildLines) and KIND 2 below.
-  let input = null;
-  try { input = JSON.parse(fs.readFileSync(0, 'utf8').trim()); } catch {}
-  const base = (input && typeof input.cwd === 'string' && input.cwd) || process.cwd();
+  const base = payloadBase('SessionStart', input) || process.cwd();
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
@@ -704,8 +816,14 @@ function main() {
   let updateMode = 'ask';
   let updateCheckDays = 14;
   let cfg = null;
+  // The adapters (Gemini 'SessionStart', AG = any other truthy argv, but not 'FileCopy') take their
+  // workspace from the stdin payload, read once here; CC / FileCopy have no payload base and read
+  // process.cwd() exactly as before.
+  const mode = process.argv[2];
+  const adapter = mode && mode !== 'FileCopy';
+  const payload = adapter ? readPayload() : null;
   try {
-    cfg = loadCfg();
+    cfg = loadCfg(adapter ? payloadBase(mode, payload) : undefined);
     if (cfg && (cfg.enableConductor === false || cfg.conductor === false)) return; // legacy key honored
     const disabled = cfg && (cfg.disabledCanaries !== undefined ? cfg.disabledCanaries : cfg.disable); // legacy key honored
     if (Array.isArray(disabled) && (disabled.includes('conductor') || disabled.includes('all'))) return;
@@ -720,7 +838,7 @@ function main() {
 
   // Gemini mode (argv === 'SessionStart', see the Gemini adapter above) —
   // checked FIRST, before the generic-truthy AG branch below.
-  if (process.argv[2] === 'SessionStart') { geminiMain(cfg, updateMode); return; }
+  if (process.argv[2] === 'SessionStart') { geminiMain(cfg, updateMode, payload); return; }
 
   // File-copy mode (argv === 'FileCopy' — the platform-configs for Copilot CLI /
   // Kiro / Augment / Devin CLI / Junie): platforms whose hook OUTPUT contract is
@@ -740,7 +858,7 @@ function main() {
   // AG mode: any OTHER truthy argv → the Antigravity adapter (once-per-session
   // marker guard + injectSteps emit). The config gates above already ran.
   // Never 'SessionStart' or 'FileCopy' — those argv values are claimed above.
-  if (process.argv[2] && !fileCopy) { agMain(cfg, updateMode); return; }
+  if (process.argv[2] && !fileCopy) { agMain(cfg, updateMode, payload); return; }
 
   // CC / file-copy path: process.cwd() IS the workspace here (unlike AG/Gemini, whose hook
   // process may start elsewhere) — the onboarding check reads it directly, same cwd source

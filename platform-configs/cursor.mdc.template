@@ -25,7 +25,7 @@ Skills live in `.cursor/skills/` (one `SKILL.md` each). Invoke by keyword; each 
 
 **Rule freshness:** if a CoalMine-stamped rule's `revalidate` due date has passed, offer `/gold-standard` re-validation via your question tool (Run now / Queue / Skip).
 
-**Per-project config:** honor the config as the CASCADE — **every config key**, `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.coalmine.json`), project wins per key; a bare project read is ABSENT on a globally-configured machine and silently yields defaults — `disable` (canary name list), `defaultTier`, `language` override defaults.
+**Per-project config:** honor the config as the CASCADE — **every config key**, `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate, among the clamp's own known values; an absent global reads as the schema default and is clamped the same way — an unrecognized project value is not validated here), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops) — a bare project read is ABSENT on a globally-configured machine and silently yields defaults — `disable` (canary name list), `defaultTier`, `language` override defaults.
 
 **Session end:** if code files were modified, run `/rot-canary` on them (QUICK, report only) and surface CRITICAL/HIGH findings before finishing. Do not block work.
 

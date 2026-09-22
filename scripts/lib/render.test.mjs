@@ -549,7 +549,7 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
 // the pointer gate probes it at all. `git check-ignore -v --stdin` names the lone-CR
 // line as the matching pattern (`.gitignore:2:<TAB>root/`, rendered invisibly), so the
 // source is unambiguous, not a fluke of this one fixture.
-test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-matches an absent root under the bare feed; the injection-site feed and the real gate are immune', () => {
+test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-matches an absent root under the bare feed; the injection-site feed and the real gate are immune', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-lonecr-'));
   try {
     for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
@@ -592,15 +592,28 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
     // THE DISCRIMINATING PAIR, at the git level, on the SAME real fixture -- no
     // source-code substitution needed, since the bare feed and the probe feed are
     // both real, independent git invocations.
+    // CWK-120 row 21: this repo's CI matrix does not pin a Git version, and lone-CR
+    // .gitignore parsing is not a documented, universal Git contract -- a different
+    // runner's Git can legitimately answer status 1 here (correctly NOT ignored,
+    // i.e. this quirk simply does not reproduce on that Git). That is an
+    // ENVIRONMENT difference, not a CoalMine defect, so it is a visible skip of the
+    // quirk-specific assertions only -- any OTHER non-zero status is still a real
+    // fixture failure (git missing, the .gitignore fixture itself broken) and stays
+    // fatal. The CONTROL and END-TO-END assertions below run unconditionally either
+    // way, so every runner still tests the actual CoalMine behavior.
     const bare = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/\n' });
-    assert.equal(bare.status, 0,
-      'RED: the bare feed must reproduce the false match on THIS fixture -- an absent, un-patterned root reported ignored');
-    const probed = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/.pointer-check-probe\n' });
-    assert.equal(probed.status, 1,
-      'the injection-site feed correctly reports the SAME root as NOT ignored');
-    const verbose = spawnSync('git', ['check-ignore', '-v', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/\n' });
-    assert.match(verbose.stdout, /\.gitignore:2:/,
-      'the matching pattern must be the lone-CR line (line 2), naming the source unambiguously');
+    if (bare.status === 1) {
+      t.diagnostic('this Git does not reproduce the lone-CR false-match (bare.status === 1) -- skipping the quirk-specific assertions only; control + end-to-end still run below');
+    } else {
+      assert.equal(bare.status, 0,
+        `RED: the bare feed must reproduce the false match on THIS fixture (or answer 1 if this Git version does not) -- got status ${bare.status}, a genuine fixture failure`);
+      const probed = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/.pointer-check-probe\n' });
+      assert.equal(probed.status, 1,
+        'the injection-site feed correctly reports the SAME root as NOT ignored');
+      const verbose = spawnSync('git', ['check-ignore', '-v', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/\n' });
+      assert.match(verbose.stdout, /\.gitignore:2:/,
+        'the matching pattern must be the lone-CR line (line 2), naming the source unambiguously');
+    }
 
     // CONTROL: a genuinely-ignored root still matches under BOTH feeds -- the probe
     // loses no true positive.
@@ -647,7 +660,16 @@ test('verify.mjs 2.11 pointers: git unavailable degrades to a NAMED SKIP, never 
     assert.equal(r.status, 0, `git-unavailable must still exit 0 (nothing else in this repo depends on git), got:${NL}${r.stdout}${r.stderr}`);
     assert.match(r.stdout, /pointers:\n\s+--\s+pointer check: git unavailable.*skipped/,
       'the pointers block must print a visible, named SKIP -- never a silent carve-out and never a FAIL');
-    const pointersBlock = r.stdout.slice(r.stdout.indexOf('pointers:'), r.stdout.indexOf('hooks:'));
+    // CWK-120 row 20: `indexOf('hooks:')` returning -1 (a rename, a reorder) makes
+    // `slice(start, -1)` truncate the string instead of delimiting a block -- the
+    // doesNotMatch below would then pass having checked something other than the
+    // pointers section. This is the exact vacuity class this file exists to guard
+    // against; assert both markers exist and are correctly ordered BEFORE slicing.
+    const start = r.stdout.indexOf('pointers:');
+    const end = r.stdout.indexOf('hooks:');
+    assert.ok(start !== -1 && end > start,
+      `the pointers block must be delimited by a following hooks: block, got:${NL}${r.stdout}`);
+    const pointersBlock = r.stdout.slice(start, end);
     assert.doesNotMatch(pointersBlock, /FAIL/,
       'a question only git can answer must never redden the gate for a non-git user');
   } finally {

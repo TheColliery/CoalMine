@@ -18,11 +18,14 @@ function git(args, repo) {
   return r.stdout;
 }
 
-// A minimal but real repo: plugin/ + .claude-plugin/plugin.json (the two DIST_PATHS) +
-// CHANGELOG.md with a [1.0.0] heading, committed and tagged v1.0.0 — the baseline every
-// test starts from, matching this room's live shape (a version heading, a prior tag).
-function mkTaggedRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-distchangelog-'));
+// CWK-120 row 17: init + the signing overrides, in ONE place. `mkTaggedRepo` set only
+// tag.gpgSign/tag.forceSignAnnotated (the annotated-tag trap, see below) and the two
+// inline fixtures set fewer still -- one committed with NEITHER override, the other
+// with only the tag pair -- so on a host with a global commit.gpgsign=true the bare
+// `git commit` each of them makes fails non-interactively, and the test errors for a
+// FIXTURE reason, not the reason it names. A shared helper means a fourth fixture
+// inherits the guard instead of being one more site to forget it at.
+function initFixtureRepo(dir) {
   git(['init', '-q', '-b', 'main'], dir);
   git(['config', 'user.email', 'test@test.invalid'], dir);
   git(['config', 'user.name', 'Test'], dir);
@@ -34,6 +37,14 @@ function mkTaggedRepo() {
   // actually found — a fixture bug, not a bug in checkDistChangelog itself).
   git(['config', 'tag.gpgSign', 'false'], dir);
   git(['config', 'tag.forceSignAnnotated', 'false'], dir);
+}
+
+// A minimal but real repo: plugin/ + .claude-plugin/plugin.json (the two DIST_PATHS) +
+// CHANGELOG.md with a [1.0.0] heading, committed and tagged v1.0.0 — the baseline every
+// test starts from, matching this room's live shape (a version heading, a prior tag).
+function mkTaggedRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-distchangelog-'));
+  initFixtureRepo(dir);
   fs.mkdirSync(path.join(dir, 'plugin', 'skills'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'plugin', 'skills', 'a.md'), 'skill A\n');
@@ -48,11 +59,7 @@ function mkTaggedRepo() {
 test('resolveLastTag: null when the tag list is empty, the highest tag when several exist regardless of creation order', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-distchangelog-tags-'));
   try {
-    git(['init', '-q', '-b', 'main'], dir);
-    git(['config', 'user.email', 'test@test.invalid'], dir);
-    git(['config', 'user.name', 'Test'], dir);
-    git(['config', 'tag.gpgSign', 'false'], dir);
-    git(['config', 'tag.forceSignAnnotated', 'false'], dir);
+    initFixtureRepo(dir);
     fs.writeFileSync(path.join(dir, 'f.txt'), 'x\n');
     git(['add', '-A'], dir);
     git(['commit', '-q', '-m', 'c1'], dir);
@@ -78,9 +85,7 @@ test('checkDistChangelog: not a git repository degrades to a visible SKIP, never
 test('checkDistChangelog: a git repo with NO tags degrades to a visible SKIP naming why (the no-tag-reachable case, e.g. a shallow checkout)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-distchangelog-notag-'));
   try {
-    git(['init', '-q', '-b', 'main'], dir);
-    git(['config', 'user.email', 'test@test.invalid'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initFixtureRepo(dir);
     fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# Changelog\n');
     git(['add', '-A'], dir);
     git(['commit', '-q', '-m', 'c1'], dir);

@@ -417,7 +417,18 @@ test('looksPathShaped residue: an extensionless real path with no trailing slash
 // pre-gate already SKIPs before this spawn fires).
 function mkGitRepoForIgnoreProbe() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-ci-classify-'));
-  const g = (args) => spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+  // CWK-120 row 19: every result was discarded, so a broken fixture (git unavailable,
+  // a setup command rejected) surfaced as a classifier ASSERTION failure downstream --
+  // the wrong diagnosis for a fixture problem. This suite deliberately defines no
+  // git-optional capability gate (per the reviewer's own reading of the file), so a
+  // setup failure is loud, not a silent skip.
+  const g = (args) => {
+    const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+    if (r.status !== 0) {
+      throw new Error(`fixture setup failed: git ${args.join(' ')}: ${r.stderr || r.error?.message}`);
+    }
+    return r;
+  };
   g(['init', '-q', '-b', 'main']);
   g(['config', 'user.email', 'test@test.invalid']);
   g(['config', 'user.name', 'Test']);

@@ -20,7 +20,7 @@ body:
     id: version
     attributes:
       label: CoalMine version + platform
-      placeholder: "v3.19.0 · Claude Code (plugin) on Windows 11"  # version-pin: tracks .claude-plugin/plugin.json — bump on release
+      placeholder: "v3.20.1 · Claude Code (plugin) on Windows 11"  # version-pin: tracks .claude-plugin/plugin.json — bump on release
     validations:
       required: true
   - type: textarea

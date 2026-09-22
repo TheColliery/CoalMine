@@ -128,6 +128,19 @@ test('checkFile: a bare #anchor matching a real heading in the same file is not 
   assert.strictEqual(findings.length, 0);
 });
 
+// CWK-120 row 18: `%` is a legal anchor character in ordinary prose ("100% done"), and
+// a bare `%` or a `%` followed by non-hex digits is not a valid percent-escape --
+// decodeURIComponent throws URIError on it. This is not attacker input, it is an
+// ordinary heading a real contributor writes; the checker must report a finding, not
+// crash the whole walk (and the workflow step) on one file.
+test('checkFile: an anchor with an invalid percent-escape (ordinary "%" in prose) is reported as a finding, never throws', () => {
+  const files = { '/repo/a.md': '# Real Heading\n\nsee [x](#100%-done)' };
+  assert.doesNotThrow(() => checkFile('/repo/a.md', '/repo', (p) => files[p]));
+  const findings = checkFile('/repo/a.md', '/repo', (p) => files[p]);
+  assert.strictEqual(findings.length, 1);
+  assert.match(findings[0], /dead anchor/);
+});
+
 test('checkFile: file+anchor link -- dead anchor in an otherwise-live target file is reported', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'link-check-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

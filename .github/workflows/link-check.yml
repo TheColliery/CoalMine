@@ -38,13 +38,19 @@ jobs:
           # introduced only by the render step (inside an inlined shared partial) is
           # invisible to this gate. Benign today, measured: 0 finding(s) across the 32
           # excluded files.
-          files=$(git ls-files '*.md' | grep -v '^plugin/')
+          # CWK-120 row 9: a newline-delimited $(...) then UNQUOTED expansion (the shape
+          # this replaced) splits a path containing a space into two argv entries -- the
+          # checker then treats each half as its own path, silently skipping the real
+          # file and failing on two that do not exist. Reachability is 0 today (no
+          # tracked .md path here has a space), but the fix is NUL-delimited throughout,
+          # which cannot be defeated by any character git allows in a filename.
+          mapfile -d '' files < <(git ls-files -z '*.md' | grep -z -v '^plugin/')
 
           # CWK-079-class fail-open guard -- an empty file list must never read as a clean
           # pass. Asserted BEFORE the engine ever runs (this room's own RED-PROVE-BOTH-
           # DIRECTIONS instruction for this ticket), not inferred from the engine's own exit
           # code, which is a wrapped-and-verified concern handled below.
-          if [ -z "$files" ]; then
+          if [ "${#files[@]}" -eq 0 ]; then
             echo "link-check: file list is EMPTY -- refusing to read that as a clean pass" >&2
             exit 1
           fi
@@ -53,5 +59,6 @@ jobs:
           # (unlike a skill-shared engine that always exits 0), so there is deliberately NO
           # wrap here -- the module owns its own exit code and a bare invocation already
           # fails the step. Verified both ways: a planted dead link/anchor exits 1, this
-          # repo's own 60-file scope exits 0.
-          node scripts/lib/link-check.mjs $files
+          # repo's own live scope (re-derive, never trust a pinned count: the mapfile
+          # above, `${#files[@]}`) exits 0.
+          node scripts/lib/link-check.mjs "${files[@]}"

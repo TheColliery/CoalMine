@@ -30,6 +30,7 @@ const TESTS = [
   'scripts/lib/consistency.test.mjs',
   'scripts/lib/jsonc.test.mjs',
   'scripts/lib/conductor-update.test.mjs',
+  'scripts/lib/conductor-config-path.test.mjs',
   'scripts/lib/desc-cap.test.mjs',
   'scripts/lib/dist-changelog.test.mjs',
   'scripts/lib/config-keys.test.mjs',

@@ -345,11 +345,15 @@ try {
       ['.claude-plugin/', 'JSON manifests; no comments, and their paths are gate-checked elsewhere'],
       ['.github/FUNDING.yml', 'GitHub config, no prose'],
       ['.github/dependabot.yml', 'GitHub config, no prose'],
+      ['.github/scripts/lcov-to-cobertura.mjs', 'byte-identical copy of the org template converter (UMB-124) on no walked surface (DEFAULT_SURFACE_PLAN has no .github/scripts/ row), so the accounting fails without a declaration; its comments hold 0 pointer candidates (re-derive: pointerCandidates over its // and * lines), so nothing is hidden today, and were it ever walked a finding could only be closed by editing a file this room does not own'],
       ['LICENSE', 'legal text, not ours to edit'],
       ['NOTICE', 'legal text, not ours to edit'],
       ['hooks/hooks.json', 'JSON carries no comments'],
       ['hooks/settings.snippet.json', 'JSON carries no comments'],
       ['skill-meta.json', 'three intent strings per skill; JSON, no comments'],
+      ['.gitbook.yaml', 'UMB-169: three fixed keys, no comments, no pointer candidates'],
+      ['SUMMARY.md', 'UMB-169: a GitBook nav list, not ship-text prose; not in DEFAULT_SURFACE_PLAN because pointerCandidates() over it returns 0 (a plan row would be vacuous), but its links ARE re-checked on every push by link-check.mjs (see .github/workflows/link-check.yml), which fails on a dead entry -- coverage lives in a live gate, not a one-time human check'],
+      ['.coderabbit.yaml', 'CWK-120 (c): a fixed-schema YAML config; its comments cite hooks-safety.md/scripts-quality.md/DOC-PATTERN.md/SKILL-REPO-PATTERN.md by bare filename (no backticks, no /) and the vendor docs by URL, so pointerCandidates() -- which reads only backtick-wrapped, /-bearing tokens -- returns 0 over it; a plan row would be vacuous'],
     ];
     const declaredOut = (f) => DECLARED_OUT.some(([pre]) => f.startsWith(pre) || f.endsWith('/' + pre));
     const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };

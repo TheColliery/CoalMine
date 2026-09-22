@@ -124,6 +124,13 @@ export function extractLinks(text) {
   return links;
 }
 
+// CWK-120 row 18: `decodeURIComponent` throws URIError on a malformed percent sequence
+// -- an ordinary anchor like `#100%-done` or `#50%` reaches it unfiltered from a link
+// target this checker itself never wrote. Undecodable text is not the same claim as
+// "decoded", so it degrades to itself rather than the empty string a swallowed error
+// would silently return.
+const decodeAnchor = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+
 // One file's findings. `readFile` is injected so a unit test can drive this against an
 // in-memory fixture set without touching a real filesystem.
 export function checkFile(filePath, repoRoot, readFile = (p) => fs.readFileSync(p, 'utf8')) {
@@ -136,7 +143,7 @@ export function checkFile(filePath, repoRoot, readFile = (p) => fs.readFileSync(
 
     const hashIdx = target.indexOf('#');
     const filePart = hashIdx === -1 ? target : target.slice(0, hashIdx);
-    const anchorPart = hashIdx === -1 ? '' : decodeURIComponent(target.slice(hashIdx + 1));
+    const anchorPart = hashIdx === -1 ? '' : decodeAnchor(target.slice(hashIdx + 1));
 
     if (!filePart) {
       // A bare `#anchor` targets a heading in THIS file.
