@@ -154,6 +154,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       security-events: write
     steps:
       # HONESTY STEP (CWK-058), FIRST so it is the first thing a reader sees. This check now

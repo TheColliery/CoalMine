@@ -5,14 +5,14 @@
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "node \"<REPO>\\hooks\\rot-canary-touch.js\"" }
+          { "type": "command", "command": "node \"<REPO>/hooks/rot-canary-touch.js\"" }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"<REPO>\\hooks\\rot-canary-stop.js\"" }
+          { "type": "command", "command": "node \"<REPO>/hooks/rot-canary-stop.js\"" }
         ]
       }
     ]

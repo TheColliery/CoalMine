@@ -160,7 +160,20 @@ function main() {
       const content = rawConfig;
       hadComments = content.includes('//');
       const cleanJson = stripJsonc(content);
-      cfg = JSON.parse(cleanJson) || {};
+      // CWK-120 row 16 / ride-along (a): `JSON.parse(x) || {}` lets any TRUTHY
+      // non-object root (a string, a number, `true`, an array) through as `cfg` --
+      // `[]`/`"auto"`/`42` all pass `|| {}` unchanged. `cfg[spec.key] = ...` below
+      // then throws an uncaught strict-mode TypeError on a primitive root (the user
+      // sees a stack trace, not the backed-up rebuild this block already promises
+      // for malformed JSON), and an array root silently gets written back as an
+      // array. Thrown INSIDE this try so the existing catch's backup-and-rebuild
+      // path runs -- the malformed-root case and the wrong-type-root case now
+      // degrade the same way.
+      const parsed = JSON.parse(cleanJson);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('the config root must be a JSON object');
+      }
+      cfg = parsed;
       // Migrate legacy/retired keys to their current forms.
       if (cfg.conductor !== undefined) {
         cfg.enableConductor = cfg.enableConductor ?? cfg.conductor;

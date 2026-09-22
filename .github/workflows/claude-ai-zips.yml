@@ -84,11 +84,17 @@ jobs:
         run: |
           set -euo pipefail
           cd dist-claude-ai
-          for d in */; do
-            name="${d%/}"
-            (cd "$name" && zip -r "../${name}.zip" . -x '.*')
+          # CWK-120 row 8: a staged name beginning with `-` would reach `cd`, `ls` and
+          # `sha256sum` (below) as an option, not a path. Reachability is 0 today (every
+          # name comes from this repo's own skills/ dir list), but the guard is one
+          # option-terminator per site, so it stays that way even if a future skill name
+          # ever started with a dash.
+          for d in ./*/; do
+            name="${d#./}"
+            name="${name%/}"
+            (cd -- "$name" && zip -r "../${name}.zip" . -x '.*')
           done
-          ls -la *.zip
+          ls -la -- *.zip
 
       # board #99 — a downloader had no way to verify the ZIPs' integrity.
       - name: Generate SHA256SUMS.txt for the ZIPs
@@ -96,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist-claude-ai
-          sha256sum *.zip > SHA256SUMS.txt
+          sha256sum -- *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       # board #99 — this trigger fires on the tag push, BEFORE main's separate REST call

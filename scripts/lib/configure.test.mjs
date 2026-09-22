@@ -113,6 +113,30 @@ test('configure fails loud (exit 1) when the existing legacy config is malformed
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+// CWK-120 row 16 / ride-along (a): `JSON.parse(x) || {}` accepts any TRUTHY non-object
+// root. Both are VALID JSON, so they take the OLD code past the try's own happy path
+// and into `cfg[spec.key] = ...` (the flag loop, further down the file) -- a scalar
+// root threw an uncaught strict-mode TypeError there (a raw stack trace, not this
+// block's own promised backed-up rebuild); an array root silently got a stray
+// property attached and was written back as an array. Both must now take the SAME
+// malformed-config path the test above already proves for unparseable JSON.
+for (const [label, literal] of [['a scalar root', '42'], ['an array root', '["a","b"]']]) {
+  test(`configure treats ${label} the same as malformed JSON -- backed up, rebuilt, never a crash or a written-back non-object`, () => {
+    const dir = freshProject();
+    try {
+      fs.writeFileSync(path.join(dir, LEGACY_REL), literal, 'utf8');
+      const r = runConfigure(['--language', 'en'], dir);
+      assert.strictEqual(r.status, 1, `a non-object config root must fail loud (exit 1):\n${r.stdout}${r.stderr}`);
+      assert.doesNotMatch(r.stderr, /TypeError/, 'must never surface a raw stack trace to the user');
+      const cfg = JSON.parse(fs.readFileSync(path.join(dir, NEW_REL), 'utf8'));
+      assert.strictEqual(cfg.language, 'en', 'the requested change is still applied on a rebuild');
+      assert.ok(!Array.isArray(cfg), 'the rebuilt config is a plain object, never an array');
+      assert.strictEqual(fs.readFileSync(path.join(dir, LEGACY_REL + '.bak'), 'utf8'), literal, 'the non-object root is backed up byte-exact, never lost');
+      assert.ok(!fs.existsSync(path.join(dir, LEGACY_REL)), 'the legacy root config itself is gone after migration, only the .bak remains');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+}
+
 test('configure migrating a LEGACY config in a project that already has .agents/ (no .claude) lands the migration at .agents, never a foreign .claude (INSPECT MEDIUM 2, 2026-08-08)', () => {
   const dir = freshProject();
   try {

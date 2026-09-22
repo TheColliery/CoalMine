@@ -210,6 +210,11 @@ function installGitHooks() {
       // Back up a pre-existing hook that isn't ours instead of clobbering it. If the
       // backup slot is already taken, REFUSE rather than destroy the only copy —
       // the same rule as the foreign-skill-dir guard.
+      // CWK-120 row 4: a failure INSIDE this block (the ownership read, or the backup
+      // copy itself) used to be swallowed and execution fell through to the write below
+      // anyway -- so a foreign hook we could not verify, or could not back up, still got
+      // overwritten. The block must be able to BLOCK the write, not merely log past it.
+      let backupFailed = false;
       try {
         if (fs.existsSync(hookPath) && !isOwnHook(fs.readFileSync(hookPath, 'utf8'))) {
           const backup = hookPath + '.pre-coalmine';
@@ -222,8 +227,11 @@ function installGitHooks() {
           console.log(`  backed up existing ${hookName} → ${backup}`);
         }
       } catch (err) {
-        console.warn(`  [warn] failed to check or create hook backup: ${err.message}`);
+        console.warn(`  [warn] refused to overwrite ${hookName}: could not verify or back it up (${err.message})`);
+        process.exitCode = 1;
+        backupFailed = true;
       }
+      if (backupFailed) continue;
       fs.writeFileSync(hookPath, hookContent);
       // mode option only applies on file creation — set it explicitly so an
       // overwritten hook is executable on Unix too.

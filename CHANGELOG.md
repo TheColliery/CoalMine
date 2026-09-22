@@ -2,6 +2,20 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Changed
+- **CWK-121 (b) — the shipped `.claude-plugin/plugin.json` `homepage`/`repository` fields and
+  `coalmine-conductor.js`'s self-error-report URL still pointed at the pre-transfer
+  `github.com/HetCreep/CoalMine` address (redirects, but the dist should carry the live one). Both now
+  read `github.com/TheColliery/CoalMine`. `plugin.json`'s `author.name` ("HetCreep") is left unchanged —
+  it names the person, not the repo address.**
+
+<!-- CWK-120's 12 CodeRabbit-row fixes (rows 1/4/8/9/11/16/17/18/19/20/21/25) touch no file build-plugin.mjs
+copies into plugin/ -- per scripts-quality.md §3 ("a change that does not reach the shipped dist does
+not get a version at all... no [Unreleased] CHANGELOG entry either"), they are NOT listed here. Full
+per-row disposition: scratchpad/cwk120/build-note.md. -->
+
 ## [3.20.0] - 2026-09-21
 
 ### Added
