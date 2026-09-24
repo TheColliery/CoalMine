@@ -13,6 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { MAX_CONFIG_BYTES } from './repo-fs.mjs';
+import { startFifoWriter } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOUCH = path.join(repo, 'hooks', 'rot-canary-touch.js');
@@ -2250,4 +2252,100 @@ test('CWK-137: a FIFO README.md does not block the stop hook language probe (POS
   assert.equal(r.error, undefined, `the stop hook must not block on a FIFO: ${r.error}`);
   assert.equal(r.status, 0);
   assert.ok(r.stdout.length > 0, 'the scan nudge is still emitted');
+});
+
+// ─── CWK-137 findings-back (INSPECT MEDIUM-1): pin the layers the first tests masked ─────
+// Each test below goes RED under one named mutation that left the first suite green
+// (H1 size bound, H2 walk bounds, H4/H6/M1 the lstat kind gate). The mutation list is in
+// scratchpad/cwk137/build-note.md, FINDINGS-BACK 1.
+function writeSizedConfig(dir, bytes) {
+  const shell = JSON.stringify({ enableConductor: false, pad: '' });
+  const body = JSON.stringify({ enableConductor: false, pad: 'x'.repeat(bytes - shell.length) });
+  assert.equal(Buffer.byteLength(body), bytes, 'fixture sanity: the config is exactly the requested size');
+  fs.mkdirSync(path.join(dir, '.claude', 'coal'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude', 'coal', 'coalmine.json'), body);
+}
+
+test('CWK-137: a project config of exactly MAX_CONFIG_BYTES is honored (enableConductor:false silences the conductor)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  writeSizedConfig(tmp, MAX_CONFIG_BYTES);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '', 'a config AT the bound is read and obeyed');
+});
+
+test('CWK-137: a project config of MAX_CONFIG_BYTES + 1 is SKIPPED, not parsed -- the conductor still emits', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  writeSizedConfig(tmp, MAX_CONFIG_BYTES + 1);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('[CoalMine]'), 'a config one byte over the bound must not be honored');
+});
+
+// The walk budget is shared by every rule root and a spent budget stops the WHOLE walk, so
+// a stamp in AGENTS.md (the last root) is reached only when .claude/rules stays within it.
+// Entry order inside one directory is filesystem-defined; across roots it is fixed.
+function plantRuleEntries(dir, count) {
+  const rules = path.join(dir, '.claude', 'rules');
+  fs.mkdirSync(rules, { recursive: true });
+  for (let i = 0; i < count; i++) fs.writeFileSync(path.join(rules, `e${i}.txt`), '');
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+}
+
+test('CWK-137: the rule walk stops after MAX_RULE_WALK_ENTRIES -- a stamp past entry 5000 is not reached', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantRuleEntries(tmp, 5001);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a spent walk budget must not read past it');
+});
+
+test('CWK-137: the rule walk reaches a stamp when exactly MAX_RULE_WALK_ENTRIES entries precede it (the bound itself)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantRuleEntries(tmp, 5000);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'at the bound the walk still reaches AGENTS.md');
+});
+
+function plantNestedStamp(dir, depth) {
+  let d = path.join(dir, '.claude', 'rules');
+  for (let i = 1; i <= depth; i++) d = path.join(d, String(i));
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'gold-standard.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+}
+
+test('CWK-137: the rule walk does not descend past MAX_RULE_WALK_DEPTH -- a stamp at depth 17 is not reached', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantNestedStamp(tmp, 17);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a stamp below the depth bound must not be read');
+});
+
+test('CWK-137: the rule walk reaches a stamp at depth 16 (the bound itself)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantNestedStamp(tmp, 16);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'at the depth bound the stamp is read');
+});
+
+test('CWK-137: a FIFO in the rules tree is never OPENED by the conductor -- a blocked writer proves it (POSIX)', async (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canMkfifo(tmp)) { t.skip('no mkfifo on this platform'); return; }
+  const fifo = path.join(tmp, '.claude', 'rules', 'x.md');
+  fs.mkdirSync(path.dirname(fifo), { recursive: true });
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  const { exited } = await startFifoWriter(fifo, path.join(tmp, '.writer-ready'));
+  const r = runHookCapped(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.equal(await exited, 'blocked', 'the conductor must skip the FIFO before open -- the writer would have unblocked');
 });

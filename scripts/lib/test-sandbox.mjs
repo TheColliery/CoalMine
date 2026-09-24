@@ -23,7 +23,7 @@
 // does the installer do when cwd is the live repo" (the self-pollution guard) still
 // needs HOME/TEMP to resolve OUTSIDE that repo -- folding sandboxDir into cwd, as the
 // pre-fix per-file helpers did, made that impossible to express for exactly that test.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -83,4 +83,24 @@ export function withHomeReporter(reporterPath, fn) {
     if (prev === undefined) delete process.env.NODE_OPTIONS;
     else process.env.NODE_OPTIONS = prev;
   }
+}
+
+// CWK-137 findings-back (INSPECT MEDIUM-1c): an OPEN-DETECTING probe for a FIFO. A writer
+// blocked in open(O_WRONLY) unblocks if and only if something opens the FIFO for reading,
+// so "the code under test never opened it" becomes observable instead of inferred from
+// "it returned quickly" (an O_NONBLOCK open also returns quickly, and still opened it).
+// POSIX only -- the caller probes mkfifo first. The kill timer lives here, not in
+// coreutils `timeout`, which macOS does not ship. Resolves 'blocked' (never opened) or
+// 'opened'. The writer signals readiness by creating `readyFile` just before its open.
+export async function startFifoWriter(fifo, readyFile, blockMs = 3000) {
+  const child = spawn('sh', ['-c', ': > "$1"; echo x > "$0"', fifo, readyFile], { stdio: 'ignore' });
+  // The verdict comes from HOW the writer ended, never from a flag: a synchronous caller
+  // (spawnSync of a hook) can hold the event loop past the timer, so the timer may fire
+  // after the writer already exited -- a kill of a dead process is a no-op, and only a
+  // writer still blocked in open() dies by SIGKILL.
+  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve(signal === 'SIGKILL' ? 'blocked' : 'opened')));
+  for (let i = 0; i < 100 && !fs.existsSync(readyFile); i++) await new Promise((r) => setTimeout(r, 20));
+  await new Promise((r) => setTimeout(r, 200)); // let the writer reach its blocking open()
+  setTimeout(() => child.kill('SIGKILL'), blockMs).unref();
+  return { exited };
 }

@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { startFifoWriter } from './test-sandbox.mjs';
 import {
   MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, readRepoBytesBounded,
   checkRepoWriteTarget, writeRepoFile, RepoWriteRefused,
@@ -82,14 +83,17 @@ test('a file symlink escaping the root is refused on read (POSIX, or Windows wit
   assert.equal(readRepoFileBounded(path.join(root, 'cfg.json'), root, MAX_CONFIG_BYTES), null);
 });
 
-test('a FIFO is skipped BEFORE open -- the read returns at once instead of blocking (POSIX)', (t) => {
+// INSPECT MEDIUM-1c: "returned quickly" does not prove "never opened" -- an O_NONBLOCK open
+// also returns at once. A writer blocked in open(O_WRONLY) unblocks iff the FIFO was opened
+// for reading, so its fate is the observation (startFifoWriter, test-sandbox.mjs).
+test('a FIFO is skipped BEFORE open -- a blocked writer proves the FIFO was never opened (POSIX)', async (t) => {
   const root = tmpDir(t, 'fifo');
   if (!canMkfifo(root)) { t.skip('no mkfifo on this platform'); return; }
   const fifo = path.join(root, 'AGENTS.md');
   assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
-  const started = Date.now();
+  const { exited } = await startFifoWriter(fifo, path.join(root, '.writer-ready'));
   assert.equal(readRepoFileBounded(fifo, root, MAX_DOC_BYTES), null);
-  assert.ok(Date.now() - started < 5000, 'the read must not block on the FIFO');
+  assert.equal(await exited, 'blocked', 'the FIFO must never be opened -- the writer would have unblocked');
 });
 
 test('a link to /dev/zero is refused -- no unbounded read, no allocation (POSIX)', (t) => {
