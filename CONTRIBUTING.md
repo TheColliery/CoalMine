@@ -73,7 +73,7 @@ pre-commit and pre-push then run `scripts/test.mjs`, `scripts/verify.mjs`, and `
 
 ## 🚀 Releasing (Maintainers)
 
-Bump the version in `.claude-plugin/plugin.json` → add a `CHANGELOG.md` entry → ensure `verify.mjs`, the test suite, and `consistency.mjs` pass (all three run automatically on commit/push once `.githooks/` is enabled, per above) → commit → create a signed git tag (`vX.Y.Z`) → push `--follow-tags` → publish a GitHub Release for the stable tag.
+Bump the version in `.claude-plugin/plugin.json` → add a `CHANGELOG.md` entry → ensure `verify.mjs`, the test suite, and `consistency.mjs` pass (all three run automatically on commit/push once `.githooks/` is enabled, per above) → commit → create a signed annotated git tag (`vX.Y.Z`) → push `--follow-tags`. Do not create the Release by hand: the tag push runs `.github/workflows/claude-ai-zips.yml`, the sole creator of this repo's Releases. It derives the Release title (`vX.Y.Z - <summary>`) and body from the `CHANGELOG.md` entry, builds and attaches one ZIP per skill and `SHA256SUMS.txt`, and re-reads the Release by hash. So the top `CHANGELOG.md` entry must be a dated `## [X.Y.Z]` heading (never `[Unreleased]`) that matches the tag, and its first line must be a one-line summary above the first `###` section; without one, `scripts/release-notes.mjs` throws a `ChangelogShapeError` and the run fails. After the push, read that workflow run, then GET the Release and re-read its title and body by SHA256 against the derived text. A tag with a hyphen (a pre-release) gets no Release.
 
 ---
 
