@@ -4,12 +4,14 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\..\hooks\_shared\ps-config.ps1')
 
-$pass = 0; $fail = 0
+$pass = 0; $fail = 0; $skip = 0
 
 function Check([string]$name, [bool]$cond) {
   if ($cond) { Write-Host "  PASS $name"; $script:pass++ }
   else        { Write-Host "  FAIL $name"; $script:fail++ }
 }
+# A capability-gated check reports a VISIBLE skip with its reason, never a silent pass.
+function Skip([string]$name, [string]$why) { Write-Host "  SKIP $name ($why)"; $script:skip++ }
 
 # ---- H3: Test-ValidSessionId ----
 Check 'valid alphanumeric sid accepted'     (Test-ValidSessionId 'abc123')
@@ -140,17 +142,34 @@ try {
   [System.IO.File]::WriteAllText($big, '{"rotCanaryMode":"off","pad":"' + ('x' * 1048576) + '"}')
   Check 'CWK-137: a config over 1 MiB is SKIPPED, not parsed' ($null -eq (Read-CoalmineConfigFile $big $cw))
 
-  # A junction on a directory between the root and the file (unprivileged on Windows).
+  # A directory link between the root and the file. CI-red fix (v3.20.2, pwsh on ubuntu +
+  # macOS): New-Item -ItemType Junction creates NOTHING on a non-Windows host and does not
+  # throw, and a 'linked\cfg.json' child is one literal file name on POSIX -- so the refusal
+  # check passed VACUOUSLY there (the file was missing, not refused) and the no-root check
+  # failed. The link is now PROBED: a junction (unprivileged on Windows), else a symbolic
+  # link (unprivileged on POSIX); the path is joined by segment; and a positive control
+  # proves the path RESOLVES before a refusal is believed. No link -> both checks skip visibly.
   [System.IO.File]::WriteAllText((Join-Path $cwOut 'cfg.json'), '{"rotCanaryMode":"off"}')
-  New-Item -ItemType Junction -Path (Join-Path $cw 'linked') -Target $cwOut | Out-Null
-  Check 'CWK-137: a config reached through a junction under the root is refused' ($null -eq (Read-CoalmineConfigFile (Join-Path $cw 'linked\cfg.json') $cw))
-  Check 'CWK-137: with no root (a home file), the same path is not containment-checked' ((Read-CoalmineConfigFile (Join-Path $cw 'linked\cfg.json') $null).rotCanaryMode -eq 'off')
+  $linked = Join-Path $cw 'linked'
+  $viaLink = Join-Path $linked 'cfg.json'
+  foreach ($type in 'Junction', 'SymbolicLink') {
+    if (Test-Path -LiteralPath $viaLink) { break }
+    try { New-Item -ItemType $type -Path $linked -Target $cwOut -ErrorAction Stop | Out-Null } catch { }
+  }
+  if (Test-Path -LiteralPath $viaLink) {
+    Check 'CWK-137: a config reached through a directory link under the root is refused' ($null -eq (Read-CoalmineConfigFile $viaLink $cw))
+    Check 'CWK-137: with no root (a home file), the same path is not containment-checked' ((Read-CoalmineConfigFile $viaLink $null).rotCanaryMode -eq 'off')
+  } else {
+    Skip 'CWK-137: a config reached through a directory link under the root is refused' 'no junction or symbolic link could be created here'
+    Skip 'CWK-137: with no root (a home file), the same path is not containment-checked' 'no junction or symbolic link could be created here'
+  }
 } finally {
+  # Remove the LINK itself, never its target: Directory.Delete on a link is non-recursive.
   $j = Join-Path $cw 'linked'
-  if (Test-Path $j) { [System.IO.Directory]::Delete($j) }
+  if (Test-Path -LiteralPath $j) { [System.IO.Directory]::Delete($j) }
   Remove-Item -LiteralPath $cw, $cwOut -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ''
-Write-Host "PS results: $pass passed, $fail failed"
+Write-Host "PS results: $pass passed, $fail failed, $skip skipped"
 if ($fail -gt 0) { exit 1 } else { exit 0 }
