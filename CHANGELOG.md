@@ -5,7 +5,65 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 ## [Unreleased]
 
 ### Security
-- **CWK-137 — hooks and the installer/configurator no longer read unbounded or write through links on repo-derived paths** (placeholder line; the DOCS station rewrites this entry) — test: `scripts/lib/repo-fs.test.mjs` + the `CWK-137:` tests in `hooks`/`install`/`configure`/`ps-config` suites.
+A cloned repository is untrusted input, and three defects let one act on your machine through a planted
+symbolic link (a junction on Windows), FIFO or device file. **Every release from v2.0.0, the first tag,
+through v3.20.1 is affected**; the per-defect first version and the full advisory are in
+[SECURITY.md](SECURITY.md#-security-advisories). No CVE id is claimed; none exists. Found by a blind
+automated security review (2026-09-24).
+
+- **CWK-137 (1 of 3) — the hooks read repo-derived paths with no bound.** A link to `/dev/zero` at
+  `AGENTS.md`, `MEMORY.md`, `README.md`, a rules file or the project `coalmine.json` crashed the hook
+  (`std::bad_alloc`, exit 134, measured on Linux under a 3 GB address-space cap); a FIFO at any of those
+  paths, or a `.claude/rules` link to `/`, made the hook never return. The same unbounded read sat in
+  `verify.mjs <target>` and its manifest check. Reads now go through `readRepoFileBounded`, in the three
+  hooks (`hooks/_shared/node-config.js`, synced by `build-plugin.mjs`) and in `scripts/lib/repo-fs.mjs`
+  for the CLIs. It does `lstat` first. A regular file proceeds. A symlink proceeds only when its
+  `realpath.native` target lies inside the project root and is a regular file. A FIFO, device, socket,
+  directory, or a link that escapes the project or dangles is skipped before `open`. The open uses
+  `O_NONBLOCK` where the platform has it, the fd is re-checked (regular file, size), and a file over
+  its bound is **skipped, never truncated**: `MAX_CONFIG_BYTES` = 1 MiB for configs, `MAX_DOC_BYTES` =
+  4 MiB for governance docs (measured: the largest real config is 9,114 B and the largest real doc is
+  216,465 B). The conductor's two rule-tree walks became one bounded walk, `forEachRuleDoc`, capped at
+  `MAX_RULE_WALK_ENTRIES` = 5000 entries and `MAX_RULE_WALK_DEPTH` = 16 levels; an escaping `.claude/rules`
+  root is not entered. The stop hook's language probe reads a 4096-byte prefix through the same helper.
+  Your own home files (the global config, the mode switch, the update stamp) keep their symlinks, since
+  dotfile managers link them, but still must be a regular file within the bound. **Behaviour that is
+  now narrower, on purpose:** a project config or rule file that is a link out of the project, or larger
+  than its bound, is ignored by the hooks. `verify.mjs <target>` reports such an installed file as
+  `REFUSED` (distinct from `MISSING`) and such a `SKILL.md` as unreadable. The PowerShell fallback hooks carry the same check as `Test-CoalmineSafeFile`
+  (`hooks/_shared/ps-config.ps1`), **stricter than Node by design**: PowerShell 5.1 has no
+  `realpath.native`, so it refuses every reparse point on the file or on any directory between the file
+  and the project root, even one that stays inside — test: `scripts/lib/repo-fs.test.mjs`, the
+  `CWK-137:` tests in `scripts/lib/hooks.test.mjs` and `scripts/lib/ps-config.test.ps1`.
+- **CWK-137 (2 of 3) — `install.mjs` wrote through a planted link.** With `.github/copilot-instructions.md`
+  linked to `~/.bashrc`, `install.mjs copilot` appended CoalMine's rules block to the shell rc and
+  reported success (measured on v2.0.0 and v3.20.1). The same write-through applied to the platform rules
+  file each target writes, an existing git hook or its `.pre-coalmine` backup slot, the default project
+  config, the manifest, and a directory link on `.github`/`.agents` that carried the skills install
+  outside the project. Writes now go through `writeRepoFile`: the nearest existing ancestor must resolve
+  inside the project, the target must not be a link and must be a regular file, and the bytes go to a
+  sibling temp opened with `wx` and are renamed into place, so a link planted after the check is replaced
+  and never written through. A refusal is loud: `[refused] <path>: <reason>`, exit 1, nothing written.
+  A hooks directory outside the worktree (a linked worktree's gitdir, an absolute `core.hooksPath`) is its
+  own root, because git config chose it, not a file the repo planted. Where Windows refuses the rename over
+  a file another process holds open (`EPERM`/`EBUSY`/`EACCES`, e.g. re-installing the hooks from inside a
+  running pre-commit), the write falls back to an in-place write only for a single-link regular file — test:
+  `scripts/lib/repo-fs.test.mjs` and the `CWK-137:` tests in `scripts/lib/install.test.mjs`.
+- **CWK-137 (3 of 3) — `configure.mjs` read, backed up and overwrote through a planted link.** With the
+  project config linked to `~/.bashrc`, `configure.mjs` treated it as malformed, copied its bytes into a
+  `.bak` inside the repository, then overwrote the link target (measured on v3.3.0 and v3.20.1: the rc file
+  ended as `{ "language": "en" }` and the `.bak` held the original bytes). It now checks the read path and
+  the write path with `checkRepoWriteTarget` before any read or backup, refuses with the path named
+  (exit 1), reads through `readRepoFileBounded`, and writes the config and the `.bak` through
+  `writeRepoFile`. **`configure.mjs --global` keeps its follow-through write** to `~/.claude/.coalmine.json`,
+  because dotfile managers link that file; its read is bounded and regular-file only — test:
+  `scripts/lib/repo-fs.test.mjs` and the `CWK-137:` tests in `scripts/lib/configure.test.mjs`.
+
+Residuals, named: a regular file swapped in between the `lstat` and the `open` may lie outside the root
+(the fd re-check still holds the read to a bounded regular file); a link planted between a write's check and
+its rename is replaced, not followed, except on the single-link in-place fallback above, where a link swapped
+in between its `lstat` and its open is not caught. An agent's own file reads through its tools are the host's permission
+system, not covered here.
 
 ## [3.20.1] - 2026-09-22
 

@@ -10,6 +10,44 @@ Report a security issue in this repo through GitHub's private vulnerability repo
 
 ---
 
+## 📢 Security Advisories
+
+### CWK-137 — a cloned repository could act on your machine through a planted link (2026-09-24)
+
+**What an attacker needs.** A repository you clone that carries a planted symbolic link (on Windows, a junction or symlink), FIFO or device file at a path CoalMine reads or writes. That is the whole precondition: no other access. The hooks fire on ordinary session events in that clone; `install.mjs` and `configure.mjs` act only when you run them there. **No CVE id is claimed; none exists.** Found by a blind automated security review (2026-09-24).
+
+**Affected versions.** Every release from **v2.0.0** (the first tag) through **v3.20.1**. The per-defect and per-site first versions below were derived from `git log -S` on the unsafe call sites and the first tag containing that commit, and the defects were measured on the earliest tag where each was executed (WSL Ubuntu, Node 24.19.0, a fake `HOME`, hooks under a 3 GB address-space cap and a 30 s timeout). **Fixed in:** the repository, commit `a4f0cff`; that commit is not in a release yet, so the next release after v3.20.1 ships it, and this entry will name that version when it does. Until then, do not run a CoalMine hook, `install.mjs` or `configure.mjs` in a clone you do not trust.
+
+#### 1. The hooks read a planted path with no bound
+
+| | |
+|---|---|
+| **What happens** | A link to `/dev/zero` at `AGENTS.md`, `MEMORY.md`, `README.md`, a rules file or the project `coalmine.json` made the hook crash (`std::bad_alloc`, exit 134, measured on Linux). A FIFO at one of those paths, or a `.claude/rules` link to `/`, made the hook never return. On Windows a junction on `.claude/rules` made the conductor scan rule stamps outside the project (an outside stamp silenced the onboarding offer). Nothing is disclosed and no file is changed: the hook dies or hangs. |
+| **First affected** | The stop hook's language probe reading `<cwd>/AGENTS.md`, `MEMORY.md` and `README.md`: **v2.0.0** (crash measured on v2.0.0 and v2.3.0; the probe is skipped when `LANG` already names Thai, Japanese, Chinese or Spanish). The stop and touch hooks reading the project `.coalmine.json`: **v3.0.0** (crash measured; v2.8.0 exits normally). The conductor scanning `AGENTS.md` and `.claude/rules/**` for rule stamps: **v3.7.5** (the onboarding-stamp scan: v3.11.2). `verify.mjs <target>` reading each installed `SKILL.md`: **v2.2.1**; its manifest check: **v3.5.0**. |
+
+#### 2. `install.mjs` wrote through a planted link
+
+| | |
+|---|---|
+| **What happens** | With the Copilot instructions file (`copilot-instructions.md`, in the project's `.github` directory) linked to `~/.bashrc`, `install.mjs copilot` appended CoalMine's own rules block, between `COALMINE:START` and `COALMINE:END` markers, to the shell rc and reported success (measured on v2.0.0 and v3.20.1). The attacker does not choose the appended text; it is CoalMine's template, but it lands in a file outside the project. The same write-through applied to an existing git hook (its bytes are replaced, and a hook that is a link had its target's bytes copied into the `.pre-coalmine` backup slot), the default project config, the manifest, and a directory link on `.github` or `.agents`, which carried the skills install outside the project. |
+| **First affected** | The platform rules file (create, append, and uninstall's rewrite of it: **v2.0.0**, uninstall **v2.4.0**). The git hook write: **v2.0.0**; its backup copy: **v2.2.1**. The skills directory install: **v2.0.0**. The manifest write: **v2.6.0**. The default project config copy: **v3.7.0**. |
+
+#### 3. `configure.mjs` read, backed up and overwrote through a planted link
+
+| | |
+|---|---|
+| **What happens** | With the project config linked to `~/.bashrc`, `configure.mjs` treated it as malformed, copied its bytes into a `.bak` **inside the repository**, then overwrote the link target. Measured on v3.3.0 and v3.20.1: the rc file ended as `{ "language": "en" }`, and the `.bak` held the original bytes, which a later `git add -A` in that clone could commit. |
+| **First affected** | **v3.3.0**, the release that introduced `configure.mjs`. |
+
+**What the fix does.** Reads of a repo-derived path go through `readRepoFileBounded` (in the three hooks and in `scripts/lib/repo-fs.mjs`). It does `lstat` first. A regular file proceeds. A symlink proceeds only when its `realpath.native` target lies inside the project and is a regular file. A FIFO, device, socket, directory, or a link that escapes the project or dangles is skipped before `open`. The open uses `O_NONBLOCK`, the descriptor is re-checked, and a file over its bound (`MAX_CONFIG_BYTES` = 1 MiB for configs, `MAX_DOC_BYTES` = 4 MiB for governance docs) is skipped, never truncated. The conductor's rule walk is capped at `MAX_RULE_WALK_ENTRIES` = 5000 entries and `MAX_RULE_WALK_DEPTH` = 16 levels. Writes go through `writeRepoFile`: the nearest existing ancestor must resolve inside the project, the target must not be a link, and the bytes go to a sibling temp opened with `wx` and are renamed into place. A refused write prints `[refused] <path>: <reason>` and exits 1. `configure.mjs --global` keeps its follow-through write to `~/.claude/.coalmine.json`, because dotfile managers link that file; its read is bounded. The PowerShell fallback hooks refuse every reparse point (`Test-CoalmineSafeFile`), stricter than Node by design. **Not covered, named:** a regular file swapped in between the `lstat` and the `open` may lie outside the project (the descriptor re-check still holds the read to a bounded regular file); an agent's own file reads through its tools are the host's permission system.
+
+**What to check if you ran CoalMine in a clone you did not write.**
+- A stray `.bak` beside a CoalMine config: `<project>/.claude/coal/coalmine.json.bak` or `<project>/.coalmine.json.bak`. Its contents are the file the config path was linked to, not a config. Delete it and do not commit it.
+- A `COALMINE:START` block in a file outside the repository, for example a shell rc: `grep -l "COALMINE:START" ~/.bashrc ~/.zshrc ~/.profile`. Remove the block. Also compare any hook or config file `install.mjs` or `configure.mjs` reported writing against what you expect, since those writes replace the file.
+- Links in a clone you already ran a tool in: `find . -not -path './.git/*' \( -type l -o -type p \)` (POSIX) or `Get-ChildItem -Recurse -Force | Where-Object { $_.Attributes -band 'ReparsePoint' }` (PowerShell) — a link at a path CoalMine reads or writes is the tell.
+
+---
+
 ## 🔑 Commit & Tag Signatures
 
 Every **release tag** and **maintainer commit** is SSH-signed (`gpg.format=ssh`); GitHub shows the Verified badge on them. Automated **Dependabot / CI** commits are not signed with the maintainer key (GitHub signs these with its own), so verify a signed **release tag** — the artifact a release consumer trusts:

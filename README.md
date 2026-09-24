@@ -136,11 +136,11 @@ node /path/to/CoalMine/scripts/install.mjs <agent|all|PATH>
 ```
 * Supported `<agent>`: `antigravity`, `cursor`, `codex`, `cline`, `copilot`, `windsurf`, `amp`, `goose`, `junie`, `gemini`, `kiro`, `augment` (for `claude`, prefer the plugin above) — see [Universal Agent Support](#-universal-agent-support) for target folders + choice-tool support.
 * `all` auto-detects and installs to all configured agents in the directory.
-* The installer sets up pre-commit/pre-push gates where git actually reads hooks — your `core.hooksPath` if the repo sets one (husky, lefthook, a tracked `.githooks/`), otherwise `.git/hooks` — writes trigger rules, and generates `.coalmine.json` config.
+* The installer sets up pre-commit/pre-push gates where git actually reads hooks — your `core.hooksPath` if the repo sets one (husky, lefthook, a tracked `.githooks/`), otherwise `.git/hooks` — writes trigger rules, and generates `.coalmine.json` config. Every write stays inside the project (or the install target you named): a path that is a symbolic link, or that resolves outside it, is refused with `[refused] <path>: <reason>` and exit 1 — the installer never writes through a link ([security advisory](SECURITY.md#-security-advisories)).
 
 #### 3. Verify & Uninstall
 * **Verify:** `node /path/to/CoalMine/scripts/verify.mjs <agent|PATH>`
-* **Uninstall:** `node scripts/install.mjs --uninstall <agent|PATH>` — removes CoalMine's own git hooks, but never a **tracked** one: if `core.hooksPath` points at a versioned directory (e.g. a repo's own `.githooks/`) and the hook there is ours, uninstall REFUSES rather than deleting a maintainer-owned file — it prints `[refused] <hook>: <reason>` and exits non-zero; remove it yourself (e.g. `git rm <hook>`) if you want it gone.
+* **Uninstall:** `node scripts/install.mjs --uninstall <agent|PATH>` — removes CoalMine's own git hooks, but never a **tracked** one: if `core.hooksPath` points at a versioned directory (e.g. a repo's own `.githooks/`) and the hook there is ours, uninstall REFUSES rather than deleting a maintainer-owned file — it prints `[refused] <hook>: <reason>` and exits non-zero; remove it yourself (e.g. `git rm <hook>`) if you want it gone. A linked path is refused the same way on uninstall.
 
 ---
 
@@ -187,6 +187,8 @@ Zero-config to start — and two config levels when you want them: a global `~/.
 | `disabledCanaries` | `[]` | Canaries to disable (e.g. `["rot-canary"]` or `["all"]`) |
 | `scanExcludePaths` | `[]` | Path fragments/globs skipped by the session-end auto-scan — lab tooling only (scratch probes, one-shot harnesses); shipped/tracked source is never excluded by this key |
 | `scanEverything` | `false` | **The override.** `true` bypasses EVERY scan-scope cut for the run — `scanExcludePaths` ignored, `autoScanFileCap` not applied. Positive polarity: `true` = more scanning. Does NOT re-enable a disabled canary, and does not reach the recording-side cuts (`watchedExtensions`, tmpdir) or the tripwire's own `tripwireMaxFileSizeKb` cap (that file is still recorded and still scanned — only its edit-time pre-flag is skipped). **Clamped safer-value-wins:** a project-level `true` is forced to `false` unless your global layer also says `true`, so a cloned repo cannot force a full scan on your machine |
+
+**A config that is a link, or oversized.** The project config, and the rule files the conductor scans (`AGENTS.md`, `.claude/rules/**`), come with a cloned repository, so a repo can plant a link at any of those paths. The hooks read such a file only when it is a regular file, or a symlink whose target resolves inside the project and is a regular file; a link that escapes the project, a FIFO or device, or a file over 1 MiB (configs) or 4 MiB (governance docs) is **ignored** as if absent (the hooks print nothing — Phoenix #13). `node scripts/configure.mjs` **refuses** such a path instead (exit 1, the path named), never reading, backing up or overwriting through it; `--global` still writes through a link at `~/.claude/.coalmine.json`, on purpose, since dotfile managers link that file. The PowerShell fallback hooks refuse every reparse point, even one that stays inside the project. See the [security advisory](SECURITY.md#-security-advisories).
 
 Full key reference: every key + default lives in [`scripts/lib/config-schema.mjs`](scripts/lib/config-schema.mjs) and the commented template [`platform-configs/.coalmine.json`](platform-configs/.coalmine.json) — or run `node scripts/configure.mjs --help`.
 
