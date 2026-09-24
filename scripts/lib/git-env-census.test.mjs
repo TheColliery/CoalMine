@@ -43,3 +43,39 @@ test('census: a call inside a line comment is not code', () => {
 test('census: this room itself is clean -- every git spawn under scripts/ passes both rungs', () => {
   assert.deepEqual(censusGitSpawns(collectScriptsMjs(repo)), []);
 });
+
+// R8 INSPECT LOW-2: the census was blind to four call forms that reach git just as well.
+// Two widenings, each red-first against the pre-widening CALL_RE: the async/argv forms
+// ride the same two env rungs, and a git run through a SHELL string gets its own rung.
+const SPA = 'spawn' + "('git'";
+const EFA = 'execFile' + "('git'";
+const EXS = 'execSync' + "('git";
+const EXA = 'exec' + "(`git";
+
+test('census widened (R8 LOW-2): async spawn and execFile ride rung 1 -- no env: is a finding', () => {
+  const a = one(SPA + ", ['fetch'], { cwd: dir });\n");
+  assert.equal(a.length, 1);
+  assert.match(a[0], /spawn\('git', \.\.\.\) carries no 'env:'/);
+  const b = one(EFA + ", ['status'], (err, out) => {});\n");
+  assert.equal(b.length, 1);
+  assert.match(b[0], /execFile\('git', \.\.\.\) carries no 'env:'/);
+});
+
+test('census widened (R8 LOW-2): async spawn with process.env is refused by rung 2, and passes with gitEnv()', () => {
+  assert.match(one(SPA + ", ['fetch'], { env: process.env });\n")[0] || '', /passes process\.env without gitEnv\(\)/);
+  assert.deepEqual(one(SPA + ", ['fetch'], { env: gitEnv(base) });\n"), []);
+});
+
+test('census shell rung (R8 LOW-2): git run through a shell string is refused, even with gitEnv()', () => {
+  const a = one(EXS + " init -q', { cwd: dir });\n");
+  assert.equal(a.length, 1);
+  assert.match(a[0], /execSync\('git \.\.\.'\) runs git through a shell string/);
+  const b = one(EXA + " status`, { env: gitEnv(base) }, cb);\n");
+  assert.equal(b.length, 1, 'gitEnv() does not make a shell string safe');
+  assert.match(b[0], /exec\('git \.\.\.'\)/);
+});
+
+test('census shell rung: a shell string for another program whose name starts with "git" is not git', () => {
+  assert.deepEqual(one('execSync' + "('gitleaks detect', { cwd: dir });\n"), []);
+  assert.deepEqual(one('spawn' + "('github-cli', ['x']);\n"), []);
+});

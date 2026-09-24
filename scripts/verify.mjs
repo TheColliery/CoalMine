@@ -591,13 +591,13 @@ try {
 // worktree hook exports -- and this gate runs AS that hook. Detection lives in
 // git-env-census.mjs, dynamically imported so a missing lib is one FAIL line, never a
 // linking-time crash (node/runtime.md §1).
-console.log('git spawn census (CWK-133/136 — every git spawn under scripts/ carries env: gitEnv(...), never process.env):');
+console.log('git spawn census (CWK-133/136 — every git spawn under scripts/ carries env: gitEnv(...), never process.env, and none runs git through a shell string):');
 try {
   const { censusGitSpawns, collectScriptsMjs } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'git-env-census.mjs')).href);
   const files = collectScriptsMjs(repo);
   const findings = censusGitSpawns(files);
   for (const f of findings) fail(`git spawn census: ${f}`);
-  if (findings.length === 0) pass(`git spawn census: every git spawn across ${files.length} scripts/**/*.mjs file(s) routes through gitEnv()`);
+  if (findings.length === 0) pass(`git spawn census: every git spawn across ${files.length} scripts/**/*.mjs file(s) routes through gitEnv() and none runs git through a shell string (blind spots: git-env-census.mjs header)`);
 } catch (e) { fail(`git spawn census crashed: ${e.message}`); }
 
 // 3. hooks present
