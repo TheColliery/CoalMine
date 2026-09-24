@@ -217,3 +217,68 @@ test('writeRepoFile EPERM fallback: a link swapped in right after the check neve
   try { writeRepoFile(target, 'PWNED', root); } catch { /* refusing is also safe */ }
   assert.equal(fs.readFileSync(victim, 'utf8'), 'export SECRET_TOKEN=abc123\n', 'the victim behind the swapped-in link keeps its bytes');
 });
+
+// R8 INSPECT MEDIUM-1: the race above swaps AFTER the fallback's open returned, so it pins
+// "check the fd, not the path" and nothing else. This one swaps INSIDE the refused rename,
+// BEFORE the fallback's open -- the window only O_NOFOLLOW closes. With O_NOFOLLOW removed
+// the open follows the link, fstat sees the victim (a single-link regular file) and the
+// write lands in it (RED, measured). Skips where file symlinks need privilege, and on a
+// platform with no O_NOFOLLOW (the named Windows residual, which this test would fail).
+test('writeRepoFile EPERM fallback: a link planted BEFORE the fallback opens (inside the refused rename) is never followed', (t) => {
+  const root = tmpDir(t, 'wpre');
+  if (!fs.constants.O_NOFOLLOW) { t.skip('no O_NOFOLLOW on this platform (the named Windows residual)'); return; }
+  if (!canFileSymlink(root)) { t.skip('file symlinks need privilege on this volume'); return; }
+  const outside = tmpDir(t, 'wpre-out');
+  const victim = path.join(outside, 'bashrc');
+  fs.writeFileSync(victim, 'export SECRET_TOKEN=abc123\n');
+  const target = path.join(root, 'pre-commit');
+  fs.writeFileSync(target, 'OLD');
+  const orig = fs.renameSync;
+  fs.renameSync = () => {
+    fs.unlinkSync(target);
+    fs.symlinkSync(victim, target, 'file');
+    throw Object.assign(new Error('EPERM: simulated'), { code: 'EPERM' });
+  };
+  t.after(() => { fs.renameSync = orig; });
+  assert.throws(() => writeRepoFile(target, 'PWNED', root), (e) => e.code === 'EPERM', 'the refused rename is rethrown, not papered over');
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'export SECRET_TOKEN=abc123\n', 'the victim behind the pre-planted link keeps its bytes');
+});
+
+// R8 INSPECT LOW-1: a FIFO planted in the same window. An O_WRONLY open of a FIFO with no
+// reader BLOCKS until one appears, and the fstat that rejects it runs only after the open
+// returns -- so without O_NONBLOCK the installer hangs forever. The write runs in a CHILD
+// with a timeout, so the red (a hang) is a failed assertion, never a hung suite. With
+// O_NONBLOCK the open fails ENXIO at once and the original EPERM is rethrown.
+test('writeRepoFile EPERM fallback: a FIFO planted before the fallback opens fails fast, never hangs', (t) => {
+  const root = tmpDir(t, 'wfifo');
+  if (!fs.constants.O_NONBLOCK) { t.skip('no O_NONBLOCK on this platform'); return; }
+  if (!canMkfifo(root)) { t.skip('mkfifo unavailable on this volume'); return; }
+  const target = path.join(root, 'pre-commit');
+  fs.writeFileSync(target, 'OLD');
+  const child = [
+    "import fs from 'node:fs';",
+    "import { spawnSync } from 'node:child_process';",
+    'const { writeRepoFile } = await import(process.env.CM_REPOFS_URL);',
+    'const target = process.env.CM_TARGET;',
+    'fs.renameSync = () => {',
+    '  fs.unlinkSync(target);',
+    "  if (spawnSync('mkfifo', [target]).status !== 0) throw new Error('mkfifo failed');",
+    "  throw Object.assign(new Error('EPERM: simulated'), { code: 'EPERM' });",
+    '};',
+    "try { writeRepoFile(target, 'NEW', process.env.CM_ROOT); console.log('wrote'); }",
+    "catch (e) { console.log('threw ' + e.code); }",
+  ].join('\n');
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', child], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env: {
+      ...process.env,
+      CM_REPOFS_URL: new URL('./repo-fs.mjs', import.meta.url).href,
+      CM_TARGET: target,
+      CM_ROOT: root,
+    },
+  });
+  assert.equal(r.error?.code, undefined, 'the fallback must not block on the FIFO (the child was killed by its timeout)');
+  assert.equal(r.stdout.trim(), 'threw EPERM', `the refused rename is rethrown (stderr: ${r.stderr.trim()})`);
+  assert.ok(fs.lstatSync(target).isFIFO(), 'nothing replaced the FIFO');
+});

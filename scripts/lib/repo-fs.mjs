@@ -159,9 +159,15 @@ export function writeRepoFile(target, content, root) {
     // no longer redirect the write. RESIDUAL, named: Windows has no O_NOFOLLOW, so there a
     // symlink planted in that window would be followed -- it still has to resolve to a
     // single-link regular file, and creating a symlink on Windows needs a privilege.
+    // R8 INSPECT LOW-1: O_NONBLOCK too -- an O_WRONLY open of a FIFO planted in the same
+    // window would otherwise BLOCK until a reader appears (a hung installer), because the
+    // fstat below only runs after the open returns. With it, a reader-less FIFO fails
+    // ENXIO at the open and the original error is rethrown; O_NONBLOCK does not change a
+    // regular file's writes. Windows has no O_NONBLOCK (0), and no FIFOs in a directory.
     if (!['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
     let fd;
-    try { fd = fs.openSync(target, fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW || 0)); } catch { throw e; }
+    const flags = fs.constants.O_WRONLY | (fs.constants.O_NONBLOCK || 0) | (fs.constants.O_NOFOLLOW || 0);
+    try { fd = fs.openSync(target, flags); } catch { throw e; }
     try {
       const st = fs.fstatSync(fd);
       if (!st.isFile() || st.nlink > 1) throw e;
