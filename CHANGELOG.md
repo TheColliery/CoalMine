@@ -2,7 +2,9 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.20.2] - 2026-09-24
+
+A cloned repository can no longer use a planted symbolic link, FIFO or device file to crash or hang CoalMine's hooks, or to make `install.mjs` and `configure.mjs` read, back up or overwrite files outside the project.
 
 ### Security
 A cloned repository is untrusted input, and three defects let one act on your machine through a planted
