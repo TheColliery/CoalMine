@@ -4,7 +4,7 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [3.20.2] - 2026-09-24
 
-A cloned repository can no longer use a planted symbolic link, FIFO or device file to crash or hang CoalMine's hooks, or to make `install.mjs` and `configure.mjs` read, back up or overwrite files outside the project.
+A link planted in a cloned repository can no longer crash the hooks or make install and configure write outside it.
 
 ### Security
 A cloned repository is untrusted input, and three defects let one act on your machine through a planted
@@ -12,7 +12,7 @@ symbolic link (a junction on Windows), FIFO or device file. **Every release from
 release, untagged: its heading below is dated 2026-06-09) through v3.20.1 is affected**; the
 range comes from a walk of versions (`plugin.json` history, these headings and the tags), not of tags alone.
 The per-defect first version and the full advisory are in
-[SECURITY.md](SECURITY.md#-security-advisories). No CVE id is claimed; none exists. Found by a blind
+[SECURITY.md](https://github.com/TheColliery/CoalMine/blob/main/SECURITY.md#-security-advisories). No CVE id is claimed; none exists. Found by a blind
 automated security review (2026-09-24).
 
 - **CWK-137 (1 of 3) — the hooks read repo-derived paths with no bound.** A link to `/dev/zero` at
@@ -43,8 +43,9 @@ automated security review (2026-09-24).
   linked to `~/.bashrc`, `install.mjs copilot` appended CoalMine's rules block to the shell rc and
   reported success (measured on the newest 1.0.0 tree, v2.0.0 and v3.20.1). The same write-through applied to the platform rules
   file each target writes, an existing git hook or its `.pre-coalmine` backup slot, the default project
-  config, the manifest, and a directory link on `.github`/`.agents` that carried the skills install
-  outside the project. Writes now go through `writeRepoFile`: the nearest existing ancestor must resolve
+  config, the manifest, and a link on any of the nine project-level agent folders `install.mjs` writes
+  into as of v3.20.1 (`.github`, `.agents`, `.claude`, `.gemini`, `.cursor`, `.windsurf`, `.junie`, `.kiro`,
+  `.augment`) that carried the skills install and the default config outside the project. Writes now go through `writeRepoFile`: the nearest existing ancestor must resolve
   inside the project, the target must not be a link and must be a regular file, and the bytes go to a
   sibling temp opened with `wx` and are renamed into place, so a link planted after the check is replaced
   and never written through. A refusal is loud: `[refused] <path>: <reason>`, exit 1, nothing written.
@@ -73,6 +74,8 @@ in between its `lstat` and its open is not caught. A tree delivered as an archiv
 will then replace git hooks in that directory; the bound is that the bytes are CoalMine's own fixed gate
 script, never attacker text, and an existing hook is first kept as `<hook>.pre-coalmine`. An agent's own
 file reads through its tools are the host's permission system, not covered here.
+
+**What you need to do:** update. On Claude Code run `claude plugin update coalmine@coalmine`; users of `coalmine@claude-community` receive it when that catalog's pin moves; for any other agent, update your CoalMine checkout and re-run `node scripts/install.mjs <agent>`. If you ran CoalMine in a clone you did not write, the "What to check" list in the [advisory](https://github.com/TheColliery/CoalMine/blob/main/SECURITY.md#-security-advisories) says what to look for.
 
 ## [3.20.1] - 2026-09-22
 
