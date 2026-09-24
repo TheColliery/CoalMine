@@ -43,6 +43,15 @@ const TESTS = [
   'scripts/lib/repo-fs.test.mjs',
   'scripts/lib/git-env.test.mjs',
   'scripts/lib/git-env-census.test.mjs',
+  // CWK-124: the sole-creator release workflow's scripts, pulled byte-identical from the
+  // .github overlay (templates/overlay-coal-skill), never edited here.
+  'scripts/lib/release-shape.test.mjs',
+  'scripts/lib/release-prune.test.mjs',
+  'scripts/lib/asset-upload-mode.test.mjs',
+  'scripts/release-notes.test.mjs',
+  'scripts/verify-release-shape.test.mjs',
+  'scripts/decide-upload.test.mjs',
+  'scripts/prune-release-zips.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

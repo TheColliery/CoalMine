@@ -4,7 +4,9 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
-<!-- BUILD station placeholders (R8); the DOCS station rewrites this block. -->
+PLACEHOLDER one-line summary (CWK-124): the DOCS station replaces this line with the sentence the release workflow turns into the Release title and lead.
+
+<!-- BUILD station placeholders (R8); the DOCS station rewrites this block. The line above must stay the FIRST content line under the heading: the release workflow's derive step (scripts/lib/release-shape.mjs) takes the first non-blank line as the summary, so a comment placed first would become the Release title. -->
 
 ### Added
 - **UMB-174 (b) — an `UNREADABLE:` line when a config exists but cannot be used.** The session-start conductor now reports, in the flock's wording, a config the walk selected that it could not read: `UNREADABLE: <path> exists but is not a readable config (<reason>); it was skipped — canonical = .claude/coal/coalmine.json`. The four reasons are `malformed JSON` · `a directory` · `unreadable` (EACCES, or EPERM from a Windows ACL) · `not a JSON object` (valid JSON that is not an object, R6 amendment 2). A leading U+FEFF is still stripped before the parse, so a BOM-prefixed config is read, not reported. Which config is used is unchanged: only the silence goes. A config the CWK-137 reader refuses (a link out of the project, over 1 MiB, a FIFO or device) stays silent. — test: `scripts/lib/hooks.test.mjs` (`UMB-174:` / `R6 AMENDMENT 2:` / `HEAD RULING (R8):`)
