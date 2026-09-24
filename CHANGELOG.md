@@ -6,8 +6,10 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ### Security
 A cloned repository is untrusted input, and three defects let one act on your machine through a planted
-symbolic link (a junction on Windows), FIFO or device file. **Every release from v2.0.0, the first tag,
-through v3.20.1 is affected**; the per-defect first version and the full advisory are in
+symbolic link (a junction on Windows), FIFO or device file. **Every release from 1.0.0 (the first
+release, untagged: its heading below is dated 2026-06-09) through v3.20.1 is affected**; the
+range comes from a walk of versions (`plugin.json` history, these headings and the tags), not of tags alone.
+The per-defect first version and the full advisory are in
 [SECURITY.md](SECURITY.md#-security-advisories). No CVE id is claimed; none exists. Found by a blind
 automated security review (2026-09-24).
 
@@ -37,7 +39,7 @@ automated security review (2026-09-24).
   `CWK-137:` tests in `scripts/lib/hooks.test.mjs` and `scripts/lib/ps-config.test.ps1`.
 - **CWK-137 (2 of 3) — `install.mjs` wrote through a planted link.** With `.github/copilot-instructions.md`
   linked to `~/.bashrc`, `install.mjs copilot` appended CoalMine's rules block to the shell rc and
-  reported success (measured on v2.0.0 and v3.20.1). The same write-through applied to the platform rules
+  reported success (measured on the newest 1.0.0 tree, v2.0.0 and v3.20.1). The same write-through applied to the platform rules
   file each target writes, an existing git hook or its `.pre-coalmine` backup slot, the default project
   config, the manifest, and a directory link on `.github`/`.agents` that carried the skills install
   outside the project. Writes now go through `writeRepoFile`: the nearest existing ancestor must resolve
@@ -45,7 +47,9 @@ automated security review (2026-09-24).
   sibling temp opened with `wx` and are renamed into place, so a link planted after the check is replaced
   and never written through. A refusal is loud: `[refused] <path>: <reason>`, exit 1, nothing written.
   A hooks directory outside the worktree (a linked worktree's gitdir, an absolute `core.hooksPath`) is its
-  own root, because git config chose it, not a file the repo planted. Where Windows refuses the rename over
+  own root, on the reasoning that git configuration chose it rather than a file the repo planted. That holds
+  for a git clone, which carries neither `.git/config` nor a `.git` file, and not for a tree delivered as an
+  archive, so it is a named residual below. Where Windows refuses the rename over
   a file another process holds open (`EPERM`/`EBUSY`/`EACCES`, e.g. re-installing the hooks from inside a
   running pre-commit), the write falls back to an in-place write only for a single-link regular file — test:
   `scripts/lib/repo-fs.test.mjs` and the `CWK-137:` tests in `scripts/lib/install.test.mjs`.
@@ -62,8 +66,11 @@ automated security review (2026-09-24).
 Residuals, named: a regular file swapped in between the `lstat` and the `open` may lie outside the root
 (the fd re-check still holds the read to a bounded regular file); a link planted between a write's check and
 its rename is replaced, not followed, except on the single-link in-place fallback above, where a link swapped
-in between its `lstat` and its open is not caught. An agent's own file reads through its tools are the host's permission
-system, not covered here.
+in between its `lstat` and its open is not caught. A tree delivered as an archive can carry a planted
+`.git/config` with an outside `core.hooksPath` (or a `.git` file naming an outside gitdir), and `install.mjs`
+will then replace git hooks in that directory; the bound is that the bytes are CoalMine's own fixed gate
+script, never attacker text, and an existing hook is first kept as `<hook>.pre-coalmine`. An agent's own
+file reads through its tools are the host's permission system, not covered here.
 
 ## [3.20.1] - 2026-09-22
 
