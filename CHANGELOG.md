@@ -2,6 +2,11 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Security
+- **CWK-137 — hooks and the installer/configurator no longer read unbounded or write through links on repo-derived paths** (placeholder line; the DOCS station rewrites this entry) — test: `scripts/lib/repo-fs.test.mjs` + the `CWK-137:` tests in `hooks`/`install`/`configure`/`ps-config` suites.
+
 ## [3.20.1] - 2026-09-22
 
 ### Changed

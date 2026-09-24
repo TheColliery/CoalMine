@@ -40,6 +40,7 @@ const TESTS = [
   'scripts/lib/build-claude-ai-zips.test.mjs',
   'scripts/lib/publish-release.test.mjs',
   'scripts/lib/link-check.test.mjs',
+  'scripts/lib/repo-fs.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

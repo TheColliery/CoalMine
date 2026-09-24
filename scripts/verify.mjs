@@ -21,6 +21,7 @@ import { checkDistChangelog } from './lib/dist-changelog.mjs';
 import { checkConfigKeys, checkConfigReadPath } from './lib/config-keys.mjs';
 import { checkPointers, pointerCandidates, looksPathShaped, DEFAULT_SURFACE_PLAN, collectSurfaces, applyCheckIgnoreProbe } from './lib/pointer-check.mjs';
 import { verifyAgainstManifest } from './lib/manifest.mjs';
+import { MAX_DOC_BYTES, readRepoFileBounded } from './lib/repo-fs.mjs';
 import { descriptionCapCheck, DESC_CAP } from './lib/desc-cap.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -784,9 +785,10 @@ if (arg) {
       fail(`${s} NOT at target`);
       continue;
     }
-    let content;
-    try { content = fs.readFileSync(targetMd, 'utf8'); }
-    catch (e) { fail(`${s} at target unreadable: ${e.message}`); continue; }
+    // CWK-137: the target may be a project dir that came with a cloned repo -- bounded,
+    // regular-file only, contained in the target.
+    const content = readRepoFileBounded(targetMd, dest, MAX_DOC_BYTES);
+    if (content === null) { fail(`${s} at target unreadable (a link out of the target, not a regular file, or over ${MAX_DOC_BYTES} bytes)`); continue; }
     if (content.includes('<!-- SHARED:')) {
       fail(`${s} at target contains unresolved template markers!`);
     } else {

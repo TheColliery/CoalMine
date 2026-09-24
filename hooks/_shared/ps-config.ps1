@@ -43,9 +43,36 @@ function Remove-JsoncComments {
   return $result.ToString()
 }
 
+# CWK-137 -- the PS port of the Node bounded reader (hooks/_shared/node-config.js).
+# NAMED DIVERGENCE, stricter than Node: Node lets a link through when its realpath
+# stays inside the project; PS 5.1 has no realpath.native, so EVERY reparse point
+# (symlink or junction) on the file or on any directory between it and $Root is
+# refused. The size bound is the same 1 MiB (MAX_CONFIG_BYTES) / caller-chosen cap.
+# FIFOs and devices are not plantable on the Windows volumes this fallback serves.
+function Test-CoalmineSafeFile {
+  param([string]$Path, [string]$Root, [long]$MaxBytes)
+  try {
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSIsContainer) { return $false }
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return $false }
+    if ($item.Length -gt $MaxBytes) { return $false }
+    if ($Root) {
+      $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+      $dir = Split-Path ([System.IO.Path]::GetFullPath($Path)) -Parent
+      while ($dir -and $dir.Length -gt $rootFull.Length) {
+        $d = Get-Item -LiteralPath $dir -Force -ErrorAction Stop
+        if ($d.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return $false }
+        $dir = Split-Path $dir -Parent
+      }
+    }
+    return $true
+  } catch { return $false }
+}
+
 function Read-CoalmineConfigFile {
-  param([string]$Path)
+  param([string]$Path, [string]$Root)
   if (-not (Test-Path $Path)) { return $null }
+  if (-not (Test-CoalmineSafeFile $Path $Root 1048576)) { return $null }
   try {
     $rawJson = [System.IO.File]::ReadAllText($Path)
     $cleanJson = Remove-JsoncComments $rawJson
@@ -144,7 +171,8 @@ function Load-CoalmineConfig {
   # fix Node needed (a raw-cased winner reaching a strict === consumer) protects
   # against nothing reachable on this platform's own case-insensitive operators.
   $globalCfg = Read-CoalmineConfigFile (Join-Path (Join-Path $env:USERPROFILE '.claude') '.coalmine.json')
-  $projectCfg = Read-CoalmineConfigFile (Join-Path (Find-GitRoot) '.coalmine.json')
+  $projRoot = Find-GitRoot
+  $projectCfg = Read-CoalmineConfigFile (Join-Path $projRoot '.coalmine.json') $projRoot
   if (-not $globalCfg -and -not $projectCfg) { return $null }
   $merged = [ordered]@{}
   foreach ($src in @($globalCfg, $projectCfg)) {

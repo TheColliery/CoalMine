@@ -24,6 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded, readRepoBytesBounded } from './repo-fs.mjs';
 
 export const MANIFEST_NAME = '.coalmine-manifest.json';
 
@@ -72,7 +73,12 @@ export function verifyAgainstManifest(destDir) {
   const findings = [];
   let manifest;
   try {
-    manifest = JSON.parse(fs.readFileSync(path.join(destDir, MANIFEST_NAME), 'utf8').replace(/^\uFEFF/, ''));
+    // CWK-137: a PROJECT install target (`.agents/skills`, ...) arrives with a cloned repo,
+    // so the manifest and every recorded file are read bounded, regular-file only, and
+    // contained in the target -- a planted `-> /dev/zero` or FIFO no longer kills the gate.
+    const raw = readRepoFileBounded(path.join(destDir, MANIFEST_NAME), destDir, MAX_CONFIG_BYTES);
+    if (raw === null) throw new Error('no readable manifest');
+    manifest = JSON.parse(raw.replace(/^\uFEFF/, ''));
   } catch {
     return { ok: true, findings: [{ level: 'SKIP', msg: 'no install manifest at target — integrity check skipped' }], checked: 0 };
   }
@@ -95,11 +101,16 @@ export function verifyAgainstManifest(destDir) {
       continue;
     }
     checked++;
-    let got;
-    try { got = hashFile(p); } catch {
-      findings.push({ level: 'FAIL', msg: `installed file MISSING: ${rel}` });
+    const bytes = readRepoBytesBounded(p, destAbs, MAX_DOC_BYTES);
+    if (bytes === null) {
+      let present = false;
+      try { fs.lstatSync(p); present = true; } catch { /* absent */ }
+      findings.push({ level: 'FAIL', msg: present
+        ? `installed file REFUSED (a link out of the target, not a regular file, or over ${MAX_DOC_BYTES} bytes): ${rel}`
+        : `installed file MISSING: ${rel}` });
       continue;
     }
+    const got = createHash('sha256').update(bytes).digest('hex');
     if (got !== want) findings.push({ level: 'FAIL', msg: `installed file TAMPERED (hash changed): ${rel}` });
   }
   return { ok: findings.every((f) => f.level !== 'FAIL'), findings, checked };

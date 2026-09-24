@@ -2144,3 +2144,110 @@ test('touch hook does NOT exclude a sibling directory whose name merely PREFIXES
     fs.rmSync(sibling, { recursive: true, force: true });
   }
 });
+
+// ─── CWK-137: repo-derived reads are bounded, regular-file only, and contained ─────────
+// A cloned repository is untrusted: every path the hooks read from it can be a link, a
+// FIFO or a device. On 59ee1e7 a planted `AGENTS.md -> /dev/zero` or config link ran the
+// hooks out of memory (std::bad_alloc), a FIFO blocked them forever, and a rules-root link
+// walked outside the project. POSIX-only legs probe the capability and skip VISIBLY.
+function runHookCapped(script, input, tmp, extraEnv = {}) {
+  return spawnSync(process.execPath, [script], {
+    input,
+    encoding: 'utf8',
+    cwd: tmp,
+    timeout: 20_000,
+    env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp, USERPROFILE: tmp, HOME: tmp, ...extraEnv },
+  });
+}
+function canPosixDevice(dir) {
+  if (process.platform === 'win32' || !fs.existsSync('/dev/zero')) return false;
+  const probe = path.join(dir, '.probe-link');
+  try { fs.symlinkSync('/dev/zero', probe); fs.unlinkSync(probe); return true; } catch { return false; }
+}
+function canMkfifo(dir) {
+  if (process.platform === 'win32') return false;
+  const p = path.join(dir, '.probe-fifo');
+  if (spawnSync('mkfifo', [p]).status !== 0) return false;
+  fs.unlinkSync(p);
+  return true;
+}
+
+test('CWK-137: a .claude/rules junction that ESCAPES the project is not walked -- an outside stamp does not silence onboarding', (t) => {
+  const tmp = mkAnchoredTmp();
+  const outside = mkTmp();
+  t.after(() => { fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  fs.writeFileSync(path.join(outside, 'gold-standard.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+  fs.mkdirSync(path.join(tmp, '.claude'));
+  fs.symlinkSync(outside, path.join(tmp, '.claude', 'rules'), 'junction');
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a stamp reached only through an escaping link must NOT count as the project verified');
+});
+
+test('CWK-137: a .claude/rules junction that stays INSIDE the project is still walked (a link is not automatically hostile)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const real = path.join(tmp, 'docs', 'rules');
+  fs.mkdirSync(real, { recursive: true });
+  fs.writeFileSync(path.join(real, 'gold-standard.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+  fs.mkdirSync(path.join(tmp, '.claude'));
+  fs.symlinkSync(real, path.join(tmp, '.claude', 'rules'), 'junction');
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'a contained link keeps working');
+});
+
+test('CWK-137: AGENTS.md -> /dev/zero does not exhaust memory -- the conductor exits 0 promptly (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canPosixDevice(tmp)) { t.skip('no /dev/zero or no symlinks on this platform'); return; }
+  fs.symlinkSync('/dev/zero', path.join(tmp, 'AGENTS.md'));
+  const r = runHookCapped(CONDUCTOR, '', tmp);
+  assert.equal(r.error, undefined, `the conductor must not hang or be killed: ${r.error}`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes('[CoalMine]'), 'the conductor still runs');
+});
+
+test('CWK-137: a project config -> /dev/zero does not exhaust memory in any hook (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canPosixDevice(tmp)) { t.skip('no /dev/zero or no symlinks on this platform'); return; }
+  fs.mkdirSync(path.join(tmp, '.claude', 'coal'), { recursive: true });
+  fs.symlinkSync('/dev/zero', path.join(tmp, '.claude', 'coal', 'coalmine.json'));
+  plantTouchedFixture(tmp, 'Z1');
+  for (const [name, script, input] of [
+    ['conductor', CONDUCTOR, ''],
+    ['touch', TOUCH, JSON.stringify({ session_id: 'Z1', tool_input: { file_path: path.join(tmp, 'Z1.js') } })],
+    ['stop', STOP, JSON.stringify({ session_id: 'Z1', stop_hook_active: false })],
+  ]) {
+    const r = runHookCapped(script, input, tmp);
+    assert.equal(r.error, undefined, `${name} must not hang or be killed: ${r.error}`);
+    assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /bad_alloc|heap out of memory/, `${name} must not run out of memory`);
+  }
+});
+
+test('CWK-137: a FIFO in the rules tree does not block the conductor (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canMkfifo(tmp)) { t.skip('no mkfifo on this platform'); return; }
+  fs.mkdirSync(path.join(tmp, '.claude', 'rules'), { recursive: true });
+  assert.equal(spawnSync('mkfifo', [path.join(tmp, '.claude', 'rules', 'x.md')]).status, 0);
+  const r = runHookCapped(CONDUCTOR, '', tmp);
+  assert.equal(r.error, undefined, `the conductor must not block on a FIFO: ${r.error}`);
+  assert.equal(r.status, 0);
+});
+
+test('CWK-137: a FIFO README.md does not block the stop hook language probe (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canMkfifo(tmp)) { t.skip('no mkfifo on this platform'); return; }
+  assert.equal(spawnSync('mkfifo', [path.join(tmp, 'README.md')]).status, 0);
+  plantTouchedFixture(tmp, 'F1');
+  // A language env that names no language, so detectLang falls through to the repo docs.
+  const r = runHookCapped(STOP, JSON.stringify({ session_id: 'F1', stop_hook_active: false }), tmp,
+    { LANG: 'C', LC_ALL: 'C', LC_MESSAGES: '', LANGUAGE: '' });
+  assert.equal(r.error, undefined, `the stop hook must not block on a FIFO: ${r.error}`);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.length > 0, 'the scan nudge is still emitted');
+});

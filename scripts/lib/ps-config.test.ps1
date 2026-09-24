@@ -127,6 +127,30 @@ Check 'safer-merge: disabledCanaries UNION -- project cannot clear an explicit g
 $sm10 = Test-SaferMerge -GlobalCfg @{ disabledCanaries = @('ROT-CANARY') } -ProjectCfg $null
 Check 'safer-merge: disabledCanaries global-only uppercase entry still matches via -contains (PS case-insensitive by default, no fold needed)' ($sm10.disabledCanaries -contains 'rot-canary')
 
+# ---- CWK-137: bounded, regular-file, no-reparse-point config reads ----
+$cw = Join-Path ([System.IO.Path]::GetTempPath()) ('cm-cwk137-' + [guid]::NewGuid().ToString('N'))
+$cwOut = $cw + '-out'
+New-Item -ItemType Directory -Path $cw, $cwOut | Out-Null
+try {
+  $small = Join-Path $cw 'small.json'
+  [System.IO.File]::WriteAllText($small, '{"rotCanaryMode":"off"}')
+  Check 'CWK-137: a small regular config is read' ((Read-CoalmineConfigFile $small $cw).rotCanaryMode -eq 'off')
+
+  $big = Join-Path $cw 'big.json'
+  [System.IO.File]::WriteAllText($big, '{"rotCanaryMode":"off","pad":"' + ('x' * 1048576) + '"}')
+  Check 'CWK-137: a config over 1 MiB is SKIPPED, not parsed' ($null -eq (Read-CoalmineConfigFile $big $cw))
+
+  # A junction on a directory between the root and the file (unprivileged on Windows).
+  [System.IO.File]::WriteAllText((Join-Path $cwOut 'cfg.json'), '{"rotCanaryMode":"off"}')
+  New-Item -ItemType Junction -Path (Join-Path $cw 'linked') -Target $cwOut | Out-Null
+  Check 'CWK-137: a config reached through a junction under the root is refused' ($null -eq (Read-CoalmineConfigFile (Join-Path $cw 'linked\cfg.json') $cw))
+  Check 'CWK-137: with no root (a home file), the same path is not containment-checked' ((Read-CoalmineConfigFile (Join-Path $cw 'linked\cfg.json') $null).rotCanaryMode -eq 'off')
+} finally {
+  $j = Join-Path $cw 'linked'
+  if (Test-Path $j) { [System.IO.Directory]::Delete($j) }
+  Remove-Item -LiteralPath $cw, $cwOut -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host ''
 Write-Host "PS results: $pass passed, $fail failed"
 if ($fail -gt 0) { exit 1 } else { exit 0 }

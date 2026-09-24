@@ -490,12 +490,14 @@ test('CWK-120 row 4: a failed backup blocks the overwrite -- a foreign hook is n
     // Fails ONLY the `.pre-coalmine` backup copy -- every other fs.copyFileSync call
     // the installer makes (skill install, etc.) is untouched, so this isolates the one
     // call site row 4 is about.
+    // CWK-137: the backup is now written by content through the contained writer (a temp
+    // renamed into place), so the fault is planted on BOTH the old copy and the new rename
+    // that land on the `.pre-coalmine` slot -- the property under test is unchanged.
     fs.writeFileSync(
       preloadPath,
-      "const fs = require('node:fs'); const orig = fs.copyFileSync; " +
-      "fs.copyFileSync = (src, dest, ...rest) => { if (String(dest).endsWith('.pre-coalmine')) { " +
-      "throw Object.assign(new Error('EACCES: simulated backup failure'), { code: 'EACCES' }); } " +
-      "return orig(src, dest, ...rest); };",
+      "const fs = require('node:fs'); const fail = () => { throw Object.assign(new Error('EACCES: simulated backup failure'), { code: 'EACCES' }); }; " +
+      "const origCopy = fs.copyFileSync; fs.copyFileSync = (src, dest, ...rest) => { if (String(dest).endsWith('.pre-coalmine')) fail(); return origCopy(src, dest, ...rest); }; " +
+      "const origRen = fs.renameSync; fs.renameSync = (src, dest) => { if (String(dest).endsWith('.pre-coalmine')) fail(); return origRen(src, dest); };",
       'utf8',
     );
 
@@ -607,4 +609,43 @@ test("`all` installs to every present agent dir, skips absent, never auto-seeds 
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// ─── CWK-137: the installer never writes through a repo-planted link ─────────────────
+// A cloned repository can plant `.github -> <anywhere>` (a junction, unprivileged on
+// Windows) or `.github/copilot-instructions.md -> ~/.bashrc` (a file symlink). On 59ee1e7
+// the installer APPENDED its trigger block to the link target and reported success
+// (PoC-2). The property asserted is the BYTES of the outside file, never only the exit.
+function canFileSymlink(dir) {
+  const probe = path.join(dir, '.probe-link');
+  try { fs.symlinkSync(path.join(dir, 'x'), probe, 'file'); fs.unlinkSync(probe); return true; } catch { return false; }
+}
+
+test('CWK-137: a .github junction escaping the project is REFUSED loudly -- the outside file keeps its bytes', (t) => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-junc-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-junc-out-'));
+  t.after(() => { fs.rmSync(proj, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  const SECRET = 'export SECRET_TOKEN=abc123\n';
+  fs.writeFileSync(path.join(outside, 'copilot-instructions.md'), SECRET);
+  fs.symlinkSync(outside, path.join(proj, '.github'), 'junction');
+  const res = runInstall('copilot', proj);
+  assert.notEqual(res.status, 0, `a refused write must fail loud:\n${res.stdout}${res.stderr}`);
+  assert.match(res.stdout + res.stderr, /\[refused\]/);
+  assert.equal(fs.readFileSync(path.join(outside, 'copilot-instructions.md'), 'utf8'), SECRET, 'the outside file is untouched');
+  assert.deepEqual(fs.readdirSync(outside), ['copilot-instructions.md'], 'nothing (skills, manifest, temp) was written outside');
+});
+
+test('CWK-137: a copilot-instructions.md symlink to a home dotfile is REFUSED -- the dotfile keeps its bytes (POSIX, or privileged Windows)', (t) => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-fsl-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-fsl-home-'));
+  t.after(() => { fs.rmSync(proj, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  if (!canFileSymlink(proj)) { t.skip('file symlinks need privilege on this volume'); return; }
+  const SECRET = 'export SECRET_TOKEN=abc123\n';
+  const bashrc = path.join(home, '.bashrc');
+  fs.writeFileSync(bashrc, SECRET);
+  fs.mkdirSync(path.join(proj, '.github'));
+  fs.symlinkSync(bashrc, path.join(proj, '.github', 'copilot-instructions.md'), 'file');
+  const res = runInstall('copilot', proj);
+  assert.notEqual(res.status, 0, `a refused write must fail loud:\n${res.stdout}${res.stderr}`);
+  assert.equal(fs.readFileSync(bashrc, 'utf8'), SECRET, 'the fake ~/.bashrc is untouched');
 });

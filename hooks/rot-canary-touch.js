@@ -14,7 +14,9 @@ function rcMode() {
     let f = path.join(dir, '.rot-canary-mode');
     if (!fs.existsSync(f)) f = path.join(dir, '.rotcanary-mode'); // legacy name honored
     if (fs.existsSync(f)) {
-      const v = fs.readFileSync(f, 'utf8').trim().toLowerCase();
+      // CWK-137: bounded, regular-file only -- a FIFO at the mode path would block the hook.
+      const raw = readRepoFileBounded(f, null, MAX_CONFIG_BYTES);
+      const v = raw === null ? '' : raw.trim().toLowerCase();
       if (v === 'off' || v === 'manual' || v === 'auto') return v;
     }
   } catch {}
@@ -138,14 +140,81 @@ function projectConfigPath(root) {
   return ownDirDefault(root); // nothing found anywhere -- own-dir is both the read and write target
 }
 
+// CWK-137 -- BOUNDED READS OF REPO-DERIVED PATHS. A cloned repo is untrusted: its
+// `.coalmine.json`, `AGENTS.md` and rule files can be symlinks to /dev/zero (the
+// conductor allocated ~8 GB and died, std::bad_alloc, measured on 59ee1e7), FIFOs
+// (open() blocks forever) or links out of the repo. Every hook read of such a path
+// goes through readRepoFileBounded; a refused read is a SILENT skip (Phoenix #4/#13).
+// The rules, identical to scripts/lib/repo-fs.mjs (the CLI copy -- a hook cannot
+// import an ESM lib, Phoenix #9; repo-fs.test.mjs asserts both constants match):
+//   lstat; a regular file proceeds; a symlink proceeds only when its realpath.native
+//   target lies inside the root's realpath AND is a regular file; a FIFO, device,
+//   socket, directory, or escaping/dangling link is skipped BEFORE open. Then open
+//   (O_NONBLOCK where it exists, so a FIFO swapped in after the lstat cannot block),
+//   fstat the fd, and re-check regular + size on the fd. Over the bound = SKIPPED,
+//   never truncated: a truncated JSON config would parse as malformed, a truncated
+//   stamp scan would miss stamps silently.
+// `root` null = no containment: the user's own home files (the global config, the
+// update stamp, the mode switch) are legitimately symlinked by dotfile managers, but
+// still get regular-file + size, since /dev/zero there is still a hang.
+// RESIDUAL, named: a regular file swapped in between the lstat and the open may lie
+// outside the root; the fd check still holds it to a bounded regular-file read.
+// Bounds measured on this box 2026-09-24 over every repo under source/repos (27,451
+// files): largest real `.coalmine.json` 9,114 B (the shipped commented template),
+// largest governance markdown 216,465 B (a zone umbrella mirror; AGENTS.md 216,047 B).
+const MAX_CONFIG_BYTES = 1024 * 1024;   // ~115x the largest config
+const MAX_DOC_BYTES = 4 * 1024 * 1024;  // ~19x the largest doc (AGENTS.md grew ~70% in six weeks)
+const REPO_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
+function isContained(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
+  try {
+    const lst = fs.lstatSync(p);
+    if (!lst.isSymbolicLink() && !lst.isFile() && !lst.isDirectory()) return null;
+    if (root != null && !isContained(fs.realpathSync.native(p), fs.realpathSync.native(root))) return null;
+    const st = lst.isSymbolicLink() ? fs.statSync(p) : lst;
+    if (st.isFile()) return 'file';
+    if (st.isDirectory()) return 'dir';
+    return null;
+  } catch { return null; }
+}
+function readRepoFileBounded(file, root, maxBytes, prefixOnly) {
+  if (repoEntryKind(file, root) !== 'file') return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, REPO_READ_FLAGS);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    if (st.size > maxBytes && !prefixOnly) return null;
+    const want = Math.min(st.size, maxBytes);
+    const buf = Buffer.alloc(want);
+    let got = 0;
+    while (got < want) {
+      const n = fs.readSync(fd, buf, got, want - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+
 // One BOM- and comment-tolerant JSONC read. Strips // and /* */ comments outside
 // strings: the string alternative consumes an escaped char (\\.) or any
 // non-quote/non-backslash char, so a value ending in \\ terminates the string
 // correctly instead of leaking escape state into the next token (which would
 // mis-strip a later //-containing string → silent revert).
-function readCfgFile(file) {
+// `root` = the project root for a repo-derived config, null for the global one (CWK-137).
+function readCfgFile(file, root) {
   try {
-    const content = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+    const raw = readRepoFileBounded(file, root, MAX_CONFIG_BYTES);
+    if (raw === null) return null;
+    const content = raw.replace(/^\uFEFF/, '');
     const cleanJson = content.replace(/"(?:\\.|[^"\\])*"|\/\/.*|\/\*[\s\S]*?\*\//g, (m) => (m[0] === '"' ? m : ''));
     const parsed = JSON.parse(cleanJson);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
@@ -290,8 +359,9 @@ function loadCfg(base) {
   _cfgBase = key;
   _cfg = null;
   try {
-    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'));
-    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(base === undefined ? process.cwd() : base)));
+    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'), null);
+    const projRoot = findGitRoot(base === undefined ? process.cwd() : base);
+    const projectCfg = readCfgFile(projectConfigPath(projRoot), projRoot);
     if (globalCfg || projectCfg) {
       const merged = {};
       for (const src of [globalCfg, projectCfg]) {
@@ -634,21 +704,13 @@ function main() {
   // Tripwire scan — skip very large files to stay inside the latency budget
   // (Phoenix #3: ≤100ms with scan). Default cap 100KB (tripwireMaxFileSizeKb) to
   // prevent CPU lock and token bloat.
-  let lines;
-  try {
-    const fd = fs.openSync(normF, 'r');
-    try {
-      // statSync->readFileSync on a path is a TOCTOU; fstat + read on one fd is not,
-      // and still skips large files before reading (Phoenix #3 latency budget).
-      const size = fs.fstatSync(fd).size;
-      if (size > getTripwireMaxFileSizeKb() * 1024) return;
-      const buf = Buffer.alloc(size);
-      fs.readSync(fd, buf, 0, size, 0);
-      lines = buf.toString('utf8').split(/\r?\n/);
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch { return; }
+  // CWK-137: the shared bounded reader -- lstat first (a FIFO at the edited path blocked the
+  // plain open() forever), fstat + size bound on the fd (the old TOCTOU-free shape, kept),
+  // over the bound = skipped. No containment root: the edited file may legitimately sit
+  // outside the project (the touched list is not project-scoped).
+  const text = readRepoFileBounded(normF, null, getTripwireMaxFileSizeKb() * 1024);
+  if (text === null) return;
+  const lines = text.split(/\r?\n/);
 
   const smells = [];
   // A real merge conflict always has an angle-bracket opener/closer. Key the tripwire

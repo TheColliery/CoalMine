@@ -142,14 +142,81 @@ function projectConfigPath(root) {
   return ownDirDefault(root); // nothing found anywhere -- own-dir is both the read and write target
 }
 
+// CWK-137 -- BOUNDED READS OF REPO-DERIVED PATHS. A cloned repo is untrusted: its
+// `.coalmine.json`, `AGENTS.md` and rule files can be symlinks to /dev/zero (the
+// conductor allocated ~8 GB and died, std::bad_alloc, measured on 59ee1e7), FIFOs
+// (open() blocks forever) or links out of the repo. Every hook read of such a path
+// goes through readRepoFileBounded; a refused read is a SILENT skip (Phoenix #4/#13).
+// The rules, identical to scripts/lib/repo-fs.mjs (the CLI copy -- a hook cannot
+// import an ESM lib, Phoenix #9; repo-fs.test.mjs asserts both constants match):
+//   lstat; a regular file proceeds; a symlink proceeds only when its realpath.native
+//   target lies inside the root's realpath AND is a regular file; a FIFO, device,
+//   socket, directory, or escaping/dangling link is skipped BEFORE open. Then open
+//   (O_NONBLOCK where it exists, so a FIFO swapped in after the lstat cannot block),
+//   fstat the fd, and re-check regular + size on the fd. Over the bound = SKIPPED,
+//   never truncated: a truncated JSON config would parse as malformed, a truncated
+//   stamp scan would miss stamps silently.
+// `root` null = no containment: the user's own home files (the global config, the
+// update stamp, the mode switch) are legitimately symlinked by dotfile managers, but
+// still get regular-file + size, since /dev/zero there is still a hang.
+// RESIDUAL, named: a regular file swapped in between the lstat and the open may lie
+// outside the root; the fd check still holds it to a bounded regular-file read.
+// Bounds measured on this box 2026-09-24 over every repo under source/repos (27,451
+// files): largest real `.coalmine.json` 9,114 B (the shipped commented template),
+// largest governance markdown 216,465 B (a zone umbrella mirror; AGENTS.md 216,047 B).
+const MAX_CONFIG_BYTES = 1024 * 1024;   // ~115x the largest config
+const MAX_DOC_BYTES = 4 * 1024 * 1024;  // ~19x the largest doc (AGENTS.md grew ~70% in six weeks)
+const REPO_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
+function isContained(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
+  try {
+    const lst = fs.lstatSync(p);
+    if (!lst.isSymbolicLink() && !lst.isFile() && !lst.isDirectory()) return null;
+    if (root != null && !isContained(fs.realpathSync.native(p), fs.realpathSync.native(root))) return null;
+    const st = lst.isSymbolicLink() ? fs.statSync(p) : lst;
+    if (st.isFile()) return 'file';
+    if (st.isDirectory()) return 'dir';
+    return null;
+  } catch { return null; }
+}
+function readRepoFileBounded(file, root, maxBytes, prefixOnly) {
+  if (repoEntryKind(file, root) !== 'file') return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, REPO_READ_FLAGS);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    if (st.size > maxBytes && !prefixOnly) return null;
+    const want = Math.min(st.size, maxBytes);
+    const buf = Buffer.alloc(want);
+    let got = 0;
+    while (got < want) {
+      const n = fs.readSync(fd, buf, got, want - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+
 // One BOM- and comment-tolerant JSONC read. Strips // and /* */ comments outside
 // strings: the string alternative consumes an escaped char (\\.) or any
 // non-quote/non-backslash char, so a value ending in \\ terminates the string
 // correctly instead of leaking escape state into the next token (which would
 // mis-strip a later //-containing string → silent revert).
-function readCfgFile(file) {
+// `root` = the project root for a repo-derived config, null for the global one (CWK-137).
+function readCfgFile(file, root) {
   try {
-    const content = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+    const raw = readRepoFileBounded(file, root, MAX_CONFIG_BYTES);
+    if (raw === null) return null;
+    const content = raw.replace(/^\uFEFF/, '');
     const cleanJson = content.replace(/"(?:\\.|[^"\\])*"|\/\/.*|\/\*[\s\S]*?\*\//g, (m) => (m[0] === '"' ? m : ''));
     const parsed = JSON.parse(cleanJson);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
@@ -294,8 +361,9 @@ function loadCfg(base) {
   _cfgBase = key;
   _cfg = null;
   try {
-    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'));
-    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(base === undefined ? process.cwd() : base)));
+    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'), null);
+    const projRoot = findGitRoot(base === undefined ? process.cwd() : base);
+    const projectCfg = readCfgFile(projectConfigPath(projRoot), projRoot);
     if (globalCfg || projectCfg) {
       const merged = {};
       for (const src of [globalCfg, projectCfg]) {
@@ -401,9 +469,10 @@ function oldUpdateStampPath() {
 // stamp (migration read). null when neither exists / is unreadable.
 function readUpdateStamp() {
   for (const p of [updateStampPath(), oldUpdateStampPath()]) {
-    try {
-      return fs.readFileSync(p, 'utf8').trim();
-    } catch { /* try the next location */ }
+    // CWK-137: bounded + regular-file only (a FIFO planted at the stamp path would block
+    // SessionStart forever). Home state, so no containment root.
+    const body = readRepoFileBounded(p, null, MAX_CONFIG_BYTES);
+    if (body !== null) return body.trim();
   }
   return null;
 }
@@ -483,14 +552,47 @@ const REVALIDATE_RE = /revalidate\s+(\d+)d/;
 // can never grow the regex's work past this bound.
 const STAMP_WINDOW = 2048;
 
-function countPastDueStamps(roots, today, cfg) {
+// CWK-137 -- the KIND 2 walks read REPO-DERIVED paths, so both are bounded. The roots are
+// classified with repoEntryKind (lstat + realpath containment, never a following statSync:
+// a repo planting `.claude/rules -> /` made the walk traverse the whole filesystem, a 30 s
+// timeout measured on 59ee1e7), every document read goes through readRepoFileBounded (a
+// `.md` FIFO blocked open() forever), and the walk itself is capped. readdir's Dirent does
+// NOT follow links, so a linked subdirectory is never descended into and a linked `.md` is
+// judged by repoEntryKind like any other read. Bounds: the largest rule tree on this box
+// (every repo under source/repos, measured 2026-09-24) holds 14 files, two levels deep.
+const MAX_RULE_WALK_ENTRIES = 5000;
+const MAX_RULE_WALK_DEPTH = 16;
+function forEachRuleDoc(root, visit) { // visit(body) returns true to stop early
+  let budget = MAX_RULE_WALK_ENTRIES;
+  const scan = (p) => {
+    const body = readRepoFileBounded(p, root, MAX_DOC_BYTES);
+    return body !== null && visit(body) === true;
+  };
+  const walk = (dir, depth) => {
+    if (depth > MAX_RULE_WALK_DEPTH) return false;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+    for (const e of entries) {
+      if (--budget < 0) return true; // budget spent -- stop the whole walk
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (walk(p, depth + 1)) return true; }
+      else if (e.name.endsWith('.md') && scan(p)) return true;
+    }
+    return false;
+  };
+  for (const r of ruleRoots(root)) {
+    const kind = repoEntryKind(r, root);
+    if (kind === 'dir' && walk(r, 0)) return;
+    if (kind === 'file' && scan(r)) return; // AGENTS.md (a file, not a dir)
+  }
+}
+
+function countPastDueStamps(root, today, cfg) {
   let count = 0;
   // clamp: a raw negative/0/NaN ruleRevalidateDays would mark every stamp past-due
   // (mass false nagging). Floor to >=1 day (same class as the other config clamps).
   const generalFallback = (cfg && Number.isFinite(cfg.ruleRevalidateDays)) ? Math.max(1, Math.floor(cfg.ruleRevalidateDays)) : 90;
-  const scanFile = (p) => {
-    let body;
-    try { body = fs.readFileSync(p, 'utf8'); } catch { return; }
+  forEachRuleDoc(root, (body) => {
     STAMP_OPEN.lastIndex = 0;
     let o;
     while ((o = STAMP_OPEN.exec(body)) !== null) {
@@ -506,22 +608,8 @@ function countPastDueStamps(roots, today, cfg) {
       // overlapping openers inside one window are still each considered.
       if (STAMP_OPEN.lastIndex <= o.index) STAMP_OPEN.lastIndex = o.index + 1;
     }
-  };
-  const walk = (dir) => {
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith('.md')) scanFile(p);
-    }
-  };
-  for (const r of roots) {
-    let st;
-    try { st = fs.statSync(r); } catch { continue; }
-    if (st.isDirectory()) walk(r);
-    else scanFile(r); // AGENTS.md (a file, not a dir)
-  }
+    return false;
+  });
   return count;
 }
 
@@ -542,28 +630,14 @@ function ruleRoots(root) {
 // math or window-bounded capture -- it only asks "is there a stamp at all", so it can
 // short-circuit on the very first hit. Used to auto-suppress the onboarding offer once the repo
 // has been gold-standard'd at least once (no need to keep suggesting a first run every session).
-function hasVerifiedStamp(roots) {
-  const fileHasStamp = (p) => {
-    let body;
-    try { body = fs.readFileSync(p, 'utf8'); } catch { return false; }
+function hasVerifiedStamp(root) {
+  let found = false;
+  forEachRuleDoc(root, (body) => {
     STAMP_OPEN.lastIndex = 0;
-    return STAMP_OPEN.test(body);
-  };
-  const dirHasStamp = (dir) => {
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory() ? dirHasStamp(p) : (e.name.endsWith('.md') && fileHasStamp(p))) return true;
-    }
-    return false;
-  };
-  for (const r of roots) {
-    let st;
-    try { st = fs.statSync(r); } catch { continue; }
-    if (st.isDirectory() ? dirHasStamp(r) : fileHasStamp(r)) return true;
-  }
-  return false;
+    found = STAMP_OPEN.test(body);
+    return found;
+  });
+  return found;
 }
 
 // Builds the head+onboarding+tail scaffold, deciding onboarding suppression against the given
@@ -576,7 +650,7 @@ function hasVerifiedStamp(roots) {
 // NOT suppressing on any internal error, same as the pre-carve default).
 function buildLines(cfg, base) {
   let skipOnboarding = false;
-  try { skipOnboarding = !!(cfg && cfg.skipOnboarding === true) || hasVerifiedStamp(ruleRoots(findGitRoot(base))); } catch {}
+  try { skipOnboarding = !!(cfg && cfg.skipOnboarding === true) || hasVerifiedStamp(findGitRoot(base)); } catch {}
   let notes = [];
   try { notes = configPathNotes(findGitRoot(base)); } catch {}
   return skipOnboarding ? [...CONDUCTOR_HEAD, ...notes, ...CONDUCTOR_TAIL] : [...CONDUCTOR_HEAD, ONBOARDING, ...notes, ...CONDUCTOR_TAIL];
@@ -770,7 +844,7 @@ function agMain(cfg, updateMode, input) {
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
-      const n = countPastDueStamps(ruleRoots(findGitRoot(base)), todayISO(Date.now()), cfg);
+      const n = countPastDueStamps(findGitRoot(base), todayISO(Date.now()), cfg);
       if (n > 0) lines.push(pastDueDirective(n));
     } catch {}
   }
@@ -805,7 +879,7 @@ function geminiMain(cfg, updateMode, input) {
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
-      const n = countPastDueStamps(ruleRoots(findGitRoot(base)), todayISO(Date.now()), cfg);
+      const n = countPastDueStamps(findGitRoot(base), todayISO(Date.now()), cfg);
       if (n > 0) lines.push(pastDueDirective(n));
     } catch {}
   }
@@ -883,9 +957,8 @@ function main() {
   // (not the update stamp): runs every session start like the onboarding offer.
   if (updateMode !== 'off') {
     try {
-      const roots = ruleRoots(findGitRoot(process.cwd()));
       const today = todayISO(Date.now());
-      const n = countPastDueStamps(roots, today, cfg);
+      const n = countPastDueStamps(findGitRoot(process.cwd()), today, cfg);
       if (n > 0) lines.push(pastDueDirective(n));
     } catch {}
   }
