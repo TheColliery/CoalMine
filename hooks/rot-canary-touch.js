@@ -146,7 +146,8 @@ function projectConfigPath(root) {
 // (open() blocks forever) or links out of the repo. Every hook read of such a path
 // goes through readRepoFileBounded; a refused read is a SILENT skip (Phoenix #4/#13).
 // The rules, identical to scripts/lib/repo-fs.mjs (the CLI copy -- a hook cannot
-// import an ESM lib, Phoenix #9; repo-fs.test.mjs asserts both constants match):
+// import an ESM lib, Phoenix #9; repo-fs.test.mjs asserts both bounds match -- the
+// config bound here, the document bound in coalmine-conductor.js):
 //   lstat; a regular file proceeds; a symlink proceeds only when its realpath.native
 //   target lies inside the root's realpath AND is a regular file; a FIFO, device,
 //   socket, directory, or escaping/dangling link is skipped BEFORE open. Then open
@@ -159,11 +160,11 @@ function projectConfigPath(root) {
 // still get regular-file + size, since /dev/zero there is still a hang.
 // RESIDUAL, named: a regular file swapped in between the lstat and the open may lie
 // outside the root; the fd check still holds it to a bounded regular-file read.
-// Bounds measured on this box 2026-09-24 over every repo under source/repos (27,451
-// files): largest real `.coalmine.json` 9,114 B (the shipped commented template),
-// largest governance markdown 216,465 B (a zone umbrella mirror; AGENTS.md 216,047 B).
+// Bound measured on this box 2026-09-24 over every repo under source/repos (27,451
+// files): the largest real `.coalmine.json` is 9,114 B (the shipped commented template).
+// The DOCUMENT bound (MAX_DOC_BYTES) lives in coalmine-conductor.js, its only reader:
+// kept here it rode into the stop and touch hooks unused (CodeQL #70-#73).
 const MAX_CONFIG_BYTES = 1024 * 1024;   // ~115x the largest config
-const MAX_DOC_BYTES = 4 * 1024 * 1024;  // ~19x the largest doc (AGENTS.md grew ~70% in six weeks)
 const REPO_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
 function isContained(child, parent) {
   const rel = path.relative(parent, child);
@@ -211,15 +212,61 @@ function readRepoFileBounded(file, root, maxBytes, prefixOnly) {
 // mis-strip a later //-containing string → silent revert).
 // `root` = the project root for a repo-derived config, null for the global one (CWK-137).
 function readCfgFile(file, root) {
+  return readCfgResult(file, root).cfg;
+}
+
+// UMB-174 (b) + R6 AMENDMENT 2: the same read, plus WHY a config that exists was not
+// used, so the conductor can say so on its one sanctioned SessionStart line instead of
+// staying silent. `reason` is one of the flock's four, or null:
+//   'malformed JSON'    -- JSON.parse threw (a leading U+FEFF is stripped BEFORE the
+//                          parse, RFC 8259 §8.1; PS 5.1 writes one whenever asked for UTF-8)
+//   'not a JSON object' -- valid JSON that is not a plain object ([1], "x", 3, null)
+//   'a directory'       -- the candidate is a directory (or a contained link to one)
+//   'unreadable'        -- the OS denied the read: EACCES, or EPERM (a Windows ACL denial)
+// null = read and used, or absent, or REFUSED by the CWK-137 reader (a link out of the
+// root, over MAX_CONFIG_BYTES, a FIFO or device): those stay SILENT by the head's ruling
+// (a new reason for them is a flock-wide question, returned to main). The fs error is
+// keyed on its CODE, never its message (node/runtime.md §7). The SELECTION is unchanged:
+// every caller already skips a null cfg exactly as before.
+function readCfgResult(file, root) {
+  let raw;
+  try { raw = readRepoFileBounded(file, root, MAX_CONFIG_BYTES); } catch { raw = null; }
+  if (raw === null) return { cfg: null, reason: cfgRefusalReason(file, root) };
+  let parsed;
   try {
-    const raw = readRepoFileBounded(file, root, MAX_CONFIG_BYTES);
-    if (raw === null) return null;
     const content = raw.replace(/^\uFEFF/, '');
     const cleanJson = content.replace(/"(?:\\.|[^"\\])*"|\/\/.*|\/\*[\s\S]*?\*\//g, (m) => (m[0] === '"' ? m : ''));
-    const parsed = JSON.parse(cleanJson);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  } catch {}
-  return null;
+    parsed = JSON.parse(cleanJson);
+  } catch { return { cfg: null, reason: 'malformed JSON' }; }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { cfg: parsed, reason: null };
+  return { cfg: null, reason: 'not a JSON object' };
+}
+
+// Why readRepoFileBounded gave nothing back -- consulted ONLY on that failure path, so a
+// config that reads cleanly costs no extra syscall. A second open is made only for a
+// regular, contained file, so a FIFO is still never opened.
+function cfgRefusalReason(file, root) {
+  const denied = (e) => !!(e && (e.code === 'EACCES' || e.code === 'EPERM'));
+  let lst;
+  try { lst = fs.lstatSync(file); } catch (e) { return denied(e) ? 'unreadable' : null; }
+  const kind = repoEntryKind(file, root);
+  if (kind === 'dir') return 'a directory';
+  if (kind !== 'file') {
+    // A Windows ACL read-deny makes realpathSync.native on the FILE throw EPERM (measured:
+    // lstat and stat succeed, realpath and open do not), so repoEntryKind cannot place it.
+    // A plain file (never a link) lives where its parent directory does, so containment is
+    // checked through the PARENT's realpath instead -- a link out of the root, a FIFO or a
+    // device still falls through to silence.
+    if (!lst.isFile()) return null;
+    try {
+      const dirReal = fs.realpathSync.native(path.dirname(file));
+      if (root != null && !isContained(path.join(dirReal, path.basename(file)), fs.realpathSync.native(root))) return null;
+    } catch { return null; }
+  }
+  let fd;
+  try { fd = fs.openSync(file, REPO_READ_FLAGS); } catch (e) { return denied(e) ? 'unreadable' : null; }
+  try { fs.closeSync(fd); } catch {}
+  return null; // it opens: the bound refused it (over MAX_CONFIG_BYTES) -- silent
 }
 
 // Two-level cached read of .coalmine.json: the global ~/.claude/.coalmine.json

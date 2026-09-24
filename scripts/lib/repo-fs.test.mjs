@@ -39,11 +39,20 @@ function canMkfifo(dir) {
   return true;
 }
 
-test('the hook partial carries the SAME two bounds as repo-fs.mjs (the copy the hooks cannot import)', () => {
+test('the hooks carry the SAME two bounds as repo-fs.mjs (the copy the hooks cannot import)', () => {
+  // MAX_CONFIG_BYTES lives in the shared partial (every hook reads a config); MAX_DOC_BYTES
+  // lives in the conductor only, its one reader (CodeQL #70-#73 -- the partial made the stop
+  // and touch hooks carry it unused).
   const partial = fs.readFileSync(path.join(repo, 'hooks', '_shared', 'node-config.js'), 'utf8');
+  const conductor = fs.readFileSync(path.join(repo, 'hooks', 'coalmine-conductor.js'), 'utf8');
   const cfg = partial.match(/const MAX_CONFIG_BYTES = ([^;]+);/);
-  const doc = partial.match(/const MAX_DOC_BYTES = ([^;]+);/);
-  assert.ok(cfg && doc, 'both constants are declared in hooks/_shared/node-config.js');
+  const doc = conductor.match(/const MAX_DOC_BYTES = ([^;]+);/);
+  assert.ok(cfg, 'MAX_CONFIG_BYTES is declared in hooks/_shared/node-config.js');
+  assert.ok(doc, 'MAX_DOC_BYTES is declared in hooks/coalmine-conductor.js');
+  assert.ok(!/const MAX_DOC_BYTES/.test(partial), 'MAX_DOC_BYTES is NOT in the shared partial any more');
+  for (const hook of ['rot-canary-stop.js', 'rot-canary-touch.js']) {
+    assert.ok(!/const MAX_DOC_BYTES/.test(fs.readFileSync(path.join(repo, 'hooks', hook), 'utf8')), `${hook} declares no MAX_DOC_BYTES`);
+  }
   assert.equal(Function(`return ${cfg[1]}`)(), MAX_CONFIG_BYTES);
   assert.equal(Function(`return ${doc[1]}`)(), MAX_DOC_BYTES);
 });
@@ -178,4 +187,33 @@ test('writeRepoFile does NOT fall back when the refused target is hard-linked --
   withRenameFault(t, 'EPERM');
   assert.throws(() => writeRepoFile(target, 'NEW', root), /EPERM/);
   assert.equal(fs.readFileSync(other, 'utf8'), 'KEEP');
+});
+
+// CWK-137 carry-over, CodeQL #69 (js/file-system-race): the EPERM fallback's check must
+// bind to the thing it writes. The attacker here swaps the target for a symlink to a victim
+// IMMEDIATELY AFTER the implementation's check step -- whichever of lstatSync (the old
+// path check) or openSync (the fd check) it calls first on the target. Against the old
+// path check the write follows the link (RED, measured before the fix); against the fd
+// check the write lands in the inode that was checked, never the victim.
+test('writeRepoFile EPERM fallback: a link swapped in right after the check never redirects the write (POSIX, or privileged Windows)', (t) => {
+  const root = tmpDir(t, 'wrace');
+  if (!canFileSymlink(root)) { t.skip('file symlinks need privilege on this volume'); return; }
+  const outside = tmpDir(t, 'wrace-out');
+  const victim = path.join(outside, 'bashrc');
+  fs.writeFileSync(victim, 'export SECRET_TOKEN=abc123\n');
+  const target = path.join(root, 'pre-commit');
+  fs.writeFileSync(target, 'OLD');
+  withRenameFault(t, 'EPERM');
+  let swapped = false;
+  const swap = () => { if (!swapped) { swapped = true; fs.unlinkSync(target); fs.symlinkSync(victim, target, 'file'); } };
+  const origLstat = fs.lstatSync;
+  const origOpen = fs.openSync;
+  let armed = false; // arm only after the pre-rename containment check has run
+  fs.lstatSync = (p, ...rest) => { const r = origLstat(p, ...rest); if (armed && String(p) === target) swap(); return r; };
+  fs.openSync = (p, ...rest) => { const r = origOpen(p, ...rest); if (armed && String(p) === target) swap(); return r; };
+  const origRename = fs.renameSync; // withRenameFault already replaced it; arm inside it
+  fs.renameSync = (...a) => { armed = true; return origRename(...a); };
+  t.after(() => { fs.lstatSync = origLstat; fs.openSync = origOpen; });
+  try { writeRepoFile(target, 'PWNED', root); } catch { /* refusing is also safe */ }
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'export SECRET_TOKEN=abc123\n', 'the victim behind the swapped-in link keeps its bytes');
 });

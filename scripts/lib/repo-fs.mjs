@@ -150,13 +150,27 @@ export function writeRepoFile(target, content, root) {
     // Windows refuses to rename over a file another process holds open without
     // FILE_SHARE_DELETE (EPERM/EBUSY/EACCES) -- measured: re-installing the git hooks
     // from inside a running `.githooks/pre-commit`. Fall back to an in-place write ONLY
-    // when the target re-checks as a plain regular file with a single link: a symlink
-    // or a hard link (nlink > 1) would be written THROUGH, so those still fail.
-    // RESIDUAL, named: a link swapped in between this lstat and the open.
+    // when the target is a plain regular file with a single link: a symlink or a hard link
+    // (nlink > 1) would be written THROUGH, so those still fail.
+    // CWK-137 carry-over, CodeQL #69 (js/file-system-race): the check is made ON THE OPEN
+    // HANDLE, never on the path -- open without truncating (O_NOFOLLOW where the platform
+    // has it, so a planted link fails the open on POSIX), fstat that fd, and only then
+    // truncate + write through the SAME fd. A link swapped in after the rename failed can
+    // no longer redirect the write. RESIDUAL, named: Windows has no O_NOFOLLOW, so there a
+    // symlink planted in that window would be followed -- it still has to resolve to a
+    // single-link regular file, and creating a symlink on Windows needs a privilege.
     if (!['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
-    let st;
-    try { st = fs.lstatSync(target); } catch { throw e; }
-    if (!st.isFile() || st.nlink > 1) throw e;
-    fs.writeFileSync(target, content, 'utf8');
+    let fd;
+    try { fd = fs.openSync(target, fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW || 0)); } catch { throw e; }
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.nlink > 1) throw e;
+      const buf = Buffer.from(content, 'utf8');
+      fs.ftruncateSync(fd, 0);
+      let off = 0;
+      while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off, off);
+    } finally {
+      fs.closeSync(fd);
+    }
   }
 }

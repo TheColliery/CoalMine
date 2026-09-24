@@ -144,9 +144,11 @@ try {
 
   # A directory link between the root and the file. CI-red fix (v3.20.2, pwsh on ubuntu +
   # macOS): New-Item -ItemType Junction creates NOTHING on a non-Windows host and does not
-  # throw, and a 'linked\cfg.json' child is one literal file name on POSIX -- so the refusal
-  # check passed VACUOUSLY there (the file was missing, not refused) and the no-root check
-  # failed. The link is now PROBED: a junction (unprivileged on Windows), else a symbolic
+  # throw -- so there was no link, the refusal check passed VACUOUSLY (the file was missing,
+  # not refused) and the no-root check failed. That is the ONE cause. (A first reading also
+  # blamed 'linked\cfg.json' as a literal backslash name on POSIX; the reviewer measured
+  # that false -- pwsh's Join-Path normalises '\' to '/' on Unix. The segment join below is
+  # kept as harmless, never as a cure.) The link is now PROBED: a junction (unprivileged on Windows), else a symbolic
   # link (unprivileged on POSIX); the path is joined by segment; and a positive control
   # proves the path RESOLVES before a refusal is believed. No link -> both checks skip visibly.
   [System.IO.File]::WriteAllText((Join-Path $cwOut 'cfg.json'), '{"rotCanaryMode":"off"}')

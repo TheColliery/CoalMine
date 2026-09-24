@@ -2,6 +2,21 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+<!-- BUILD station placeholders (R8); the DOCS station rewrites this block. -->
+
+### Added
+- **UMB-174 (b) — an `UNREADABLE:` line when a config exists but cannot be used.** The session-start conductor now reports, in the flock's wording, a config the walk selected that it could not read: `UNREADABLE: <path> exists but is not a readable config (<reason>); it was skipped — canonical = .claude/coal/coalmine.json`. The four reasons are `malformed JSON` · `a directory` · `unreadable` (EACCES, or EPERM from a Windows ACL) · `not a JSON object` (valid JSON that is not an object, R6 amendment 2). A leading U+FEFF is still stripped before the parse, so a BOM-prefixed config is read, not reported. Which config is used is unchanged: only the silence goes. A config the CWK-137 reader refuses (a link out of the project, over 1 MiB, a FIFO or device) stays silent. — test: `scripts/lib/hooks.test.mjs` (`UMB-174:` / `R6 AMENDMENT 2:` / `HEAD RULING (R8):`)
+- **CWK-135 (a) — the global tier names its own path.** An unreadable `~/.claude/.coalmine.json` gets its own `UNREADABLE:` line whose canonical is `~/.claude/.coalmine.json`, never the project path, because a global config has no project location to move to. — test: `scripts/lib/hooks.test.mjs` (`CWK-135 (a):`)
+
+### Fixed
+- **CodeQL #69 (`js/file-system-race`) — the Windows in-place fallback in `writeRepoFile` now checks the open handle, not the path.** It opens the target without truncating (`O_NOFOLLOW` where available), checks `isFile` and `nlink === 1` on that handle, then truncates and writes through it, so a link swapped in after the check cannot redirect the write. — test: `scripts/lib/repo-fs.test.mjs` (the EPERM-fallback race test)
+- **CodeQL #70–#73 (`js/unused-local-variable`) — `MAX_DOC_BYTES` moved out of the shared config region into the conductor, its only reader**, so the stop and touch hooks no longer carry it. — test: `scripts/lib/repo-fs.test.mjs` (`the hooks carry the SAME two bounds as repo-fs.mjs`)
+
+### Security
+- **CWK-133 + CWK-136 — every `git` the installer, the gates and the fixtures run strips the inherited `GIT_*` environment.** Inside a linked worktree, a git hook exports an absolute `GIT_DIR`; a `git` spawned with the inherited environment then acts on the repository that `GIT_DIR` names (measured: a fixture `git init` re-initialised it). All 31 `git` spawns under `scripts/` now go through `gitEnv()`, which deletes the whole `GIT_*` family and pins `GIT_CEILING_DIRECTORIES`. `verify.mjs` gained a census that fails on a `git` spawn with no `env:`, or one passing `process.env` without `gitEnv()`. — test: `scripts/lib/git-env.test.mjs`, `scripts/lib/git-env-census.test.mjs`
+
 ## [3.20.2] - 2026-09-24
 
 A link planted in a cloned repository can no longer crash the hooks or make install and configure write outside it.

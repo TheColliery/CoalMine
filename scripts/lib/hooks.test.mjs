@@ -2349,3 +2349,144 @@ test('CWK-137: a FIFO in the rules tree is never OPENED by the conductor -- a bl
   assert.equal(r.status, 0);
   assert.equal(await exited, 'blocked', 'the conductor must skip the FIFO before open -- the writer would have unblocked');
 });
+
+// ─── UMB-174 (b) + CWK-135 (a): the UNREADABLE line (this room is the flock EXEMPLAR) ──────
+// A config that EXISTS at the path the walk selects but cannot be used is REPORTED on the
+// SessionStart line, never silently ignored. The flock string, verbatim (em dash included):
+//   UNREADABLE: <path> exists but is not a readable config (<reason>); it was skipped — canonical = <canonical>
+// <reason> is one of 'malformed JSON' · 'a directory' · 'unreadable' · 'not a JSON object'.
+// The PROJECT tier's canonical is .claude/coal/coalmine.json; the GLOBAL tier names its own
+// file (~/.claude/.coalmine.json), because a global config has nowhere else to move to.
+// This room prefixes it as it prefixes IGNORED ('- CoalMine config: ') and appends the
+// relay instruction; the flock string itself is the part between the two.
+const FLOCK = (where, reason, canonical) => `UNREADABLE: ${where} exists but is not a readable config (${reason}); it was skipped — canonical = ${canonical}`;
+const PROJECT_CANON = '.claude/coal/coalmine.json';
+const GLOBAL_CANON = '~/.claude/.coalmine.json';
+const unreadableLines = (stdout) => stdout.split('\n').filter((l) => l.includes('UNREADABLE:'));
+const expectedLine = (where, reason, canonical) => `- CoalMine config: ${FLOCK(where, reason, canonical)} (relay to the user in their language).`;
+
+// A project cwd and a SEPARATE fake HOME, so the global file never doubles as a project candidate.
+function projectAndHome(t) {
+  const proj = mkAnchoredTmp();
+  const home = mkTmp();
+  t.after(() => { fs.rmSync(proj, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  return { proj, home };
+}
+function writeProjectCfg(proj, body) {
+  fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.claude', 'coal', 'coalmine.json'), body);
+}
+
+test('UMB-174: a MALFORMED config at the canonical project path is REPORTED once (reason "malformed JSON"); the fixed file at the same path is silent', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{"enableConductor": false');
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'malformed JSON', PROJECT_CANON)]);
+  assert.ok(r.stdout.includes('[CoalMine]'), 'the skipped config contributes nothing -- the conductor still runs');
+  writeProjectCfg(proj, '{"skipOnboarding": true}');
+  const r2 = runHook(CONDUCTOR, '', home, [], proj);
+  assert.deepEqual(unreadableLines(r2.stdout), [], 'negative control: a well-formed config at the same path produces no line');
+});
+
+test('UMB-174: a DIRECTORY at the canonical project path is REPORTED (reason "a directory")', (t) => {
+  const { proj, home } = projectAndHome(t);
+  fs.mkdirSync(path.join(proj, '.claude', 'coal', 'coalmine.json'), { recursive: true });
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'a directory', PROJECT_CANON)]);
+});
+
+test('R6 AMENDMENT 2: VALID JSON that is not an object is REPORTED (reason "not a JSON object"), never silent', (t) => {
+  const { proj, home } = projectAndHome(t);
+  for (const body of ['[1, 2]', '"auto"', '42', 'null']) {
+    writeProjectCfg(proj, body);
+    const r = runHook(CONDUCTOR, '', home, [], proj);
+    assert.equal(r.status, 0);
+    assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'not a JSON object', PROJECT_CANON)], `body ${body}`);
+  }
+});
+
+test('R6 AMENDMENT 2: a leading U+FEFF is stripped before the parse -- a BOM-prefixed config is READ, not reported', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '﻿{"skipOnboarding": true}');
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [], 'a BOM is not malformed JSON');
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'and the config is HONORED: skipOnboarding took effect');
+});
+
+// Capability-probed, never process.platform: chmod 0 denies a read on POSIX (non-root); on
+// NTFS only an ACL does, and Node reports that as EPERM, not EACCES. One skippable leg.
+function denyRead(file) {
+  try {
+    fs.chmodSync(file, 0);
+    try { fs.readFileSync(file); } catch (e) { if (e && (e.code === 'EACCES' || e.code === 'EPERM')) return 'chmod'; }
+    fs.chmodSync(file, 0o600);
+  } catch {}
+  const me = os.userInfo().username;
+  const deny = spawnSync('icacls', [file, '/deny', `${me}:(R)`], { encoding: 'utf8' });
+  if (deny.error || deny.status !== 0) return null;
+  try { fs.readFileSync(file); } catch (e) { if (e && (e.code === 'EACCES' || e.code === 'EPERM')) return 'icacls'; }
+  spawnSync('icacls', [file, '/reset'], { encoding: 'utf8' });
+  return null;
+}
+function restoreRead(file, how) {
+  if (how === 'chmod') { try { fs.chmodSync(file, 0o600); } catch {} }
+  if (how === 'icacls') spawnSync('icacls', [file, '/reset'], { encoding: 'utf8' });
+}
+
+test('UMB-174: an UNREADABLE config (EACCES, or EPERM from a Windows ACL) is REPORTED (reason "unreadable")', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{"skipOnboarding": true}');
+  const target = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  const how = denyRead(target);
+  if (!how) { t.skip('this volume/OS denies the owning process a read through neither chmod nor icacls'); return; }
+  // The ACL/mode is restored in finally, NOT t.after: after-hooks run in registration order,
+  // so the fixture removal registered earlier would hit the still-denied file first (EPERM).
+  let r;
+  try { r = runHook(CONDUCTOR, '', home, [], proj); } finally { restoreRead(target, how); }
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'unreadable', PROJECT_CANON)]);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'the unreadable config contributed nothing');
+});
+
+test('CWK-135 (a): a malformed GLOBAL config is REPORTED with the GLOBAL file as its canonical, never the project path', (t) => {
+  const { proj, home } = projectAndHome(t);
+  const globalFile = path.join(home, '.claude', '.coalmine.json');
+  fs.mkdirSync(path.dirname(globalFile), { recursive: true });
+  fs.writeFileSync(globalFile, 'not json at all');
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(globalFile, 'malformed JSON', GLOBAL_CANON)]);
+});
+
+test('CWK-135 (a): a project AND a global failure each get their own line, each naming its own tier', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '[]');
+  const globalFile = path.join(home, '.claude', '.coalmine.json');
+  fs.mkdirSync(path.dirname(globalFile), { recursive: true });
+  fs.mkdirSync(globalFile);
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.deepEqual(unreadableLines(r.stdout), [
+    expectedLine(PROJECT_CANON, 'not a JSON object', PROJECT_CANON),
+    expectedLine(globalFile, 'a directory', GLOBAL_CANON),
+  ]);
+});
+
+test('HEAD RULING (R8): a config the CWK-137 reader refuses for SIZE stays silent -- no new reason is invented', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, JSON.stringify({ pad: 'x'.repeat(MAX_CONFIG_BYTES) }));
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), []);
+});
+
+test('UMB-174: the Antigravity adapter reports UNREADABLE too (it shares buildLines)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{oops');
+  const stdin = JSON.stringify({ session_id: 'UMB174AG', cwd: proj, hook_event_name: 'PreInvocation' });
+  const r = runHook(CONDUCTOR, stdin, home, ['PreInvocation'], proj);
+  assert.equal(r.status, 0);
+  assert.ok(agInject(r.stdout).includes(FLOCK(PROJECT_CANON, 'malformed JSON', PROJECT_CANON)), 'AG ephemeralMessage carries the flock string');
+});
