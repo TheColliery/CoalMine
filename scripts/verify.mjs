@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadShared, renderSkillMd, listSkills, SHARED_REFERENCES } from './lib/render.mjs';
 import { TARGETS } from './lib/targets.mjs';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
@@ -21,6 +21,7 @@ import { checkDistChangelog } from './lib/dist-changelog.mjs';
 import { checkConfigKeys, checkConfigReadPath } from './lib/config-keys.mjs';
 import { checkPointers, pointerCandidates, looksPathShaped, DEFAULT_SURFACE_PLAN, collectSurfaces, applyCheckIgnoreProbe } from './lib/pointer-check.mjs';
 import { verifyAgainstManifest } from './lib/manifest.mjs';
+import { gitEnv } from './lib/git-env.mjs';
 import { MAX_DOC_BYTES, readRepoFileBounded } from './lib/repo-fs.mjs';
 import { descriptionCapCheck, DESC_CAP } from './lib/desc-cap.mjs';
 
@@ -277,7 +278,7 @@ try {
 //     to neither reddens the gate instead of going unread.
 console.log('pointers:');
 try {
-  const lsAll = spawnSync('git', ['ls-files'], { cwd: repo, encoding: 'utf8' });
+  const lsAll = spawnSync('git', ['ls-files'], { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' });
   if (lsAll.error || lsAll.status !== 0) {
     // A VISIBLE skip, never a silent carve-out: no git means no durability answer.
     console.log('  --   pointer check: git unavailable — cannot tell a tracked path from an untracked one; skipped');
@@ -547,7 +548,7 @@ try {
     // site consumes it, it does not own it.
     const ignoredRoots = applyCheckIgnoreProbe({
       toProbe, fail,
-      runCheckIgnore: (input) => spawnSync('git', ['check-ignore', '--stdin'], { cwd: repo, encoding: 'utf8', input }),
+      runCheckIgnore: (input) => spawnSync('git', ['check-ignore', '--stdin'], { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8', input }),
     });
 
     const findings = checkPointers({
@@ -583,6 +584,21 @@ try {
     }
   }
 } catch (e) { fail(`pointer check crashed: ${e.message}`); }
+
+// 2.12 GIT-SPAWN CENSUS (CWK-133 + CWK-136): every git spawn under scripts/ carries an
+// explicit env: (rung 1), and an env: holding process.env must route through gitEnv()
+// (rung 2). A git spawn that inherits process.env picks up the ABSOLUTE GIT_DIR a linked-
+// worktree hook exports -- and this gate runs AS that hook. Detection lives in
+// git-env-census.mjs, dynamically imported so a missing lib is one FAIL line, never a
+// linking-time crash (node/runtime.md §1).
+console.log('git spawn census (CWK-133/136 — every git spawn under scripts/ carries env: gitEnv(...), never process.env):');
+try {
+  const { censusGitSpawns, collectScriptsMjs } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'git-env-census.mjs')).href);
+  const files = collectScriptsMjs(repo);
+  const findings = censusGitSpawns(files);
+  for (const f of findings) fail(`git spawn census: ${f}`);
+  if (findings.length === 0) pass(`git spawn census: every git spawn across ${files.length} scripts/**/*.mjs file(s) routes through gitEnv()`);
+} catch (e) { fail(`git spawn census crashed: ${e.message}`); }
 
 // 3. hooks present
 console.log('hooks:');

@@ -41,6 +41,8 @@ const TESTS = [
   'scripts/lib/publish-release.test.mjs',
   'scripts/lib/link-check.test.mjs',
   'scripts/lib/repo-fs.test.mjs',
+  'scripts/lib/git-env.test.mjs',
+  'scripts/lib/git-env-census.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

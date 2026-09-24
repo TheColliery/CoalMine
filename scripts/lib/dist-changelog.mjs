@@ -30,6 +30,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { gitEnv } from './git-env.mjs';
 
 // The two paths a version bump actually touches: the committed dist directory itself,
 // and the repo-root plugin.json (the version SOURCE — copied into plugin/.claude-plugin/
@@ -38,7 +39,7 @@ import path from 'node:path';
 const DIST_PATHS = ['plugin/', '.claude-plugin/plugin.json'];
 
 function git(args, repo) {
-  return spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+  return spawnSync('git', args, { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' });
 }
 
 function isGitRepo(repo) {

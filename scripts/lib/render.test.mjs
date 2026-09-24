@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { inject, renderSkillMd, installSkillDir, listSkills, SHARED_REFERENCES } from './render.mjs';
+import { gitEnv } from './git-env.mjs';
 
 const NL = String.fromCharCode(10);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -282,7 +283,7 @@ test('verify.mjs 2.8 dist-changelog: a dist change with no CHANGELOG entry fails
     fs.writeFileSync(path.join(tmp, 'CHANGELOG.md'), '# Changelog\n\n## [3.14.0] - 2026-01-01\n\n### Added\n- baseline\n');
 
     const git = (args) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -370,7 +371,7 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
     fs.writeFileSync(path.join(tmp, 'LOCAL-NOTES.md'), 'machine-local' + NL);
 
     const git = (args) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -459,7 +460,7 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
     fs.writeFileSync(path.join(tmp, '.gitignore'), 'throwaway-build/' + NL);
 
     const git = (args) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -573,7 +574,7 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
       NL + 'See `totally-fake-root/notes.md` for details.' + NL);
 
     const git = (args, opts = {}) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8', ...opts });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', ...opts });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -601,24 +602,24 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
     // fixture failure (git missing, the .gitignore fixture itself broken) and stays
     // fatal. The CONTROL and END-TO-END assertions below run unconditionally either
     // way, so every runner still tests the actual CoalMine behavior.
-    const bare = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/\n' });
+    const bare = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/\n' });
     if (bare.status === 1) {
       t.diagnostic('this Git does not reproduce the lone-CR false-match (bare.status === 1) -- skipping the quirk-specific assertions only; control + end-to-end still run below');
     } else {
       assert.equal(bare.status, 0,
         `RED: the bare feed must reproduce the false match on THIS fixture (or answer 1 if this Git version does not) -- got status ${bare.status}, a genuine fixture failure`);
-      const probed = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/.pointer-check-probe\n' });
+      const probed = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/.pointer-check-probe\n' });
       assert.equal(probed.status, 1,
         'the injection-site feed correctly reports the SAME root as NOT ignored');
-      const verbose = spawnSync('git', ['check-ignore', '-v', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/\n' });
+      const verbose = spawnSync('git', ['check-ignore', '-v', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/\n' });
       assert.match(verbose.stdout, /\.gitignore:2:/,
         'the matching pattern must be the lone-CR line (line 2), naming the source unambiguously');
     }
 
     // CONTROL: a genuinely-ignored root still matches under BOTH feeds -- the probe
     // loses no true positive.
-    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'dist/\n' }).status, 0);
-    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'dist/.pointer-check-probe\n' }).status, 0);
+    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'dist/\n' }).status, 0);
+    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'dist/.pointer-check-probe\n' }).status, 0);
 
     // A MERELY-CRLF pattern line (the old fixture's own shape) does NOT reproduce it
     // on this box/git version -- kept as the honest, re-aimed sentence (see the header

@@ -20,6 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadShared as loadSharedFrom, listSkills, installSkillDir } from './lib/render.mjs';
 import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
+import { gitEnv } from './lib/git-env.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
 import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
 import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
@@ -155,7 +156,7 @@ function resolveGitDir(repoDir) {
 // No git binary / not set / any failure → the historical <gitDir>/hooks.
 function resolveHooksDir(repoDir, gitDir) {
   try {
-    const r = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: repoDir, encoding: 'utf8' });
+    const r = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
     const configured = r.status === 0 && r.stdout ? r.stdout.trim() : '';
     if (configured) return path.resolve(repoDir, configured);
   } catch {}
@@ -191,7 +192,7 @@ function isOwnHook(content) {
 // unset and a `configured` path DID put us inside the worktree) but was killed or
 // otherwise failed mid-run, returning neither 0 nor 1.
 function trackedStatus(hookPath, repoDir) {
-  const r = spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: repoDir, encoding: 'utf8' });
+  const r = spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
   if (r.error) return 'unknown';
   if (r.status === 0) return 'tracked';
   if (r.status === 1) return 'untracked';

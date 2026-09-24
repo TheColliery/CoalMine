@@ -11,9 +11,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { checkDistChangelog, resolveLastTag } from './dist-changelog.mjs';
+import { gitEnv } from './git-env.mjs';
 
 function git(args, repo) {
-  const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+  const r = spawnSync('git', args, { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
   return r.stdout;
 }

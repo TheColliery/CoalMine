@@ -34,6 +34,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectPresentAgents } from './targets.mjs';
 import { listSkills } from './render.mjs';
+import { gitEnv } from './git-env.mjs';
 import { spawnSandboxed, writeHomeReporter, withHomeReporter } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -389,7 +390,7 @@ const FOREIGN_HOOK = '#!/bin/sh\n# my own gate\nexit 0\n';
 // hand-made `.git` dir (probed), so the fake-.git idiom used elsewhere cannot set
 // core.hooksPath. Capability-probed, never keyed on process.platform.
 function gitAvailable() {
-  const r = spawnSync('git', ['--version'], { encoding: 'utf8' });
+  const r = spawnSync('git', ['--version'], { encoding: 'utf8', env: gitEnv(os.tmpdir()) });
   return r.status === 0;
 }
 
@@ -399,15 +400,15 @@ test('git hooks are installed where git will ACTUALLY read them (core.hooksPath 
   const moved = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-hp-moved-'));
   try {
     // Control: no core.hooksPath → the historical <gitDir>/hooks location.
-    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: plain }).status, 0);
+    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: plain, env: gitEnv(path.dirname(plain)) }).status, 0);
     const a = runInstall(path.join(plain, 'skills'), plain);
     assert.equal(a.status, 0, `install must pass:\n${a.stdout}${a.stderr}`);
     assert.ok(fs.existsSync(path.join(plain, '.git', 'hooks', 'pre-commit')), 'fallback location still used when core.hooksPath is unset');
 
     // core.hooksPath set (husky/lefthook/our own .githooks/): git reads ONLY there,
     // so a hook written to .git/hooks is an inert gate under a success message.
-    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: moved }).status, 0);
-    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: moved }).status, 0);
+    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: moved, env: gitEnv(path.dirname(moved)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: moved, env: gitEnv(path.dirname(moved)) }).status, 0);
     const b = runInstall(path.join(moved, 'skills'), moved);
     assert.equal(b.status, 0, `install must pass:\n${b.stdout}${b.stderr}`);
     assert.ok(fs.existsSync(path.join(moved, '.githooks', 'pre-commit')), 'hook lands in the configured core.hooksPath dir');
@@ -530,20 +531,20 @@ test('CWK-096: a tracked hook (core.hooksPath at a VERSIONED directory) SURVIVES
   const hooksDir = path.join(proj, '.githooks');
   const hookPath = path.join(hooksDir, 'pre-commit');
   try {
-    assert.equal(spawnSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: proj }).status, 0);
-    assert.equal(spawnSync('git', ['config', 'user.email', 'test@test.invalid'], { cwd: proj }).status, 0);
-    assert.equal(spawnSync('git', ['config', 'user.name', 'Test'], { cwd: proj }).status, 0);
-    assert.equal(spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: proj }).status, 0);
-    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: proj }).status, 0);
+    assert.equal(spawnSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.email', 'test@test.invalid'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.name', 'Test'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
 
     const install = runInstall(path.join(proj, 'skills'), proj);
     assert.equal(install.status, 0, `install must pass:\n${install.stdout}${install.stderr}`);
     assert.ok(fs.existsSync(hookPath), 'the hook was installed into the configured (tracked) dir');
 
     // Commit it — this is now the repo maintainer's TRACKED file, not a CoalMine leftover.
-    assert.equal(spawnSync('git', ['add', '-A'], { cwd: proj }).status, 0);
-    assert.equal(spawnSync('git', ['commit', '-q', '-m', 'track the hooks'], { cwd: proj }).status, 0);
-    assert.equal(spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: proj }).status, 0, 'fixture sanity: git itself confirms the hook is tracked');
+    assert.equal(spawnSync('git', ['add', '-A'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['commit', '-q', '-m', 'track the hooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0, 'fixture sanity: git itself confirms the hook is tracked');
 
     const un = runInstall(path.join(proj, 'skills'), proj, ['--uninstall']);
     // THE PROPERTY, not the exit code alone (the order's own rail): the file is
