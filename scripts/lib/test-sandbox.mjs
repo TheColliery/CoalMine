@@ -92,6 +92,9 @@ export function withHomeReporter(reporterPath, fn) {
 // POSIX only -- the caller probes mkfifo first. The kill timer lives here, not in
 // coreutils `timeout`, which macOS does not ship. Resolves 'blocked' (never opened) or
 // 'opened'. The writer signals readiness by creating `readyFile` just before its open.
+// Detection strength is platform-bound: measured on Linux only (a mutation that opens the
+// FIFO went red 5/5); on macOS or a very slow runner a miss reads 'blocked' -- a false GREEN
+// under a mutation, never a false RED on correct code -- so the Linux legs carry the gate.
 export async function startFifoWriter(fifo, readyFile, blockMs = 3000) {
   const child = spawn('sh', ['-c', ': > "$1"; echo x > "$0"', fifo, readyFile], { stdio: 'ignore' });
   // The verdict comes from HOW the writer ended, never from a flag: a synchronous caller
