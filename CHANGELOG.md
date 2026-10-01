@@ -2,6 +2,15 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+The check behind the new UNREADABLE line now looks at the file it opened, not only at its path, and a user sees no difference.
+
+### Security
+- **CodeQL #74–#79 (`js/file-system-race`) — the probe behind the `UNREADABLE:` line is restructured so no path check sits in the same function as its open.** The six alerts are one site, `cfgRefusalReason` in `hooks/_shared/node-config.js`, synced into the three hooks and their `plugin/` copies; the function arrived in v3.21.0, so no earlier release has it. Its path checks (is the candidate a directory, a contained regular file, an unreadable entry) now live in `cfgPlacement`, and its one probe open lives in `cfgOpenVerdict`, which `fstat`s the handle it opened, closes it unread, and returns the same verdict as before. When the open is denied (`EACCES`, `EPERM`), `cfgOpenVerdict` asks `statSync(file).isFile()`, which follows a link, so a symlink inside the project that points at an unreadable regular file is still reported `unreadable`, and a FIFO swapped in after the path checks, directly or behind a link, stays silent. The probe still never reads the file. This is the shape `readRepoFileBounded` already has. Whether the alerts clear is shown only by the code-scanning list after the next push. — test: `scripts/lib/hooks.test.mjs` (`R12: SHAPE PIN …`, `R12: an in-root symlinked config whose target is unreadable is still reported UNREADABLE (POSIX)`, `R12: a non-file swapped in between the path checks and the open is never reported UNREADABLE (mode-0 FIFO, POSIX)`)
+
+**What you need to do:** nothing is required. Update with `claude plugin update coalmine@coalmine` to receive the changed hook files.
+
 ## [3.21.0] - 2026-10-01
 
 Session start now reports a config it could not read, and the release workflow alone now creates Releases.
