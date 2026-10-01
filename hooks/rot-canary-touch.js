@@ -263,9 +263,22 @@ function cfgRefusalReason(file, root) {
       if (root != null && !isContained(path.join(dirReal, path.basename(file)), fs.realpathSync.native(root))) return null;
     } catch { return null; }
   }
+  // R12 (CodeQL #74-#79, js/file-system-race): everything above is a check on the PATH, and
+  // the open below is a second use of it. Two shapes of the same gap, both closed on the
+  // HANDLE, the way readRepoFileBounded already does:
+  //   - the open SUCCEEDS: fstat the fd, and only a regular file counts. A FIFO/device swapped
+  //     in after the path checks is closed unread and stays silent.
+  //   - the open is DENIED (EACCES/EPERM): that error may belong to a non-file swapped in
+  //     after the checks (a mode-0 FIFO), and there is no handle to ask. Re-lstat the path and
+  //     report 'unreadable' only if it is still a regular file; the worst a further race can
+  //     then do is change one advisory line, never read or write anything.
+  // The fd is still never read: the open exists only to learn the OS verdict.
   let fd;
-  try { fd = fs.openSync(file, REPO_READ_FLAGS); } catch (e) { return denied(e) ? 'unreadable' : null; }
-  try { fs.closeSync(fd); } catch {}
+  try { fd = fs.openSync(file, REPO_READ_FLAGS); } catch (e) {
+    if (!denied(e)) return null;
+    try { return fs.lstatSync(file).isFile() ? 'unreadable' : null; } catch { return null; }
+  }
+  try { if (!fs.fstatSync(fd).isFile()) return null; } catch { return null; } finally { try { fs.closeSync(fd); } catch {} }
   return null; // it opens: the bound refused it (over MAX_CONFIG_BYTES) -- silent
 }
 

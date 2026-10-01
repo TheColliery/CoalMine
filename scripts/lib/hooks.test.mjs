@@ -14,7 +14,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { MAX_CONFIG_BYTES } from './repo-fs.mjs';
-import { startFifoWriter } from './test-sandbox.mjs';
+import { startFifoWriter, withHomeReporter } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOUCH = path.join(repo, 'hooks', 'rot-canary-touch.js');
@@ -2489,4 +2489,65 @@ test('UMB-174: the Antigravity adapter reports UNREADABLE too (it shares buildLi
   const r = runHook(CONDUCTOR, stdin, home, ['PreInvocation'], proj);
   assert.equal(r.status, 0);
   assert.ok(agInject(r.stdout).includes(FLOCK(PROJECT_CANON, 'malformed JSON', PROJECT_CANON)), 'AG ephemeralMessage carries the flock string');
+});
+
+// ─── R12 (CodeQL #74-#79, js/file-system-race): cfgRefusalReason's open is checked on the HANDLE ──────
+// The path checks (lstat, repoEntryKind, the parent realpath) and the open are two uses of one
+// path; a non-file swapped in between must not be treated as a config. The spy preload
+// (r12-open-spy.cjs) observes the open and fstat calls the hook makes on the one config path.
+const SPY = path.join(repo, 'scripts', 'lib', 'r12-open-spy.cjs');
+function withSpy(env, fn) {
+  const prev = {};
+  for (const k of Object.keys(env)) { prev[k] = process.env[k]; process.env[k] = env[k]; }
+  try { return withHomeReporter(SPY, fn); } finally {
+    for (const k of Object.keys(env)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+  }
+}
+function canMkfifoHere(dir) {
+  if (process.platform === 'win32') return false;
+  const probe = path.join(dir, '.probe-fifo');
+  const r = spawnSync('mkfifo', [probe]);
+  if (r.status !== 0) return false;
+  fs.unlinkSync(probe);
+  return true;
+}
+
+test('R12: the open cfgRefusalReason makes is followed by an fstat on THAT handle (a regular file is the only thing it accepts)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  // Oversize: readRepoFileBounded opens, fstats, refuses on size; cfgRefusalReason then opens the same path.
+  writeProjectCfg(proj, JSON.stringify({ pad: 'x'.repeat(MAX_CONFIG_BYTES) }));
+  const target = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  const log = path.join(home, 'spy.log');
+  const r = withSpy({ CM_SPY_TARGET: target, CM_SPY_LOG: log }, () => runHook(CONDUCTOR, '', home, [], proj));
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [], 'size refusal stays silent (HEAD RULING)');
+  const events = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+  // Every open of the config path -- the hook makes several (the bounded read and the refusal probe,
+  // once per config read) -- must be followed, before the NEXT open, by an fstat on its own fd.
+  const idx = events.map((e, i) => (/^open \d+ fd=/.test(e) ? i : -1)).filter((i) => i >= 0);
+  assert.ok(idx.length >= 2, `the refusal probe makes its own open beside the bounded read's: ${events.join(' | ')}`);
+  idx.forEach((i, k) => {
+    const fd = events[i].match(/fd=(\d+)/)[1];
+    const until = k + 1 < idx.length ? idx[k + 1] : events.length;
+    assert.ok(events.slice(i + 1, until).includes(`fstat fd=${fd}`), `open "${events[i]}" is followed by fstat on its own fd: ${events.join(' | ')}`);
+  });
+});
+
+// A mode-0 FIFO swapped in after the path checks: the open is DENIED (EACCES), and on HEAD that
+// denial read as the CONFIG being unreadable -- an UNREADABLE line for a thing that is not a
+// config at all. POSIX non-root only: probed with the same chmod-0 probe as the UMB-174 test.
+test('R12: a non-file swapped in between the path checks and the open is never reported UNREADABLE (mode-0 FIFO, POSIX)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{"skipOnboarding": true}');
+  const target = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  if (!canMkfifoHere(home)) { t.skip('mkfifo unavailable on this volume'); return; }
+  const how = denyRead(target);
+  if (how !== 'chmod') { restoreRead(target, how); t.skip('chmod 0 does not deny the owner a read here (root, or a volume that ignores mode)'); return; }
+  const log = path.join(home, 'spy.log');
+  let r;
+  try { r = withSpy({ CM_SPY_TARGET: target, CM_SPY_LOG: log, CM_SPY_SWAP: 'fifo000', CM_SPY_SWAP_AT: '4' }, () => runHook(CONDUCTOR, '', home, [], proj)); } finally { restoreRead(target, how); }
+  assert.equal(r.status, 0);
+  const events = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+  assert.ok(events.includes('open 4 threw=EACCES'), `the swap landed before the 4th open (the refusal probe whose reason the conductor reports) and that open was denied: ${events.join(' | ')}`);
+  assert.deepEqual(unreadableLines(r.stdout), [], 'a FIFO is not a config: no UNREADABLE line');
 });
