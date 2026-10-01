@@ -219,41 +219,57 @@ function readCfgResult(file, root) {
 // Why readRepoFileBounded gave nothing back -- consulted ONLY on that failure path, so a
 // config that reads cleanly costs no extra syscall. A second open is made only for a
 // regular, contained file, so a FIFO is still never opened.
+// R12 (CodeQL #74-#79, js/file-system-race): this function holds NO fs call on `file`. The
+// path checks live in cfgPlacement and the open in cfgOpenVerdict, the way readRepoFileBounded
+// leans on repoEntryKind -- the query pairs a path check with a path open only inside ONE
+// function, and the open here is checked on its HANDLE, not on the path.
 function cfgRefusalReason(file, root) {
-  const denied = (e) => !!(e && (e.code === 'EACCES' || e.code === 'EPERM'));
+  const where = cfgPlacement(file, root);
+  if (where === 'a directory' || where === 'unreadable') return where;
+  return where === 'file' ? cfgOpenVerdict(file) : null;
+}
+
+// Where the config candidate sits, decided WITHOUT opening it: 'a directory' | 'unreadable'
+// (lstat itself was denied) | 'file' (a regular, contained file: worth one probe open) | null.
+function cfgPlacement(file, root) {
   let lst;
-  try { lst = fs.lstatSync(file); } catch (e) { return denied(e) ? 'unreadable' : null; }
+  try { lst = fs.lstatSync(file); } catch (e) { return cfgDenied(e) ? 'unreadable' : null; }
   const kind = repoEntryKind(file, root);
   if (kind === 'dir') return 'a directory';
-  if (kind !== 'file') {
-    // A Windows ACL read-deny makes realpathSync.native on the FILE throw EPERM (measured:
-    // lstat and stat succeed, realpath and open do not), so repoEntryKind cannot place it.
-    // A plain file (never a link) lives where its parent directory does, so containment is
-    // checked through the PARENT's realpath instead -- a link out of the root, a FIFO or a
-    // device still falls through to silence.
-    if (!lst.isFile()) return null;
-    try {
-      const dirReal = fs.realpathSync.native(path.dirname(file));
-      if (root != null && !isContained(path.join(dirReal, path.basename(file)), fs.realpathSync.native(root))) return null;
-    } catch { return null; }
-  }
-  // R12 (CodeQL #74-#79, js/file-system-race): everything above is a check on the PATH, and
-  // the open below is a second use of it. Two shapes of the same gap, both closed on the
-  // HANDLE, the way readRepoFileBounded already does:
-  //   - the open SUCCEEDS: fstat the fd, and only a regular file counts. A FIFO/device swapped
-  //     in after the path checks is closed unread and stays silent.
-  //   - the open is DENIED (EACCES/EPERM): that error may belong to a non-file swapped in
-  //     after the checks (a mode-0 FIFO), and there is no handle to ask. Re-lstat the path and
-  //     report 'unreadable' only if it is still a regular file; the worst a further race can
-  //     then do is change one advisory line, never read or write anything.
-  // The fd is still never read: the open exists only to learn the OS verdict.
+  if (kind === 'file') return 'file';
+  // A Windows ACL read-deny makes realpathSync.native on the FILE throw EPERM (measured:
+  // lstat and stat succeed, realpath and open do not), so repoEntryKind cannot place it.
+  // A plain file (never a link) lives where its parent directory does, so containment is
+  // checked through the PARENT's realpath instead -- a link out of the root, a FIFO or a
+  // device still falls through to silence.
+  if (!lst.isFile()) return null;
+  try {
+    const dirReal = fs.realpathSync.native(path.dirname(file));
+    if (root != null && !isContained(path.join(dirReal, path.basename(file)), fs.realpathSync.native(root))) return null;
+  } catch { return null; }
+  return 'file';
+}
+function cfgDenied(e) { return !!(e && (e.code === 'EACCES' || e.code === 'EPERM')); }
+
+// The probe open: it exists only to learn the OS verdict (EACCES/EPERM); its fd is never read.
+// Two shapes of one gap, both closed on what the open itself returned:
+//   - the open SUCCEEDS: the fd is fstat'd, closed and never read, and the verdict is silent
+//     whatever it is (a regular file that opens was refused by the bound, over MAX_CONFIG_BYTES;
+//     a FIFO/device swapped in after the path checks is never reported). The fstat is the
+//     handle-side check CodeQL's query looks for; it changes no verdict.
+//   - the open is DENIED: the error may belong to a non-file swapped in after the path checks
+//     (a mode-0 FIFO), and there is no handle to ask. statSync follows a link, so a link to an
+//     unreadable regular file still reads 'unreadable' and a FIFO (swapped in, or behind a
+//     link) stays silent; the worst a further race can do is change one advisory line.
+// Test 1 of the R12 block pins the handle check's shape; the outcome tests are tests 2 and 3.
+function cfgOpenVerdict(file) {
   let fd;
   try { fd = fs.openSync(file, REPO_READ_FLAGS); } catch (e) {
-    if (!denied(e)) return null;
-    try { return fs.lstatSync(file).isFile() ? 'unreadable' : null; } catch { return null; }
+    if (!cfgDenied(e)) return null;
+    try { return fs.statSync(file).isFile() ? 'unreadable' : null; } catch { return null; }
   }
-  try { if (!fs.fstatSync(fd).isFile()) return null; } catch { return null; } finally { try { fs.closeSync(fd); } catch {} }
-  return null; // it opens: the bound refused it (over MAX_CONFIG_BYTES) -- silent
+  try { fs.fstatSync(fd); } catch { /* the verdict is the same either way: it opened, so silent */ } finally { try { fs.closeSync(fd); } catch {} }
+  return null;
 }
 
 // Two-level cached read of .coalmine.json: the global ~/.claude/.coalmine.json

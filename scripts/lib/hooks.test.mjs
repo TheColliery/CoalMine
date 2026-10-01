@@ -2512,7 +2512,7 @@ function canMkfifoHere(dir) {
   return true;
 }
 
-test('R12: the open cfgRefusalReason makes is followed by an fstat on THAT handle (a regular file is the only thing it accepts)', (t) => {
+test('R12: SHAPE PIN -- every open of the config path is followed by an fstat on its own fd (pins the handle check, not an outcome; the outcome tests are the next two)', (t) => {
   const { proj, home } = projectAndHome(t);
   // Oversize: readRepoFileBounded opens, fstats, refuses on size; cfgRefusalReason then opens the same path.
   writeProjectCfg(proj, JSON.stringify({ pad: 'x'.repeat(MAX_CONFIG_BYTES) }));
@@ -2531,6 +2531,27 @@ test('R12: the open cfgRefusalReason makes is followed by an fstat on THAT handl
     const until = k + 1 < idx.length ? idx[k + 1] : events.length;
     assert.ok(events.slice(i + 1, until).includes(`fstat fd=${fd}`), `open "${events[i]}" is followed by fstat on its own fd: ${events.join(' | ')}`);
   });
+});
+
+// R12 bounce 2, MEDIUM-1 (reviewer witness): an IN-ROOT symlinked config (the link rule allows it:
+// its realpath lies inside the project) whose TARGET is mode 0 is genuinely unreadable and must
+// be reported `unreadable`. The first R12 fix re-asked the denied open with lstat, which does not
+// follow the link, so this went silent. POSIX non-root only (chmod 0, file symlinks).
+test('R12: an in-root symlinked config whose target is unreadable is still reported UNREADABLE (POSIX)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
+  const targetFile = path.join(proj, 'cfg-target.json');
+  fs.writeFileSync(targetFile, '{"skipOnboarding": true}');
+  const link = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  try { fs.symlinkSync(targetFile, link, 'file'); } catch { t.skip('no file symlinks here'); return; }
+  const how = denyRead(targetFile);
+  if (how !== 'chmod') { restoreRead(targetFile, how); t.skip('chmod 0 does not deny the owner a read here (root, or a volume that ignores mode)'); return; }
+  let r;
+  try { r = runHook(CONDUCTOR, '', home, [], proj); } finally { restoreRead(targetFile, how); }
+  assert.equal(r.status, 0);
+  const got = unreadableLines(r.stdout);
+  assert.equal(got.length, 1, `one UNREADABLE line for the in-root link to an unreadable file: ${JSON.stringify(got)}`);
+  assert.ok(got[0].includes('(unreadable)'), `the reason is unreadable: ${got[0]}`);
 });
 
 // A mode-0 FIFO swapped in after the path checks: the open is DENIED (EACCES), and on HEAD that
