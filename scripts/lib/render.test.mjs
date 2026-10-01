@@ -583,6 +583,12 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
     git(['config', 'core.autocrlf', 'true']);
+    // `git commit` starts `git maintenance run --auto` as its own process (measured with
+    // GIT_TRACE2_EVENT: cmd_name "maintenance" follows "commit"); it is not ours to wait on,
+    // and a CI leg (ubuntu node 22, git 2.55) failed this test's cleanup with ENOTEMPTY on
+    // .git. The fixture never wants it.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
     assert.ok(fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8').includes('\r\n\r\n'),

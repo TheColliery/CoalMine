@@ -16,7 +16,17 @@ const target = process.env.CM_SPY_TARGET;
 const log = process.env.CM_SPY_LOG;
 const swap = process.env.CM_SPY_SWAP;
 if (target && log) {
-  const norm = (p) => { try { return path.resolve(String(p)); } catch { return ''; } };
+  // Both sides are compared through the REAL directory spelling: the test names the target
+  // under os.tmpdir() (macOS: /var/folders, a link to /private/var) while the hook, whose cwd
+  // the kernel resolves, opens the /private/var spelling -- a lexical compare never matched
+  // there and the spy logged nothing. realpathSync.native on the DIRECTORY (the file itself may
+  // be swapped for a FIFO) and does not open anything, so it cannot recurse into this wrapper.
+  const norm = (p) => {
+    try {
+      const abs = path.resolve(String(p));
+      try { return path.join(fs.realpathSync.native(path.dirname(abs)), path.basename(abs)); } catch { return abs; }
+    } catch { return ''; }
+  };
   const want = norm(target);
   const out = (line) => { try { fs.appendFileSync(log, line + '\n'); } catch {} };
   const origOpen = fs.openSync;
