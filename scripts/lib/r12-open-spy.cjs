@@ -1,8 +1,8 @@
 // R12 test preload (CodeQL #74-#79): a --require shim a test hands to a spawned hook through
-// NODE_OPTIONS (test-sandbox.mjs withHomeReporter). It wraps fs.openSync / fs.fstatSync on the
+// NODE_OPTIONS (test-sandbox.mjs withHomeReporter). It wraps fs.openSync on the
 // shared default export -- the same object the hook's own `require('fs')` returns -- and acts
 // ONLY on the one path named by CM_SPY_TARGET, so nothing else the hook does is touched.
-//   CM_SPY_LOG   -- append one line per event: "open <n> fd=<fd>" / "open <n> threw=<code>" / "fstat fd=<fd>"
+//   CM_SPY_LOG   -- append one line per event: "open <n> fd=<fd>" / "open <n> threw=<code>"
 //   CM_SPY_SWAP  -- "fifo000": on the Nth open of the target, N = CM_SPY_SWAP_AT (default 2; the conductor reads the config twice, so the refusal probe whose reason it REPORTS is the 4th open,
 //                   after readRepoFileBounded's own in each pair), first replace the target with a mode-0 FIFO,
 //                   i.e. a non-file swapped in AFTER the path checks and BEFORE the open.
@@ -20,7 +20,6 @@ if (target && log) {
   const want = norm(target);
   const out = (line) => { try { fs.appendFileSync(log, line + '\n'); } catch {} };
   const origOpen = fs.openSync;
-  const origFstat = fs.fstatSync;
   let opens = 0;
   fs.openSync = function (p, ...rest) {
     if (norm(p) !== want) return origOpen.call(this, p, ...rest);
@@ -38,9 +37,5 @@ if (target && log) {
       out(`open ${opens} threw=${e.code}`);
       throw e;
     }
-  };
-  fs.fstatSync = function (fd, ...rest) {
-    out(`fstat fd=${fd}`);
-    return origFstat.call(this, fd, ...rest);
   };
 }

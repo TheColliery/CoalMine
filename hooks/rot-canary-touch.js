@@ -247,8 +247,10 @@ function readCfgResult(file, root) {
 // regular, contained file, so a FIFO is still never opened.
 // R12 (CodeQL #74-#79, js/file-system-race): this function holds NO fs call on `file`. The
 // path checks live in cfgPlacement and the open in cfgOpenVerdict, the way readRepoFileBounded
-// leans on repoEntryKind -- the query pairs a path check with a path open only inside ONE
-// function, and the open here is checked on its HANDLE, not on the path.
+// leans on repoEntryKind. What makes the alerts' pattern go away is that SPLIT: no path
+// check shares a function with the open (by the query's source it pairs a check and an
+// open of one path only inside one function). Only the next push's code-scanning list shows
+// whether they clear.
 function cfgRefusalReason(file, root) {
   const where = cfgPlacement(file, root);
   if (where === 'a directory' || where === 'unreadable') return where;
@@ -277,24 +279,20 @@ function cfgPlacement(file, root) {
 }
 function cfgDenied(e) { return !!(e && (e.code === 'EACCES' || e.code === 'EPERM')); }
 
-// The probe open: it exists only to learn the OS verdict (EACCES/EPERM); its fd is never read.
-// Two shapes of one gap, both closed on what the open itself returned:
-//   - the open SUCCEEDS: the fd is fstat'd, closed and never read, and the verdict is silent
-//     whatever it is (a regular file that opens was refused by the bound, over MAX_CONFIG_BYTES;
-//     a FIFO/device swapped in after the path checks is never reported). The fstat is the
-//     handle-side check CodeQL's query looks for; it changes no verdict.
-//   - the open is DENIED: the error may belong to a non-file swapped in after the path checks
-//     (a mode-0 FIFO), and there is no handle to ask. statSync follows a link, so a link to an
-//     unreadable regular file still reads 'unreadable' and a FIFO (swapped in, or behind a
-//     link) stays silent; the worst a further race can do is change one advisory line.
-// Test 1 of the R12 block pins the handle check's shape; the outcome tests are tests 2 and 3.
+// The probe open: it exists only to learn the OS verdict (errno EACCES/EPERM); an open that
+// succeeds is closed unread and the verdict is silent (the bound refused it, over
+// MAX_CONFIG_BYTES). A denied open may belong to a non-file swapped in after the path checks
+// (a mode-0 FIFO), so statSync decides: it follows a link, so a link to an unreadable regular
+// file still reads 'unreadable', and a FIFO (swapped in, or behind a link) stays silent. The
+// worst a further race can do is change one advisory line. The two R12 outcome tests in
+// hooks.test.mjs (in-root link, mode-0 FIFO swap) pin this.
 function cfgOpenVerdict(file) {
   let fd;
   try { fd = fs.openSync(file, REPO_READ_FLAGS); } catch (e) {
     if (!cfgDenied(e)) return null;
     try { return fs.statSync(file).isFile() ? 'unreadable' : null; } catch { return null; }
   }
-  try { fs.fstatSync(fd); } catch { /* the verdict is the same either way: it opened, so silent */ } finally { try { fs.closeSync(fd); } catch {} }
+  try { fs.closeSync(fd); } catch {}
   return null;
 }
 

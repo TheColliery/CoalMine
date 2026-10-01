@@ -2491,10 +2491,10 @@ test('UMB-174: the Antigravity adapter reports UNREADABLE too (it shares buildLi
   assert.ok(agInject(r.stdout).includes(FLOCK(PROJECT_CANON, 'malformed JSON', PROJECT_CANON)), 'AG ephemeralMessage carries the flock string');
 });
 
-// ─── R12 (CodeQL #74-#79, js/file-system-race): cfgRefusalReason's open is checked on the HANDLE ──────
-// The path checks (lstat, repoEntryKind, the parent realpath) and the open are two uses of one
-// path; a non-file swapped in between must not be treated as a config. The spy preload
-// (r12-open-spy.cjs) observes the open and fstat calls the hook makes on the one config path.
+// ─── R12 (CodeQL #74-#79, js/file-system-race): the config refusal probe's outcomes ──────
+// The path checks (cfgPlacement) and the probe open (cfgOpenVerdict) are two uses of one path;
+// a non-file swapped in between must not be reported as an unreadable config. The spy preload
+// (r12-open-spy.cjs) swaps the target at the Nth open the hook makes of the one config path.
 const SPY = path.join(repo, 'scripts', 'lib', 'r12-open-spy.cjs');
 function withSpy(env, fn) {
   const prev = {};
@@ -2511,27 +2511,6 @@ function canMkfifoHere(dir) {
   fs.unlinkSync(probe);
   return true;
 }
-
-test('R12: SHAPE PIN -- every open of the config path is followed by an fstat on its own fd (pins the handle check, not an outcome; the outcome tests are the next two)', (t) => {
-  const { proj, home } = projectAndHome(t);
-  // Oversize: readRepoFileBounded opens, fstats, refuses on size; cfgRefusalReason then opens the same path.
-  writeProjectCfg(proj, JSON.stringify({ pad: 'x'.repeat(MAX_CONFIG_BYTES) }));
-  const target = path.join(proj, '.claude', 'coal', 'coalmine.json');
-  const log = path.join(home, 'spy.log');
-  const r = withSpy({ CM_SPY_TARGET: target, CM_SPY_LOG: log }, () => runHook(CONDUCTOR, '', home, [], proj));
-  assert.equal(r.status, 0);
-  assert.deepEqual(unreadableLines(r.stdout), [], 'size refusal stays silent (HEAD RULING)');
-  const events = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
-  // Every open of the config path -- the hook makes several (the bounded read and the refusal probe,
-  // once per config read) -- must be followed, before the NEXT open, by an fstat on its own fd.
-  const idx = events.map((e, i) => (/^open \d+ fd=/.test(e) ? i : -1)).filter((i) => i >= 0);
-  assert.ok(idx.length >= 2, `the refusal probe makes its own open beside the bounded read's: ${events.join(' | ')}`);
-  idx.forEach((i, k) => {
-    const fd = events[i].match(/fd=(\d+)/)[1];
-    const until = k + 1 < idx.length ? idx[k + 1] : events.length;
-    assert.ok(events.slice(i + 1, until).includes(`fstat fd=${fd}`), `open "${events[i]}" is followed by fstat on its own fd: ${events.join(' | ')}`);
-  });
-});
 
 // R12 bounce 2, MEDIUM-1 (reviewer witness): an IN-ROOT symlinked config (the link rule allows it:
 // its realpath lies inside the project) whose TARGET is mode 0 is genuinely unreadable and must
