@@ -597,6 +597,26 @@ test('rule stamps: well-formed passes, malformed fails, unstamped ignored', () =
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+// R13 / CWK-158 item 6 (B-u2-2, probe D): the check stopped at the FIRST well-formed stamp in a file, so a
+// malformed stamp ANYWHERE after a good one (good+bad -> 0 findings) was never looked at. Every stamp counts.
+test('rule stamps (CWK-158 item 6): a malformed stamp fails whatever order it sits in beside a well-formed one', () => {
+  const dir = mkRepo();
+  try {
+    const mk = (rel, body) => { fs.mkdirSync(path.join(dir, path.dirname(rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), body); };
+    const good = '<!-- coalmine: verified 2026-06-13 · exemplar x · revalidate 90d -->';
+    const bad = '<!-- coalmine: verified soon, revalidate whenever -->';
+    mk('.claude/rules/ecc/domain/good-then-bad.md', `# r\n${good}\n\ntext\n${bad}\n`);
+    mk('.claude/rules/ecc/domain/bad-then-good.md', `# r\n${bad}\n\ntext\n${good}\n`);
+    mk('.claude/rules/ecc/domain/two-good.md', `# r\n${good}\n${good}\n`);
+    const f = checkRuleStamps(dir);
+    const named = f.map((x) => x.msg);
+    assert.equal(f.length, 2, `exactly the two files carrying a malformed stamp fail: ${JSON.stringify(named)}`);
+    assert.ok(named.some((m) => m.includes('good-then-bad.md')), 'good then bad is caught (probe D: it passed)');
+    assert.ok(named.some((m) => m.includes('bad-then-good.md')), 'bad then good is caught');
+    assert.ok(!named.some((m) => m.includes('two-good.md')), 'two well-formed stamps stay clean');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 // gold-standard 2026-08-18/19, adjudication A14/F5: a malformed paths: glob doesn't
 // error, it silently matches nothing forever — no signal anywhere. Same walk as the
 // stamp check above (checkRuleStamps), same file, no second disk pass.
