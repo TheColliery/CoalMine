@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { censusGitSpawns, collectScriptsMjs } from './git-env-census.mjs';
+import { censusGitSpawns, collectScriptsMjs, blobId, EXEMPT_CARRIERS } from './git-env-census.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const one = (text) => censusGitSpawns([{ rel: 'scripts/x.mjs', text }]);
@@ -78,4 +78,24 @@ test('census shell rung (R8 LOW-2): git run through a shell string is refused, e
 test('census shell rung: a shell string for another program whose name starts with "git" is not git', () => {
   assert.deepEqual(one('execSync' + "('gitleaks detect', { cwd: dir });\n"), []);
   assert.deepEqual(one('spawn' + "('github-cli', ['x']);\n"), []);
+});
+
+// CWK-174: a byte-equal org carrier is exempt ONLY while its content is exactly the pinned blob.
+const CARRIER = SPA + ", ['fetch'], { cwd: dir });\n";
+test('census exemption (CWK-174): a pinned byte-equal carrier is skipped, an edited one is a finding again', () => {
+  const pinned = { 'scripts/carrier.mjs': blobId(CARRIER) };
+  assert.equal(censusGitSpawns([{ rel: 'scripts/carrier.mjs', text: CARRIER }]).length, 1, 'control: not exempt, the spawn is a finding');
+  assert.deepEqual(censusGitSpawns([{ rel: 'scripts/carrier.mjs', text: CARRIER }], pinned), [], 'pinned content passes');
+  const edited = censusGitSpawns([{ rel: 'scripts/carrier.mjs', text: CARRIER + '// edited\n' }], pinned);
+  assert.equal(edited.length, 1, 'any edit re-opens it');
+  assert.match(edited[0], /exempt byte-equal org carrier but its blob id is/);
+  assert.equal(censusGitSpawns([{ rel: 'scripts/other.mjs', text: CARRIER }], pinned).length, 1, 'the exemption is per path, not per content');
+});
+
+test('census exemption (CWK-174): blobId equals `git hash-object` for the same bytes, and the live carriers match their pins', () => {
+  assert.equal(blobId(''), 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', 'git\'s empty-blob id');
+  assert.equal(blobId('hello\n'), 'ce013625030ba8dba906f756967f9e9ca394464a', 'git hash-object of "hello" + LF');
+  const live = collectScriptsMjs(repo).filter((f) => Object.hasOwn(EXEMPT_CARRIERS, f.rel));
+  assert.equal(live.length, Object.keys(EXEMPT_CARRIERS).length, 'every pinned path exists in the tree (a stale pin is a finding, not silence)');
+  assert.deepEqual(censusGitSpawns(live), [], 'and each is byte-equal to its pin');
 });

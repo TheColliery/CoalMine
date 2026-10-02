@@ -43,6 +43,9 @@ const TESTS = [
   'scripts/lib/repo-fs.test.mjs',
   'scripts/lib/git-env.test.mjs',
   'scripts/lib/git-env-census.test.mjs',
+  // CWK-174 (THE HOUSE SECRET SCAN, SERIES-CANON 'Secret scan'): byte-equal copies of the published-code template's scanner and caller tests.
+  'scripts/secret-scan.test.mjs',
+  'scripts/secret-gate.test.mjs',
   // CWK-124: the sole-creator release workflow's scripts, pulled byte-identical from the
   // .github overlay (templates/overlay-coal-skill), never edited here.
   'scripts/lib/release-shape.test.mjs',
