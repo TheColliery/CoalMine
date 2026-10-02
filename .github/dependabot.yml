@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    # Assign every bump PR to the maintainer -> a notification fires (assignment is
+    # a "participating" event, delivered at any watch level). Human still merges.
+    assignees:
+      - HetCreep
+    # Group all github/codeql-action/* paths (init/analyze/upload-sarif) into ONE PR
+    # so they bump together -> no init/analyze version skew (which reds CodeQL).
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"

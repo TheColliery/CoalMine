@@ -1,0 +1,1 @@
+{ "lightIntent": "Quick gap check, AUDIT only", "standardIntent": "Balanced audit, AUDIT+FILL", "heavyIntent": "Full audit cycle, AUDIT+FILL+ADOPT+CONFORM" }

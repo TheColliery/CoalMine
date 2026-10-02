@@ -1,0 +1,51 @@
+# CodeRabbit configuration for the published-code repo kind (AR-46, owner-signed 2026-09-21).
+#
+# It carries two things and only two:
+#   1. reviews.profile: assertive -- a MEASURED TRIAL against the organization's Chill profile, to be
+#      judged on the next snapshot round. It is not a verdict on the profile, and the organization-level
+#      setting stays Chill until that measurement reads.
+#   2. reviews.path_instructions that restate this org's written CONTRACTS. Each block names the
+#      document it restates. There is no tone_instructions key and no taste in any block: an
+#      instruction here may encode a contract, never a preference.
+#
+# PRECEDENCE, from the vendor (docs.coderabbit.ai/guides/configuration-overview, "Understanding
+# configuration priority"): "Configuration sources don't merge by default." The repository
+# .coderabbit.yaml (priority 2) outranks Repository settings (4) and Organization settings (5), but NOT
+# the Workspace and Organization global overrides (0 and 1), which "take precedence over all other
+# configuration sources, including repository .coderabbit.yaml files" -- if the organization sets a
+# profile as a global override, the assertive below is silently ignored. Inheritance is opt-in
+# (docs.coderabbit.ai/configuration/configuration-inheritance: "Inheritance is disabled by default. You
+# must explicitly enable it by adding inheritance: true to your configuration file"); without the line
+# below this file would REPLACE the organization's other settings with schema defaults instead of adding
+# to them. Read the merged result on any pull request with the comment: @coderabbitai configuration
+inheritance: true
+reviews:
+  profile: assertive
+  path_instructions:
+    # Restates hooks-safety.md section 6 (Phoenix Canary), commandments 2, 4, 7, 8 and 10.
+    - path: "hooks/**"
+      instructions: |
+        These files are agent-platform hooks and are held to the Phoenix contract. Report a change that breaks any of these:
+        - Fail-silent: all logic sits inside try { main(); } catch {}; the hook never sets a non-zero exit code and never calls process.exit().
+        - Zero dependencies: Node built-in modules only, nothing that needs npm install.
+        - No network: local filesystem only.
+        - Deterministic: the same input gives the same output.
+        - Sandboxed: reads and writes stay inside the OS temp directory and the tool's own state directory under the user's agent config directory, except reading the project's own config file from the project root.
+    # Restates scripts-quality.md section 1 (fail loud) and hooks-safety.md section 6, commandment 2 (zero dependencies).
+    - path: "scripts/**"
+      instructions: |
+        Report a change that breaks any of these:
+        - Node built-in modules only: no npm install, no dependency declared in a manifest.
+        - A user-invoked script exits non-zero when any unit of work fails, and its done-summary line reports the failed count.
+        - A gate script wraps every per-item check, so one bad input produces a "FAIL <item>: <reason>" line while the remaining checks still run, and never a raw stack trace.
+    # Restates DOC-PATTERN.md: "Data is verbatim from its source, never invented" and "a behaviour claim = the code".
+    - path: "{README,SECURITY,CONTRIBUTING}.md"
+      instructions: |
+        A claim about behavior must match what the code actually does, and any data shown (a version, a model ID, a benchmark figure, a count) must match its authoritative source verbatim: a version is the one in plugin.json, a benchmark figure links to its record instead of being copied, a behavior claim is whatever the code does. Report a claim the code contradicts or a figure that differs from its source.
+    # Restates SKILL-REPO-PATTERN.md: the SHA-pinned workflow set, the concurrency: groups rule, and the persist-credentials sentence added beside them.
+    - path: ".github/workflows/**"
+      instructions: |
+        Report a change that breaks any of these:
+        - Every third-party action is pinned to a full 40-character commit SHA with a version comment, never a bare tag or branch.
+        - Every workflow has a concurrency group. cancel-in-progress is true for CI, lint and CodeQL, and never true for a job that uploads a Release or tag asset.
+        - A checkout that pushes nothing sets persist-credentials: false.

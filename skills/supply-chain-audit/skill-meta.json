@@ -1,0 +1,1 @@
+{ "lightIntent": "Single-section check, spot audit", "standardIntent": "Multi-section balanced audit", "heavyIntent": "Full 3-section audit + adversarial CVE verify" }

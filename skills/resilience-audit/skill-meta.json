@@ -1,0 +1,1 @@
+{ "lightIntent": "Spot failure-mode check, key paths only", "standardIntent": "Balanced FMEA, multi-category coverage", "heavyIntent": "Full 8-category FMEA + adversarial verify" }

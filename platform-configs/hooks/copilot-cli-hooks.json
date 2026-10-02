@@ -1,0 +1,33 @@
+{
+  "$comment": "GitHub Copilot CLI hooks — DISTINCT product from the VS Code / agent-mode target above (copilot-hooks.json): place as .github/hooks/coalmine.json (repo) or ~/.copilot/hooks/coalmine.json (user). camelCase events (a different vocabulary from the VS Code/cloud PascalCase surface — do not mix the two files). Each entry ships both a bash and a powershell command string for Windows parity. Verified 2026-07-15: agentStop returns {\"decision\":\"block\",\"reason\"} to force one more turn with reason as the continuation input — rot-canary-stop.js's plain Claude-Code shape (no trailing argument) matches as-is. sessionStart's exact context-inject field is UNVERIFIED — the conductor ships in its plain Claude-Code stdout shape here as a best-guess; flag if it doesn't inject. The conductor's trailing FileCopy argument trims only the CC-plugin self-update offer + its update stamp (a file-copy install cannot run claude plugin update) — keep it; the output shape is unchanged. Adjust the CoalMine path in every command.",
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" FileCopy",
+        "powershell": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" FileCopy",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"",
+        "powershell": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"",
+        "powershell": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+<!-- COALMINE:START -->
+## CoalMine — 9 Quality Canaries
+
+Skills live in `.github/skills/` (one `SKILL.md` each). Invoke by keyword; each skill gates its own tier and fix menus — never fix without the menu.
+
+| Trigger | Use when |
+|---|---|
+| `/rot-canary` · "code-health" | scan for code rot — dead code, leaks, silent failures, doc rot |
+| `/gold-standard` · "audit rules" | score completeness vs world-class exemplars; fill/adopt/conform |
+| `/source-grounding` | verify version-sensitive facts against live sources |
+| `/supply-chain-audit` | deps/CVEs/licenses/build trust — before adding a dep or before a release |
+| `/resilience-audit` | failure modes (FMEA) — network, storage, async, retry/rollback paths |
+| `/telemetry-canary` | logging, metrics, tracing, error-handling changes |
+| `/testability-canary` | coupling, DI, mockability refactors |
+| `/scale-canary` | loops over growing data, DB queries, caches, event-loop code |
+| `/drift-canary` | DB schema, API contract, serialized payload, required config changes |
+
+**Proactive:** when the conversation moves into one of these areas, OFFER the matching canary via the host's supported question tool — VS Code agent mode: `#tool:vscode/askQuestions`; Copilot CLI: `ask_user`; otherwise a numbered text menu — (Run now / Queue / Skip). Do not run unasked: deps → supply-chain · schema/API → drift · async/retry → resilience · hot loops/queries → scale · tests/coupling → testability · logging/metrics → telemetry.
+
+**First encounter (gold-standard onboarding):** if this project has NO CoalMine-stamped rules yet (no `coalmine: verified` stamp anywhere in the rules home), offer `/gold-standard` ONCE this session via your question tool (Run now / Queue / Skip) — it sets the project's golden rules. Respect a Skip for the rest of the session.
+
+**Rule freshness:** if a CoalMine-stamped rule's `revalidate` due date has passed, offer `/gold-standard` re-validation via your question tool (Run now / Queue / Skip).
+
+**Per-project config:** honor the config as the CASCADE — **every config key**, `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate, among the clamp's own known values; an absent global reads as the schema default and is clamped the same way — an unrecognized project value is not validated here), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops) — a bare project read is ABSENT on a globally-configured machine and silently yields defaults — `disable` (canary name list), `defaultTier`, `language` override defaults.
+
+**Session end:** if code files were modified, run `/rot-canary` on them (QUICK, report only) and surface CRITICAL/HIGH findings before finishing. Do not block work.
+
+Always answer in the user's language; technical terms may stay in English.
+<!-- COALMINE:END -->

@@ -1,0 +1,1 @@
+{ "lightIntent": "Fast scan, minimal coverage", "standardIntent": "Balanced scan, module-level coverage", "heavyIntent": "Full scan, maximum coverage" }
