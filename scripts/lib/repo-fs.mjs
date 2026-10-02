@@ -25,9 +25,11 @@ import path from 'node:path';
 // Size bounds, measured on this box 2026-09-24 (scratchpad/cwk137/measure.mjs over every
 // repo under source/repos, 27,451 files): the largest real `.coalmine.json` is 9,114 B
 // (the shipped, fully commented template); the largest governance markdown the hooks read
-// is 216,465 B (a zone's umbrella-agents-mirror.md; TheColliery/AGENTS.md is 216,047 B).
-// Headroom: ~115x for config, ~19x for docs -- AGENTS.md grew ~70% in six weeks, and a
-// bound a real file crosses silently skips that file.
+// is a room's own MEMORY.md (the umbrella AGENTS.md runs close behind it). Re-measure it
+// at any edit with, from the repos root:
+//   node -e "const fs=require('fs');console.log(Math.max(...fs.globSync('*/*/MEMORY.md').map((f)=>fs.statSync(f).size)))"
+// and keep MAX_DOC_BYTES a large multiple of that figure: governance files grow fast (AGENTS.md
+// grew ~70% in six weeks), and a bound a real file crosses silently skips that file.
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 export const MAX_DOC_BYTES = 4 * 1024 * 1024;
 
