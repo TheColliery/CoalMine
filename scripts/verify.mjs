@@ -278,12 +278,12 @@ try {
 //     to neither reddens the gate instead of going unread.
 console.log('pointers:');
 try {
-  const lsAll = spawnSync('git', ['ls-files'], { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' });
+  const lsAll = spawnSync('git', ['ls-files', '-z'], { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' }); // R14 / B-u2-L7: -z, so a newline or quote in a name cannot split or quote it
   if (lsAll.error || lsAll.status !== 0) {
     // A VISIBLE skip, never a silent carve-out: no git means no durability answer.
     console.log('  --   pointer check: git unavailable — cannot tell a tracked path from an untracked one; skipped');
   } else {
-    const tracked = new Set(lsAll.stdout.split('\n').filter(Boolean));
+    const tracked = new Set(lsAll.stdout.split(String.fromCharCode(0)).filter(Boolean));
     const trackedDirs = new Set();
     for (const f of tracked) {
       const parts = f.split('/');

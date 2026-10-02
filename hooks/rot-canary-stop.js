@@ -630,7 +630,7 @@ function writeMarkerAtomic(file, text) { // wx temp in the same dir, then rename
 function detectLang() {
   try {
     const cfg = loadCfg();
-    if (cfg && typeof cfg.language === 'string' && TRANSLATIONS[cfg.language.toLowerCase()]) {
+    if (cfg && typeof cfg.language === 'string' && Object.hasOwn(TRANSLATIONS, cfg.language.toLowerCase())) { // R14 / B-u1-L4: own keys only, so 'constructor' is not a language
       return cfg.language.toLowerCase();
     }
   } catch {}
@@ -1138,7 +1138,7 @@ function main() {
   if (!files.length) return; // no recorded edit → nothing moved this session
 
   const lang = detectLang();
-  const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
+  const t = (Object.hasOwn(TRANSLATIONS, lang) && TRANSLATIONS[lang]) || TRANSLATIONS.en;
 
   // The loud scan report can only target files that STILL EXIST; a file edited then
   // deleted this session (or a corrupt/garbage line) drops out of it. `files`

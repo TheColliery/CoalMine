@@ -87,6 +87,7 @@ export function verifyAgainstManifest(destDir) {
     return { ok: true, findings: [{ level: 'SKIP', msg: 'manifest predates integrity hashes (reinstall to enable) — check skipped' }], checked: 0 };
   }
   let checked = 0;
+  const hashedByPath = new Map();
   const destAbs = path.resolve(destDir);
   for (const [rel, want] of Object.entries(recorded)) {
     // rel is "<skill>/<posix relpath>" — never trust it to escape destDir.
@@ -101,8 +102,10 @@ export function verifyAgainstManifest(destDir) {
       continue;
     }
     checked++;
-    const bytes = readRepoBytesBounded(p, destAbs, MAX_DOC_BYTES);
-    if (bytes === null) {
+    // R14 / CSV-3: alias keys that resolve to one file are read and hashed once.
+    let got = hashedByPath.get(p);
+    const bytes = got === undefined ? readRepoBytesBounded(p, destAbs, MAX_DOC_BYTES) : undefined;
+    if (got === undefined && bytes === null) {
       let present = false;
       try { fs.lstatSync(p); present = true; } catch { /* absent */ }
       findings.push({ level: 'FAIL', msg: present
@@ -110,7 +113,7 @@ export function verifyAgainstManifest(destDir) {
         : `installed file MISSING: ${rel}` });
       continue;
     }
-    const got = createHash('sha256').update(bytes).digest('hex');
+    if (got === undefined) { got = createHash('sha256').update(bytes).digest('hex'); hashedByPath.set(p, got); }
     if (got !== want) findings.push({ level: 'FAIL', msg: `installed file TAMPERED (hash changed): ${rel}` });
   }
   return { ok: findings.every((f) => f.level !== 'FAIL'), findings, checked };

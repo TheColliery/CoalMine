@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded } from './repo-fs.mjs';
 
 // The single shared reference every skill ships in references/escalation.md.
 // It holds the on-demand Heavy-tier detail (per-platform levers + durability)
@@ -54,11 +55,17 @@ export function listSkills(skillsSrc) {
 
 // Render one skill's SKILL.md template (with its skill-meta.json intents) to a string.
 export function renderSkillMd(skillDir, shared) {
-  const raw = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+  // R14 / CSV-5: bounded, regular-file-only reads (a checkout of this repo may be untrusted input to a build).
+  const mdPath = path.join(skillDir, 'SKILL.md');
+  const raw = readRepoFileBounded(mdPath, skillDir, MAX_DOC_BYTES);
+  if (raw === null) throw new Error(`${mdPath}: unreadable, not a regular file, or over ${MAX_DOC_BYTES} bytes`);
   const metaPath = path.join(skillDir, 'skill-meta.json');
-  const meta = fs.existsSync(metaPath)
-    ? JSON.parse(fs.readFileSync(metaPath, 'utf8').replace(/^\uFEFF/, ''))
-    : {};
+  let meta = {};
+  if (fs.existsSync(metaPath)) {
+    const metaRaw = readRepoFileBounded(metaPath, skillDir, MAX_CONFIG_BYTES);
+    if (metaRaw === null) throw new Error(`${metaPath}: unreadable, not a regular file, or over ${MAX_CONFIG_BYTES} bytes`);
+    meta = JSON.parse(metaRaw.replace(/^\uFEFF/, ''));
+  }
   return inject(raw, shared, meta);
 }
 

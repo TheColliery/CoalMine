@@ -45,6 +45,7 @@ const TESTS = [
   'scripts/lib/git-env-census.test.mjs',
   'scripts/lib/markers.test.mjs',
   'scripts/lib/r14-fixes.test.mjs',
+  'scripts/lib/r14-low.test.mjs',
   // CWK-174 (THE HOUSE SECRET SCAN, SERIES-CANON 'Secret scan'): byte-equal copies of the published-code template's scanner and caller tests.
   'scripts/secret-scan.test.mjs',
   'scripts/secret-gate.test.mjs',

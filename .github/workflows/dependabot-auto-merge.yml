@@ -44,7 +44,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
       # Patch + minor auto-merge; a major bump waits for a human.
       - name: Enable auto-merge (patch/minor)
-        if: ${{ steps.meta.outputs.update-type != 'version-update:semver-major' }}
+        # R14 / B-u1-20b: an ALLOW-list. The template's deny-list on major also auto-merged an update with no
+        # semver type at all (a grouped or digest update). NAMED DIVERGENCE from the org template (its `!= major`):
+        # the stricter form; the template owner may adopt it (UMB-182). Unproven on a runner until the next Dependabot PR.
+        if: ${{ contains(fromJSON('["version-update:semver-patch","version-update:semver-minor"]'), steps.meta.outputs.update-type) }}
         run: gh pr merge --squash --auto "$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

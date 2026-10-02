@@ -618,10 +618,11 @@ function writeMarkerAtomic(file, text) { // wx temp in the same dir, then rename
 // first, keeping CC behavior byte-identical.
 function extractEditedPath(input) {
   if (!input || typeof input !== 'object') return null;
-  const bags = [input.tool_input, input.toolInput, input.toolCall && input.toolCall.args];
+  // R14 / B-u1-4a: also toolArgs and a top-level file_path/TargetFile (other platforms' shapes).
+  const bags = [input.tool_input, input.toolInput, input.toolArgs, input.toolCall && input.toolCall.args, input];
   for (const bag of bags) {
     if (bag && typeof bag === 'object') {
-      for (const k of ['file_path', 'filePath', 'path', 'filename', 'file']) {
+      for (const k of ['file_path', 'filePath', 'path', 'filename', 'file', 'TargetFile', 'targetFile']) {
         if (typeof bag[k] === 'string' && bag[k]) return bag[k];
       }
     }

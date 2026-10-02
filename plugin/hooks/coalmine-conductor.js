@@ -647,6 +647,10 @@ const REVALIDATE_RE = /revalidate\s+(\d+)d/;
 // A real stamp is ~80-150 chars; a well-formed stamp fits easily, a poisoned blob
 // can never grow the regex's work past this bound.
 const STAMP_WINDOW = 2048;
+// R14 / CSV-10: at most this many stamp openers are examined per document. The largest real document on this box
+// carries 8 stamps (re-derive: grep -c 'coalmine: verified' over the rules trees); a hostile document of dense
+// openers would otherwise cost one 2 KiB regex run per 16 bytes. Past the bound the count undercounts (the safe direction).
+const MAX_STAMP_OPENERS = 200;
 
 // CWK-137 -- the KIND 2 walks read REPO-DERIVED paths, so both are bounded. The roots are
 // classified with repoEntryKind (lstat + realpath containment, never a following statSync:
@@ -696,7 +700,9 @@ function countPastDueStamps(root, today, cfg) {
   forEachRuleDoc(root, (body) => {
     STAMP_OPEN.lastIndex = 0;
     let o;
+    let openers = 0;
     while ((o = STAMP_OPEN.exec(body)) !== null) {
+      if (++openers > MAX_STAMP_OPENERS) break;
       // Match the full stamp only within a bounded slice anchored at this opener.
       const m = STAMP_RE.exec(body.slice(o.index, o.index + STAMP_WINDOW));
       if (m) {
