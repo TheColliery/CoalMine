@@ -14,7 +14,7 @@ const os = require('os');
 const path = require('path');
 
 // Onboarding offer is a separate line so .coalmine.json skipOnboarding can drop it.
-const ONBOARDING = '- gold-standard (important): no "coalmine: verified" stamp in .claude/rules/, .agents/rules/, or AGENTS.md → offer /gold-standard ONCE this session (Run now / Queue / Skip; respect Skip). Re-offer when a stamp is past its revalidate date.';
+const ONBOARDING = '- gold-standard (important): no "coalmine: verified" stamp in .claude/rules/, .agents/rules/, AGENTS.md, or STANDARDS.md → offer /gold-standard ONCE this session (Run now / Queue / Skip; respect Skip). Re-offer when a stamp is past its revalidate date.';
 const CONDUCTOR_HEAD = [
   '[CoalMine] 9 quality canaries installed. Conduct them (answer in the USER\'S language; offer via your question tool; never auto-run costly work without a chosen option):',
   '- rot-canary: hooks auto-scan touched files at session end (QUICK, capped via autoScanFileCap; offer the fix menu if a user is present). DEEP whole-repo scan only on request.',
@@ -605,11 +605,11 @@ function writeUpdateStamp(today) {
 function updateDirective(mode, days) {
   switch (mode) {
     case 'ask':
-      return `- CoalMine self-update (ask the user ONCE via your question tool, in their language): "How should CoalMine keep itself current?" Offer 3 — **auto** (I check for a newer version about every ${days} days and apply updates when you approve; ~1-2K tokens per check), **remind** (a free periodic reminder; you run \`claude plugin update coalmine@coalmine\` yourself), **off** (no reminders). Save the choice: \`node scripts/configure.mjs --updateMode <auto|remind|off>\` (run from the CoalMine repo). Do not check now — the saved mode drives future sessions.`;
+      return `- CoalMine self-update (ask the user ONCE via your question tool, in their language): "How should CoalMine keep itself current?" Offer 3 — **auto** (I check for a newer version about every ${days} days and apply updates when you approve; ~1-2K tokens per check), **remind** (a free periodic reminder; you run \`claude plugin update coalmine@coalmine\` yourself), **off** (no reminders). Save the choice by setting \`"updateMode"\` to the picked value (auto, remind or off) in the global config \`~/.claude/.coalmine.json\` (create the file if it is absent; keep every other key as it is). The plugin ships no scripts/ folder, so there is nothing to run; a CoalMine source checkout also offers \`node scripts/configure.mjs --global --updateMode <value>\`. Do not check now — the saved mode drives future sessions.`;
     case 'auto':
       return '- CoalMine self-update (standing consent — do this now): follow /coalmine:update to web-check the latest CoalMine tag vs the installed plugin.json version. If newer, OFFER `claude plugin update coalmine@coalmine` + `/reload-plugins`; if current, say "up to date"; if git/network is unavailable, say so and suggest updating manually later (never assume).';
     case 'remind':
-      return `- CoalMine self-update reminder (relay to the user in their language, no action needed): it has been ~${days}d since the last CoalMine update-check — consider \`claude plugin update coalmine@coalmine\` to refresh, or switch to auto (\`node scripts/configure.mjs --updateMode auto\`).`;
+      return `- CoalMine self-update reminder (relay to the user in their language, no action needed): it has been ~${days}d since the last CoalMine update-check — consider \`claude plugin update coalmine@coalmine\` to refresh, or switch to auto (set \`"updateMode": "auto"\` in \`~/.claude/.coalmine.json\`).`;
     default:
       return null; // 'off' (or unknown) → nothing for kind 1
   }
@@ -724,6 +724,8 @@ function ruleRoots(root) {
     path.join(root, '.claude', 'rules'),
     path.join(root, '.agents', 'rules'),
     path.join(root, 'AGENTS.md'),
+    // R14 / B-u1-8: gold-standard's FILL home falls back to STANDARDS.md, so its stamps count too.
+    path.join(root, 'STANDARDS.md'),
   ];
 }
 

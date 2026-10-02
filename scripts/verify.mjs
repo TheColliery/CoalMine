@@ -656,7 +656,7 @@ function compareAux(srcDir, dstDir, label) {
       if (e.name === 'SKILL.md') continue;
       // A shared reference (build-injected into references/) legitimately has no
       // per-skill source — checked against skills/_shared below, not here.
-      if (SHARED_REF_NAMES.has(e.name) && !fs.existsSync(path.join(srcDir, e.name))) continue;
+      if (SHARED_REF_NAMES.has(e.name) && path.basename(dstDir) === 'references' && !fs.existsSync(path.join(srcDir, e.name))) continue;
       if (!fs.existsSync(path.join(srcDir, e.name))) fail(`${label}/${e.name} has no source — run: node scripts/build-plugin.mjs`);
     }
   } catch (err) {
@@ -792,9 +792,14 @@ if (!fs.existsSync(pluginDir)) {
 
 // 5. optional install target
 const arg = process.argv[2];
-if (arg) {
+if (arg && arg.startsWith('-')) {
+  // R14 / B-u2-6: a flag-shaped word is not a path; `--help` used to be resolved to ./--help.
+  console.error(`Usage: node scripts/verify.mjs [${Object.keys(TARGETS).join('|')}|PATH]   (no argument = verify the repo and dist only)`);
+  if (arg !== '--help' && arg !== '-h') fail(`unknown option ${arg}`);
+} else if (arg) {
   const targetKey = arg.toLowerCase();
-  const dest = TARGETS[targetKey] ?? path.resolve(arg);
+  // R14 / B-u2-7: own-key lookup, so `verify.mjs constructor` is a path, not Object.
+  const dest = Object.hasOwn(TARGETS, targetKey) ? TARGETS[targetKey] : path.resolve(arg);
   console.log(`target ${dest}:`);
   for (const s of skills) {
     const targetMd = path.join(dest, s, 'SKILL.md');

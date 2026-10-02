@@ -432,7 +432,7 @@ function uninstallGitHooks() {
 // ─── Config Uninstallation ───────────────────────────────────────────────────
 function uninstallConfig(arg) {
   try {
-    const cfg = PLATFORM_CONFIGS[arg];
+    const cfg = Object.hasOwn(PLATFORM_CONFIGS, arg) ? PLATFORM_CONFIGS[arg] : undefined; // R14 B-u2-7: own-key only
     if (!cfg) return;
 
     const destFile = cfg.dest;
@@ -680,7 +680,7 @@ function installSkills(dest, skills, shared, root = dest) {
 
 function applyConfig(targetKey, label) {
   console.log(`\nConfiguring auto-trigger for: ${label}`);
-  const cfg = PLATFORM_CONFIGS[targetKey];
+  const cfg = Object.hasOwn(PLATFORM_CONFIGS, targetKey) ? PLATFORM_CONFIGS[targetKey] : undefined; // R14 B-u2-7: own-key only
   if (cfg) upsertConfig(cfg.dest, cfg.tpl);
   else console.log(`  (no platform config template for "${label}" — skills only)`);
 }
@@ -738,6 +738,20 @@ function copyDefaultConfig() {
 // against the original file.
 function main() {
 const args = process.argv.slice(2);
+// R14 / B-u2-6: validate argv BEFORE anything resolves a path. `--help` used to be taken for a
+// PATH and installed nine skills into ./--help/; any other flag-shaped word is an error too.
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(`Usage: node scripts/install.mjs [--uninstall | -u] <${Object.keys(TARGETS).join('|')}|all|PATH>`);
+  console.log('Example: node scripts/install.mjs claude   (installs the nine skills; --uninstall removes them)');
+  return;
+}
+const unknownFlag = args.find((x) => x.startsWith('-') && x !== '--uninstall' && x !== '-u');
+if (unknownFlag !== undefined) {
+  console.error(`Unknown option: ${unknownFlag}`);
+  console.error(`Usage: node scripts/install.mjs [--uninstall | -u] <${Object.keys(TARGETS).join('|')}|all|PATH>`);
+  process.exitCode = 2;
+  return;
+}
 const isUninstall = args.includes('--uninstall') || args.includes('-u');
 const targetArg = args.filter(x => x !== '--uninstall' && x !== '-u')[0];
 
@@ -816,7 +830,8 @@ if (targetKey === 'all') {
   return;
 }
 
-const dest = TARGETS[targetKey] ?? path.resolve(targetArg);
+// R14 / B-u2-7: an own-key lookup. `TARGETS['constructor']` is Object, not a path, and crashed the next line.
+const dest = Object.hasOwn(TARGETS, targetKey) ? TARGETS[targetKey] : path.resolve(targetArg);
 
 if (path.resolve(dest) === path.resolve(skillsSrc)) {
   console.error('Target directory cannot be the source skills directory.');

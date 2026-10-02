@@ -130,3 +130,18 @@ test('publishRelease: missing required fields throws before any fetch call', asy
   );
   assert.equal(fetchCalled, false, 'validation must fail before any network attempt');
 });
+
+test('publishRelease (R14, B-u2-12): an update given no body keeps the existing body (the field is omitted, not sent as empty)', async () => {
+  const sent = [];
+  const fetchImpl = async (url, opts = {}) => {
+    if ((opts.method ?? 'GET') === 'GET') return { status: 200, json: async () => ({ id: 42, html_url: 'https://x/42' }) };
+    sent.push(JSON.parse(opts.body));
+    return { status: 200, json: async () => ({ id: 42, html_url: 'https://x/42', upload_url: 'https://x/42/assets' }) };
+  };
+  await publishRelease({ owner: 'o', repo: 'r', tag: 'v9.9.9', title: 'v9.9.9 - x', token: 't', fetchImpl });
+  assert.equal(sent.length, 1);
+  assert.equal(Object.hasOwn(sent[0], 'body'), false, 'no body field: GitHub keeps the existing one');
+  sent.length = 0;
+  await publishRelease({ owner: 'o', repo: 'r', tag: 'v9.9.9', title: 'v9.9.9 - x', body: 'new notes', token: 't', fetchImpl });
+  assert.equal(sent[0].body, 'new notes', 'an explicit body is still sent');
+});

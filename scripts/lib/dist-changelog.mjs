@@ -50,7 +50,8 @@ function isGitRepo(repo) {
 // Exported for its own unit test — the empty-tags case (status 0, empty stdout) is not
 // an error and must not be confused with "git failed".
 export function resolveLastTag(repo) {
-  const r = git(['tag', '--sort=-v:refname'], repo);
+  // R14 / B-u2-10: only release-shaped tags (v*) that are reachable from HEAD, so a stray or other-branch tag cannot become the baseline.
+  const r = git(['tag', '--merged', 'HEAD', '--list', 'v*', '--sort=-v:refname'], repo);
   if (r.status !== 0) return null;
   const tags = r.stdout.split(/\r?\n/).filter(Boolean);
   return tags[0] ?? null;

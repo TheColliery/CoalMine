@@ -199,6 +199,9 @@ function main() {
 // Windows-safe entry-point check: compare RESOLVED PATHS, not raw URL strings --
 // `file://C:/...` vs a bare `C:\...` argv never string-match, per node/runtime.md
 // section 6's own drive-letter warning.
-if (path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1] ?? '')) {
+// R14 / B-u2-16: both sides through realpath, so a junction/symlink spelling of argv[1] still runs the CLI.
+let isEntry = false;
+try { isEntry = fs.realpathSync.native(fileURLToPath(import.meta.url)) === fs.realpathSync.native(path.resolve(process.argv[1] ?? '')); } catch { isEntry = false; }
+if (isEntry) {
   main();
 }

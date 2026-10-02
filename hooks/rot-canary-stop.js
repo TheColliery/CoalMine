@@ -971,6 +971,17 @@ function matchesFragment(path, frag) {
   }
   return true;
 }
+// R14 / B-u1-7 (closes B-u2-15): a fragment is matched against the file's path RELATIVE to the project root,
+// with a leading '/', so an ancestor directory of the project (a checkout under .../scratchpad/...) can no
+// longer exempt every file in it. A file outside the root keeps its absolute path (it has no project-relative form).
+function projectRelative(filePath) {
+  try {
+    const root = findGitRoot(process.cwd());
+    const rel = path.relative(root, filePath);
+    if (rel && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) return '/' + rel;
+  } catch {}
+  return filePath;
+}
 function matchesAnyExcludeFragment(filePath, fragments) {
   const normalized = filePath.replace(/\\/g, '/').toLowerCase();
   return fragments.some((frag) => matchesFragment(normalized, frag.toLowerCase()));
@@ -1143,7 +1154,7 @@ function main() {
   let skippedCount = 0;
   const extant = excludeFrags.length
     ? extantRaw.filter((f) => {
-        if (matchesAnyExcludeFragment(f, excludeFrags)) { skippedCount++; return false; }
+        if (matchesAnyExcludeFragment(projectRelative(f), excludeFrags)) { skippedCount++; return false; }
         return true;
       })
     : extantRaw;

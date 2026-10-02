@@ -15,7 +15,7 @@ permissions:
 # (skills/**/SKILL.md, commands/*.md) MUST run CI, because verify.mjs checks dist-sync.
 # Only these NON-shipped root docs are exempt.
 env:
-  DOCS_GLOBS: "README.md CHANGELOG.md CONTRIBUTING.md PRIVACY.md SECURITY.md LICENSE"
+  DOCS_GLOBS: "CHANGELOG.md CONTRIBUTING.md PRIVACY.md SECURITY.md LICENSE"
 
 # cancel-in-progress: TRUE -- ci.yml only reads, tests and compares; it publishes nothing and
 # touches no external state, so a superseded run has nothing to leave half-done.

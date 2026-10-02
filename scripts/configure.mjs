@@ -74,7 +74,7 @@ function printHelp() {
   lines.push('Examples:');
   lines.push('  node scripts/configure.mjs --language th --file-cap 15');
   lines.push('  node scripts/configure.mjs --disable rot-canary,drift-canary');
-  lines.push('  node scripts/configure.mjs --global --default-tier light');
+  lines.push('  node scripts/configure.mjs --global --update-mode remind');
   console.log(lines.join('\n'));
 }
 

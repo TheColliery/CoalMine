@@ -23,7 +23,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const API_BASE = 'https://api.github.com';
 
@@ -71,7 +71,11 @@ export async function publishRelease({ owner, repo, tag, title, body, token, fet
     throw new Error(`unexpected GET status ${getRes.status} checking for an existing release`);
   }
   const action = decideAction(existing);
-  const payload = JSON.stringify({ tag_name: tag, name: title, body: body ?? '' });
+  // R14 / B-u2-12: an update that was given no body keeps the release's existing body (the field is omitted,
+  // not sent as ''); a create always carries one.
+  const fields = { tag_name: tag, name: title };
+  if (body != null || action === 'create') fields.body = body ?? '';
+  const payload = JSON.stringify(fields);
   let res = action === 'create'
     ? await fetchImpl(`${API_BASE}/repos/${owner}/${repo}/releases`, { method: 'POST', headers: authHeaders(token), body: payload })
     : await fetchImpl(`${API_BASE}/repos/${owner}/${repo}/releases/${existing.id}`, { method: 'PATCH', headers: authHeaders(token), body: payload });
@@ -130,5 +134,7 @@ async function main() {
 // Only run the CLI when invoked directly -- importing this module for tests
 // (publishRelease/decideAction) must never fire a real network call as a
 // side effect of the import itself.
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+// R14 / B-u2-16: both sides through realpath, so a junction/symlink spelling of argv[1] still runs the CLI.
+let isMain = false;
+try { isMain = !!process.argv[1] && fs.realpathSync.native(fileURLToPath(import.meta.url)) === fs.realpathSync.native(path.resolve(process.argv[1])); } catch { isMain = false; }
 if (isMain) main();

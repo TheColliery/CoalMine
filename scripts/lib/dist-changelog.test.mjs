@@ -235,3 +235,22 @@ test('checkDistChangelog: CHANGELOG.md missing entirely FAILs with a clear reaso
     assert.match(found[0].msg, /CHANGELOG\.md is unreadable/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('resolveLastTag (R14, B-u2-10): a non-release tag and a tag on another branch are never the baseline', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-distchangelog-tagfilter-'));
+  try {
+    initFixtureRepo(dir);
+    fs.writeFileSync(path.join(dir, 'f.txt'), 'x\n');
+    git(['add', '-A'], dir);
+    git(['commit', '-q', '-m', 'c1'], dir);
+    git(['tag', 'v1.0.0'], dir);
+    git(['tag', 'zzz-stray'], dir); // sorts above v1.0.0 under -v:refname, but is not a release tag
+    git(['checkout', '-q', '-b', 'other'], dir);
+    fs.writeFileSync(path.join(dir, 'g.txt'), 'y\n');
+    git(['add', '-A'], dir);
+    git(['commit', '-q', '-m', 'other work'], dir);
+    git(['tag', 'v9.9.9'], dir); // a release-shaped tag, but not reachable from main
+    git(['checkout', '-q', 'main'], dir);
+    assert.equal(resolveLastTag(dir), 'v1.0.0', 'the baseline is the highest v* tag reachable from HEAD');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
