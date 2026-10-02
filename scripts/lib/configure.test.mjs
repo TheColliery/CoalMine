@@ -329,3 +329,28 @@ test('CWK-137: a project config symlink to a home dotfile is REFUSED -- no overw
   assert.equal(fs.readFileSync(bashrc, 'utf8'), SECRET, 'the fake ~/.bashrc is untouched');
   assert.deepEqual(findBak(dir), [], 'no .bak copy of the dotfile lands in the repo');
 });
+
+// R13 / CWK-158 item 5 (B-u3-2b, the 2026-09-26 incident): HOME is sandboxed (CONTRIBUTING's prescription), so
+// isGlobalCfgFile -- which compares against os.homedir() -- could not recognise the REAL global config sitting in
+// an ANCESTOR of the cwd; the walk took it for a legacy PROJECT config and the writer migrated (moved + deleted)
+// it. The writer now anchors on the nested legacy shape only at the cwd itself.
+test('CWK-158 item 5: configure never migrates a nested legacy config that sits ABOVE the cwd (a real profile seen through a sandboxed HOME)', () => {
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-outerhome-'));
+  const sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-sandboxhome-'));
+  try {
+    fs.mkdirSync(path.join(outer, '.claude'), { recursive: true });
+    const realGlobal = path.join(outer, '.claude', '.coalmine.json');
+    const BODY = JSON.stringify({ language: 'th', updateMode: 'off' });
+    fs.writeFileSync(realGlobal, BODY, 'utf8');
+    const proj = path.join(outer, 'work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const r = spawnSandboxed(process.execPath, [CONFIGURE, '--language', 'en'], { cwd: proj, sandboxDir: sandboxHome });
+    assert.equal(r.status, 0, `configure must pass:\n${r.stdout}${r.stderr}`);
+    assert.equal(fs.readFileSync(realGlobal, 'utf8'), BODY, 'the config above the cwd keeps its bytes and is not deleted');
+    assert.ok(!fs.existsSync(path.join(outer, '.claude', 'coal', 'coalmine.json')), 'nothing was written at the ancestor');
+    assert.ok(fs.existsSync(path.join(proj, '.claude', 'coal', 'coalmine.json')), 'the config is written at the cwd project instead');
+  } finally {
+    fs.rmSync(outer, { recursive: true, force: true });
+    fs.rmSync(sandboxHome, { recursive: true, force: true });
+  }
+});

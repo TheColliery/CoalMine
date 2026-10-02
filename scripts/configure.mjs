@@ -34,8 +34,14 @@ function findGitRoot(startDir) {
     }
     // UMB-133: the nested legacy shape anchors too, except when it is the GLOBAL
     // file (root = `~`) — see hooks/_shared/node-config.js's findGitRoot.
+    // R13 / CWK-158 item 5 (B-u3-2b): the WRITER anchors on the nested shape only AT the start dir,
+    // never on an ancestor. isGlobalCfgFile compares against os.homedir(), which a sandboxed HOME
+    // (the CONTRIBUTING prescription) moves away from the real profile -- so a walk from a fixture under
+    // the real home found the REAL ~/.claude/.coalmine.json as a "legacy project config" and migrated
+    // (moved + deleted) it. A config above the cwd is somebody else's project (or the user's profile),
+    // never one configure may rewrite. The hooks' READ walk is unchanged.
     const nested = path.join(dir, LEGACY_CONFIGS[0]);
-    if (fs.existsSync(nested) && !isGlobalCfgFile(nested)) {
+    if (fs.existsSync(nested) && !isGlobalCfgFile(nested) && dir === path.resolve(startDir)) {
       return dir;
     }
     const parent = path.dirname(dir);
