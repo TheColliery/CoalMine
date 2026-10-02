@@ -4,7 +4,15 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
-Work in progress (R14 red); the DRAFTER replaces this entry.
+On macOS, the session-end scan no longer skips every edited file when the project's folder has two spellings.
+
+### Fixed
+- **R14 red — `scanExcludePaths` could exempt every touched file on macOS.** Since the project-relative match arrived in 3.22.0, a fragment such as `**/scratchpad/**` was compared with each edited file's path relative to the project. On macOS the folder the hook runs in and the folder the edit tool reports can be two spellings of one folder (`/private/var/...` against `/var/...`), so the relative path climbed out of the project, the code fell back to the absolute path, and an ancestor folder named like a fragment excluded every file: the hook found nothing to scan and printed no report. Both sides are now resolved to their real path before they are compared (`fs.realpathSync.native`); if either cannot be resolved, the comparison stays lexical as before. A project reached by one spelling only was never affected. — test: `scripts/lib/r14-fixes.test.mjs` (`the project-relative match survives two spellings of the project dir`)
+
+### Changed
+- **Internal — three code-scanning patterns the 3.22.0 push opened (#80 to #90) were addressed in the code**: the read-only marker open now states its mode (`0o600`, inert without `O_CREAT`), the shared marker helpers are split so each hook carries only the functions it calls, and a test parses README URLs instead of matching substrings. No behaviour change for users. Whether the alerts clear is shown only by the code-scanning list after the next push. — test: `scripts/lib/markers.test.mjs`, `scripts/lib/plugin-readme.test.mjs`
+
+**What you need to do:** nothing is required. To receive the changed hook files, on Claude Code run `claude plugin update coalmine@coalmine`; users of `coalmine@claude-community` receive them when that catalog's pin moves; for any other agent, update your CoalMine checkout and re-run `node scripts/install.mjs <agent>`.
 
 ## [3.22.0] - 2026-10-02
 
