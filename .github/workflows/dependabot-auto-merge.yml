@@ -32,6 +32,7 @@ jobs:
   auto-merge:
     if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # measured 2026-10-02: auto-merge max 6 s over 3 runs, successful runs only; a finite clock (testing.md), ~10x the max
     permissions:
       contents: write
       pull-requests: write
@@ -44,6 +45,7 @@ jobs:
       # Patch + minor auto-merge; a major bump waits for a human.
       - name: Enable auto-merge (patch/minor)
         if: ${{ steps.meta.outputs.update-type != 'version-update:semver-major' }}
-        run: gh pr merge --squash --auto "${{ github.event.pull_request.html_url }}"
+        run: gh pr merge --squash --auto "$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }} # an env var, never inline in run: (CWK-154, the template form)

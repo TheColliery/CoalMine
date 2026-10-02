@@ -32,6 +32,7 @@ jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # measured 2026-10-02: Scorecard analysis max 36 s over 12 runs, successful runs only; a finite clock (testing.md), ~10x the max
     permissions:
       security-events: write
       id-token: write

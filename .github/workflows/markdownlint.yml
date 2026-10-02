@@ -22,8 +22,11 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # measured 2026-10-02: lint max 7 s over 6 runs, successful runs only; a finite clock (testing.md), ~10x the max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
       - uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
         continue-on-error: true  # report-only: a focused markdownlint cleanup is a separate pass
         with:

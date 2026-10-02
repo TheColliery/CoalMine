@@ -28,3 +28,6 @@ coverage/
 
 # Working scratch — dispatch prompts, plans, audit JSON. Machine-local, never shipped.
 scratchpad/
+
+# CoalBoard run output (reports, proposals) -- machine-local, never committed (CWK-154)
+.coalboard/

@@ -46,12 +46,14 @@ jobs:
   coverage:
     name: coverage (report only)
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # measured 2026-10-02: coverage max 43 s over 12 runs, successful runs only; a finite clock (testing.md), ~10x the max
     permissions:
       contents: read
       code-quality: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
           # The PR HEAD commit, not the merge commit, so coverage line numbers map onto the diff.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up Node (skips cleanly until scripts/test.mjs exists)

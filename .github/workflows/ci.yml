@@ -38,12 +38,14 @@ jobs:
   changes:
     name: changed-paths
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # measured 2026-10-02: changed-paths max 8 s over 12 runs, successful runs only; a finite clock (testing.md), ~10x the max
     outputs:
       code: ${{ steps.detect.outputs.code }}
       files: ${{ steps.detect.outputs.files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
           fetch-depth: 0
       - id: detect
         # DOCS_GLOBS comes from the workflow-level `env:` above, which GitHub exports into
@@ -139,9 +141,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node: [22, 24]  # supported LTS only (24 Active, 22 Maintenance); 18/20 are EOL — bump as the Node LTS schedule moves
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15 # measured 2026-10-02: gate max 82 s over 65 job runs, successful runs only; a finite clock (testing.md), ~10x the max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
           # 0 = all history for ALL branches AND tags (action.yml @ this pinned tag: "0
           # indicates all history for all branches and tags") — without this, git's
           # shallow default leaves no tag reachable, so task #38's dist-changelog gate
@@ -179,6 +183,7 @@ jobs:
     needs: [changes, gate]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # measured 2026-10-02: all-green max 15 s over 10 runs, successful runs only; a finite clock (testing.md), ~10x the max
     steps:
       # HONESTY STEP (CWK-058) -- this check now fires on EVERY push, including doc-only ones,
       # so it must say which of the two it was. A reader landing on `all-green` in the UI must
