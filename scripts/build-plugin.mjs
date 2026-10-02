@@ -88,6 +88,10 @@ for (const f of ['hooks.json', 'rot-canary-touch.js', 'rot-canary-stop.js', 'coa
 }
 console.log('  copied hooks/ (hooks.json + rot-canary touch/stop + coalmine-conductor)');
 
+// R14 / CWK-180: the plugin folder's own README (the directory listing's text) is authored at plugin-src/README.md.
+fs.copyFileSync(path.join(repo, 'plugin-src', 'README.md'), path.join(pluginDir, 'README.md'));
+console.log('  copied plugin-src/README.md -> plugin/README.md');
+
 // Bundled extras Claude Code auto-discovers at plugin root. Recursive copy:
 // same EISDIR class as installSkillDir — never assume flat.
 for (const extra of ['agents', 'commands']) {

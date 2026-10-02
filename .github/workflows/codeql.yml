@@ -49,12 +49,14 @@ jobs:
   changes:
     name: changed-paths
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # measured 2026-10-02: changed-paths max 7 s over 12 runs, successful runs only; a finite clock (testing.md), ~10x the max
     outputs:
       code: ${{ steps.detect.outputs.code }}
       files: ${{ steps.detect.outputs.files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
           fetch-depth: 0
       - id: detect
         shell: bash
@@ -153,6 +155,7 @@ jobs:
     # always runs and decides for itself, refusing below if the classifier did not succeed.
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # measured 2026-10-02: analyze max 77 s over 12 runs, successful runs only; a finite clock (testing.md), ~10x the max
     permissions:
       contents: read
       security-events: write
@@ -215,13 +218,15 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
         if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
-      - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+      - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
         with:
           languages: javascript-typescript
           queries: security-and-quality
-      - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+      - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         id: analyze
         if: needs.changes.result == 'success' && needs.changes.outputs.code == 'true'
       # DO NOT ASSERT AN ACTION RAN WITHOUT CONSULTING THE STEP THAT PERFORMS IT (CWK-074).

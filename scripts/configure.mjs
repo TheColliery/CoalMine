@@ -8,6 +8,7 @@ import path from 'path';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
 import { stripJsonc } from './lib/jsonc.mjs';
 import { projectConfigPath, ownDirDefault, LEGACY_CONFIGS, isGlobalCfgFile } from './lib/config-paths.mjs';
+import { MAX_CONFIG_BYTES, readRepoFileBounded, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
 
 // The three per-agent-dir shapes were added by the namespace campaign
 // (#69+#39, owner-designated 2026-08-08) alongside the LEGACY dotfile: a
@@ -33,8 +34,18 @@ function findGitRoot(startDir) {
     }
     // UMB-133: the nested legacy shape anchors too, except when it is the GLOBAL
     // file (root = `~`) — see hooks/_shared/node-config.js's findGitRoot.
+    // R13 / CWK-158 item 5 (B-u3-2b): the WRITER anchors on the nested shape only AT the start dir,
+    // never on an ancestor. isGlobalCfgFile compares against os.homedir(), which a sandboxed HOME
+    // (the CONTRIBUTING prescription) moves away from the real profile -- so a walk from a fixture under
+    // the real home found the REAL ~/.claude/.coalmine.json as a "legacy project config" and migrated
+    // (moved + deleted) it. What the code does: the nested legacy file anchors the walk ONLY in the folder
+    // configure ran from. A `.git` above that folder still anchors it (the git-root branch below), so a
+    // legacy config at that git root is still read and migrated even when run from a subfolder (witness:
+    // run from src/deep, the project root's legacy file migrated). That case is guarded by the CONTRIBUTING
+    // sandbox rule, not by this code; closing it is queued with CWK-158's remainder. The hooks' READ walk is
+    // unchanged.
     const nested = path.join(dir, LEGACY_CONFIGS[0]);
-    if (fs.existsSync(nested) && !isGlobalCfgFile(nested)) {
+    if (fs.existsSync(nested) && !isGlobalCfgFile(nested) && dir === path.resolve(startDir)) {
       return dir;
     }
     const parent = path.dirname(dir);
@@ -63,7 +74,7 @@ function printHelp() {
   lines.push('Examples:');
   lines.push('  node scripts/configure.mjs --language th --file-cap 15');
   lines.push('  node scripts/configure.mjs --disable rot-canary,drift-canary');
-  lines.push('  node scripts/configure.mjs --global --default-tier light');
+  lines.push('  node scripts/configure.mjs --global --update-mode remind');
   console.log(lines.join('\n'));
 }
 
@@ -150,11 +161,36 @@ function main() {
     ? readPath
     : (isLegacyRead(readPath) ? ownDirDefault(projectRoot) : readPath);
 
+  // CWK-137 -- a PROJECT config path is repo-derived. A cloned repo can plant
+  // `.claude/coal/coalmine.json -> ~/.bashrc`: the old code read it, copied its bytes
+  // into a `.bak` INSIDE the repo, then overwrote the link target (PoC-3, measured on
+  // 59ee1e7). Both the read path and the write path are checked BEFORE any read or
+  // backup, and a refusal names the path. The --global file is the user's own home
+  // file (a dotfile manager legitimately symlinks it), so it gets the regular-file +
+  // size bound but NO containment, and its write follows the link as before.
+  const lexists = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
+  const refuse = (p, why) => {
+    console.error(`Error: refused to use the config file ${p}: ${why}.`);
+    console.error('CoalMine will not read, back up, or write a config through a link or outside the project. Replace it with a regular file inside the project (or delete it) and re-run.');
+    process.exitCode = 1;
+  };
+  if (!isGlobal) {
+    for (const p of new Set([readPath, writePath])) {
+      const why = checkRepoWriteTarget(p, projectRoot);
+      if (why) { refuse(p, why); return; }
+    }
+  }
+
   let cfg = {};
   let hadComments = false;
-  // Read once via try/catch (no existsSync precheck) so there is no check-to-use gap.
   let rawConfig = null;
-  try { rawConfig = fs.readFileSync(readPath, 'utf8').replace(/^\uFEFF/, ''); } catch {}
+  if (lexists(readPath)) {
+    rawConfig = readRepoFileBounded(readPath, isGlobal ? null : projectRoot, MAX_CONFIG_BYTES);
+    // Present but unreadable, not a regular file, or over the bound: refuse -- rebuilding
+    // from defaults would overwrite a file we never managed to read.
+    if (rawConfig === null) { refuse(readPath, `not a readable regular file of at most ${MAX_CONFIG_BYTES} bytes`); return; }
+    rawConfig = rawConfig.replace(/^\uFEFF/, '');
+  }
   if (rawConfig !== null) {
     try {
       const content = rawConfig;
@@ -206,7 +242,10 @@ function main() {
       // run continues from defaults (the old config is backed up where possible).
       process.exitCode = 1;
       try {
-        fs.copyFileSync(readPath, readPath + '.bak');
+        // CWK-137: the backup is written from the bytes already read (a bounded, regular,
+        // contained file), through the contained writer -- a planted `.bak` link is refused.
+        if (isGlobal) fs.writeFileSync(readPath + '.bak', rawConfig, 'utf8');
+        else writeRepoFile(readPath + '.bak', rawConfig, projectRoot);
         console.warn(`Warning: existing config is malformed — backed it up to ${readPath}.bak and rebuilding.`);
       } catch {
         console.warn('Warning: existing config is malformed. Overwriting.');
@@ -239,8 +278,13 @@ function main() {
   }
 
   try {
-    fs.mkdirSync(path.dirname(writePath), { recursive: true });
-    fs.writeFileSync(writePath, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+    const body = JSON.stringify(cfg, null, 2) + '\n';
+    if (isGlobal) {
+      fs.mkdirSync(path.dirname(writePath), { recursive: true });
+      fs.writeFileSync(writePath, body, 'utf8');
+    } else {
+      writeRepoFile(writePath, body, projectRoot); // CWK-137: temp + rename, never through a link
+    }
     // Move-on-CONFIG-WRITE-only (no-old-version-leftover): the legacy root
     // file is removed only AFTER the new-home write above succeeded, and only
     // when this write actually migrated it (readPath was the legacy file and

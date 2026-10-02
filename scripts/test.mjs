@@ -40,6 +40,26 @@ const TESTS = [
   'scripts/lib/build-claude-ai-zips.test.mjs',
   'scripts/lib/publish-release.test.mjs',
   'scripts/lib/link-check.test.mjs',
+  'scripts/lib/repo-fs.test.mjs',
+  'scripts/lib/git-env.test.mjs',
+  'scripts/lib/git-env-census.test.mjs',
+  'scripts/lib/markers.test.mjs',
+  'scripts/lib/r14-fixes.test.mjs',
+  'scripts/lib/r14-low.test.mjs',
+  'scripts/lib/r14-install.test.mjs',
+  'scripts/lib/plugin-readme.test.mjs',
+  // CWK-174 (THE HOUSE SECRET SCAN, SERIES-CANON 'Secret scan'): byte-equal copies of the published-code template's scanner and caller tests.
+  'scripts/secret-scan.test.mjs',
+  'scripts/secret-gate.test.mjs',
+  // CWK-124: the sole-creator release workflow's scripts, pulled byte-identical from the
+  // .github overlay (templates/overlay-coal-skill), never edited here.
+  'scripts/lib/release-shape.test.mjs',
+  'scripts/lib/release-prune.test.mjs',
+  'scripts/lib/asset-upload-mode.test.mjs',
+  'scripts/release-notes.test.mjs',
+  'scripts/verify-release-shape.test.mjs',
+  'scripts/decide-upload.test.mjs',
+  'scripts/prune-release-zips.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

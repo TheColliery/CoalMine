@@ -11,9 +11,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { checkDistChangelog, resolveLastTag } from './dist-changelog.mjs';
+import { gitEnv } from './git-env.mjs';
 
 function git(args, repo) {
-  const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+  const r = spawnSync('git', args, { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
   return r.stdout;
 }
@@ -30,6 +31,9 @@ function initFixtureRepo(dir) {
   git(['config', 'user.email', 'test@test.invalid'], dir);
   git(['config', 'user.name', 'Test'], dir);
   git(['config', 'commit.gpgsign', 'false'], dir);
+  // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+  git(['config', 'maintenance.auto', 'false'], dir);
+  git(['config', 'gc.auto', '0'], dir);
   // A machine-global tag.gpgSign / tag.forceSignAnnotated would force `git tag <name>` (no
   // -a/-m) into an ANNOTATED, signed tag needing a message — non-interactive spawnSync then
   // fails with "fatal: no tag message?". Local overrides make the fixture's tags lightweight
@@ -232,5 +236,24 @@ test('checkDistChangelog: CHANGELOG.md missing entirely FAILs with a clear reaso
     assert.equal(found.length, 1);
     assert.equal(found[0].level, 'FAIL');
     assert.match(found[0].msg, /CHANGELOG\.md is unreadable/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resolveLastTag (R14, B-u2-10): a non-release tag and a tag on another branch are never the baseline', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-distchangelog-tagfilter-'));
+  try {
+    initFixtureRepo(dir);
+    fs.writeFileSync(path.join(dir, 'f.txt'), 'x\n');
+    git(['add', '-A'], dir);
+    git(['commit', '-q', '-m', 'c1'], dir);
+    git(['tag', 'v1.0.0'], dir);
+    git(['tag', 'zzz-stray'], dir); // sorts above v1.0.0 under -v:refname, but is not a release tag
+    git(['checkout', '-q', '-b', 'other'], dir);
+    fs.writeFileSync(path.join(dir, 'g.txt'), 'y\n');
+    git(['add', '-A'], dir);
+    git(['commit', '-q', '-m', 'other work'], dir);
+    git(['tag', 'v9.9.9'], dir); // a release-shaped tag, but not reachable from main
+    git(['checkout', '-q', 'main'], dir);
+    assert.equal(resolveLastTag(dir), 'v1.0.0', 'the baseline is the highest v* tag reachable from HEAD');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -20,8 +20,26 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadShared as loadSharedFrom, listSkills, installSkillDir } from './lib/render.mjs';
 import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
-import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
+import { gitEnv } from './lib/git-env.mjs';
+import { MANIFEST_NAME, hashInstalledTree, hashFile } from './lib/manifest.mjs';
 import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+
+// CWK-137 -- every path below cwd is REPO-DERIVED, i.e. untrusted: a cloned repository can
+// plant `.github/copilot-instructions.md -> ~/.bashrc`, a junction on `.agents`, or a FIFO
+// at `.git`. Reads go through readRepoFileBounded, writes through writeRepoFile, and a
+// refusal is LOUD (a message naming the path and what to do, and exitCode 1) -- never a
+// silent skip, never a write through the link.
+const refuseMsg = (what, why) => `  [refused] ${what}: ${why} -- CoalMine will not write through a link or outside this project. Replace it with a regular file inside the project (or remove it) and re-run.`;
+function lexists(p) {
+  try { fs.lstatSync(p); return true; } catch { return false; }
+}
+// The containment root for a skills target: a PROJECT target (under cwd) must stay inside
+// cwd; the global `claude` target and an explicit PATH are the user's own choice of
+// directory, so the root is the target itself (a symlinked file inside it is still refused).
+function skillsRootFor(targetKey, dest) {
+  return Object.hasOwn(TARGETS, targetKey) && targetKey !== 'claude' ? process.cwd() : dest;
+}
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const skillsSrc = path.join(repo, 'skills');
@@ -72,17 +90,22 @@ function upsertConfig(destFile, tplFile) {
     const start  = isHash ? CM_START_HASH : CM_START;
     const end    = isHash ? CM_END_HASH   : CM_END;
 
-    fs.mkdirSync(path.dirname(destFile), { recursive: true });
+    // CWK-137: the destination is repo-derived. Check it BEFORE reading or writing, so a
+    // `-> ~/.bashrc` link is refused instead of appended to (PoC-2, measured on 59ee1e7).
+    const root = process.cwd();
+    const why = checkRepoWriteTarget(destFile, root);
+    if (why) { console.warn(refuseMsg(path.relative(root, destFile), why)); process.exitCode = 1; return; }
 
-    // Read-then-handle-ENOENT (no existsSync precheck) so there is no check-to-use gap.
     let existing;
-    try {
-      existing = fs.readFileSync(destFile, 'utf8');
-    } catch (e) {
-      if (e.code !== 'ENOENT') throw e; // a real read error surfaces to the outer catch
-      // New file
-      fs.writeFileSync(destFile, tplContent + '\n', 'utf8');
-      console.log(`  created ${path.relative(process.cwd(), destFile)}`);
+    if (!lexists(destFile)) {
+      writeRepoFile(destFile, tplContent + '\n', root);
+      console.log(`  created ${path.relative(root, destFile)}`);
+      return;
+    }
+    existing = readRepoFileBounded(destFile, root, MAX_DOC_BYTES);
+    if (existing === null) {
+      console.warn(refuseMsg(path.relative(root, destFile), `unreadable or larger than ${MAX_DOC_BYTES} bytes`));
+      process.exitCode = 1;
       return;
     }
     const si = existing.indexOf(start);
@@ -96,12 +119,12 @@ function upsertConfig(destFile, tplFile) {
       const te = tplContent.indexOf(end);
       const block = ts !== -1 && te !== -1 && te > ts ? tplContent.slice(ts, te + end.length) : tplContent;
       existing = existing.slice(0, si) + block + existing.slice(ei + end.length);
-      fs.writeFileSync(destFile, existing, 'utf8');
+      writeRepoFile(destFile, existing, root);
       console.log(`  updated ${path.relative(process.cwd(), destFile)}`);
     } else {
       // Append new CoalMine section
       const sep = existing.trim().length === 0 ? '' : (existing.endsWith('\n') ? '\n' : '\n\n');
-      fs.writeFileSync(destFile, existing + sep + tplContent + '\n', 'utf8');
+      writeRepoFile(destFile, existing + sep + tplContent + '\n', root);
       console.log(`  appended ${path.relative(process.cwd(), destFile)}`);
     }
   } catch (e) {
@@ -111,18 +134,16 @@ function upsertConfig(destFile, tplFile) {
 }
 
 function resolveGitDir(repoDir) {
+  // CWK-137: `.git` is repo-derived -- lstat + containment before any open (a FIFO at
+  // `.git` blocked the old readFileSync forever). A worktree/submodule `.git` FILE is a
+  // few dozen bytes; its gitdir target may legitimately lie outside the worktree.
   const gitPath = path.join(repoDir, '.git');
-  if (!fs.existsSync(gitPath)) return null;
-  const stat = fs.statSync(gitPath);
-  if (stat.isDirectory()) return gitPath;
-  if (stat.isFile()) {
-    try {
-      const content = fs.readFileSync(gitPath, 'utf8').trim();
-      const match = content.match(/^gitdir:\s*(.+)$/);
-      if (match) {
-        return path.resolve(repoDir, match[1].trim());
-      }
-    } catch {}
+  const kind = repoEntryKind(gitPath, repoDir);
+  if (kind === 'dir') return gitPath;
+  if (kind === 'file') {
+    const raw = readRepoFileBounded(gitPath, repoDir, MAX_CONFIG_BYTES);
+    const match = raw === null ? null : raw.trim().match(/^gitdir:\s*(.+)$/);
+    if (match) return path.resolve(repoDir, match[1].trim());
   }
   return null;
 }
@@ -135,11 +156,32 @@ function resolveGitDir(repoDir) {
 // No git binary / not set / any failure → the historical <gitDir>/hooks.
 function resolveHooksDir(repoDir, gitDir) {
   try {
-    const r = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: repoDir, encoding: 'utf8' });
+    // R13 / CWK-158 item 4 (B-u2-5a): read it as a PATH (`--type=path`), the way git itself does, so a
+    // leading `~` or `~user` expands. The untyped read returned the literal `~/hooks`, which
+    // path.resolve then joined under the project (<project>/~/hooks) while git ran $HOME/hooks.
+    const r = spawnSync('git', ['config', '--type=path', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir), { keepUserConfig: true }), encoding: 'utf8' }); // R14-N1: the user's git config selection
     const configured = r.status === 0 && r.stdout ? r.stdout.trim() : '';
     if (configured) return path.resolve(repoDir, configured);
-  } catch {}
+    if (r.status !== 0 && r.status !== 1) {
+      // A git too old for --type (or any other failure of the typed read): ask the untyped way, and
+      // refuse to guess at a value git would expand -- a "~" left unexpanded is exactly the bug.
+      const u = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir), { keepUserConfig: true }), encoding: 'utf8' });
+      const raw = u.status === 0 && u.stdout ? u.stdout.trim() : '';
+      if (raw && !raw.startsWith('~')) return path.resolve(repoDir, raw);
+      if (raw) throw new Error('core.hooksPath starts with "~" and this git cannot expand it');
+    }
+  } catch (e) {
+    if (/cannot expand it/.test(e.message)) throw e; // surfaces as the caller's "failed to install git hooks" warning
+  }
   return path.join(gitDir, 'hooks');
+}
+
+// R14 / B-u2-5b: an absolute core.hooksPath outside this project (and not this repo's own git dir) is a folder every repo
+// that uses it shares; one repo's install or uninstall changes it for all of them. Say so, in one line. No refusal: since
+// the chain-only hook (R13 item 2) the owner's own hook still runs.
+function sharedHooksNote(hooksDir, gitDir) {
+  if (isUnderDir(hooksDir, process.cwd()) || isUnderDir(hooksDir, gitDir)) return '';
+  return `  NOTE: core.hooksPath points outside this project (${hooksDir}). That folder is shared by every repo that uses it, so installing or uninstalling CoalMine's hooks here changes them for all of those repos.`;
 }
 
 // Is this hook one WE generated? Every version has carried a `# CoalMine <name>
@@ -171,7 +213,7 @@ function isOwnHook(content) {
 // unset and a `configured` path DID put us inside the worktree) but was killed or
 // otherwise failed mid-run, returning neither 0 nor 1.
 function trackedStatus(hookPath, repoDir) {
-  const r = spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: repoDir, encoding: 'utf8' });
+  const r = spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
   if (r.error) return 'unknown';
   if (r.status === 0) return 'tracked';
   if (r.status === 1) return 'untracked';
@@ -186,6 +228,33 @@ function isUnderDir(childPath, parentPath) {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+// The hook CoalMine installs into a user's repo (R13 / CWK-158 item 2). It runs the hook it replaced
+// (kept beside it as <hook>.pre-coalmine, exit status and stdin/args passed through) and nothing
+// else, so installing CoalMine never turns a user's gate off and never runs code from the project.
+function genericHook(name) {
+  return [
+    '#!/bin/sh',
+    `# CoalMine ${name} hook`,
+    '# Generated by CoalMine',
+    '# Runs the hook this one replaced (kept beside it as <hook>.pre-coalmine), if any, and nothing else.',
+    "# CoalMine's own repo gate belongs to CoalMine's repo and is never copied into yours.",
+    'prev="$0.pre-coalmine"',
+    'if [ -x "$prev" ]; then exec "$prev" "$@"; fi',
+    'exit 0',
+    '',
+  ].join('\n');
+}
+
+// Tracked-ness of a hook file, asked of git only where git can answer: a hooks dir INSIDE the
+// worktree and outside .git/ (the core.hooksPath-at-a-versioned-dir shape). Anywhere else the file
+// is untracked by construction (CWK-096 r33 MEDIUM-1 -- git answers exit 128 for a path outside the
+// repository, which is neither tracked nor untracked and must not be read as "could not tell").
+function hookTrackedStatus(hookPath, hooksDir, gitDir) {
+  const worktreeRoot = process.cwd();
+  const insideWorktree = isUnderDir(hooksDir, worktreeRoot) && !isUnderDir(hooksDir, gitDir);
+  return insideWorktree ? trackedStatus(hookPath, worktreeRoot) : 'untracked';
+}
+
 // ─── Git Hooks Installation ──────────────────────────────────────────────────
 function installGitHooks() {
   try {
@@ -196,13 +265,32 @@ function installGitHooks() {
     }
 
     const hooksDir = resolveHooksDir(process.cwd(), gitDir);
+    // CWK-137: a hooks dir inside the worktree (`.git/hooks`, a tracked `.githooks/`)
+    // must resolve inside it -- a `.git/hooks -> elsewhere` junction is refused. A hooks
+    // dir OUTSIDE the worktree (a linked worktree's gitdir, an absolute core.hooksPath)
+    // was chosen by git config, not by a file the repo planted; it is its own root.
+    const hooksRoot = isUnderDir(hooksDir, process.cwd()) ? process.cwd() : hooksDir;
+    const sharedNote = sharedHooksNote(hooksDir, gitDir);
+    // R14 / R13 INSPECT LOW-3: a hooks folder OUTSIDE the project that does not exist yet used to be refused with advice
+    // for a different problem ("replace it with a regular file"). Say what is true and what to do.
+    if (hooksRoot === hooksDir && !fs.existsSync(hooksDir)) {
+      console.warn(`  [refused] git hooks: core.hooksPath names ${hooksDir}, which does not exist yet and is outside this project, so CoalMine will not create it. Create that folder and re-run, or unset core.hooksPath.`);
+      process.exitCode = 1;
+      return;
+    }
+    const dirWhy = checkRepoDirTarget(hooksDir, hooksRoot);
+    if (dirWhy) { console.warn(refuseMsg('git hooks', dirWhy)); process.exitCode = 1; return; }
+    if (sharedNote) console.log(sharedNote);
     fs.mkdirSync(hooksDir, { recursive: true });
 
-    // Single source of truth: install the repo's hook scripts verbatim so the
-    // installed copies can never drift from .githooks/{pre-commit,pre-push}.
+    // R13 / CWK-158 item 2 (B-u2-1, CSV-8): what lands in a USER's repo is a generic chain-only
+    // hook (genericHook), never CoalMine's own repo gate. The old "single source of truth" copied
+    // .githooks/{pre-commit,pre-push} verbatim, which runs the project's own scripts/verify.mjs and
+    // scripts/test.mjs -- a no-op in most projects and a surprise blocker in the one that has them --
+    // and the user's own hook was renamed aside and never run again.
     const hooks = {
-      'pre-commit': fs.readFileSync(path.join(repo, '.githooks', 'pre-commit'), 'utf8'),
-      'pre-push': fs.readFileSync(path.join(repo, '.githooks', 'pre-push'), 'utf8'),
+      'pre-commit': genericHook('pre-commit'),
+      'pre-push': genericHook('pre-push'),
     };
 
     for (const [hookName, hookContent] of Object.entries(hooks)) {
@@ -216,14 +304,34 @@ function installGitHooks() {
       // overwritten. The block must be able to BLOCK the write, not merely log past it.
       let backupFailed = false;
       try {
-        if (fs.existsSync(hookPath) && !isOwnHook(fs.readFileSync(hookPath, 'utf8'))) {
+        // CWK-137: an existing hook that is a symlink (or anything but a regular file
+        // inside hooksRoot) is REFUSED -- writing it used to go THROUGH the link, and a
+        // copy of it would carry the link's target bytes into the backup slot.
+        const hookWhy = checkRepoWriteTarget(hookPath, hooksRoot);
+        if (hookWhy) { console.warn(refuseMsg(`git hook ${hookName}`, hookWhy)); process.exitCode = 1; continue; }
+        const current = lexists(hookPath) ? readRepoFileBounded(hookPath, hooksRoot, MAX_DOC_BYTES) : '';
+        if (current === null) throw new Error(`${hookPath} is unreadable or larger than ${MAX_DOC_BYTES} bytes`);
+        if (lexists(hookPath) && !isOwnHook(current)) {
+          // R13 / CWK-158 item 2: a hook the repo TRACKS (core.hooksPath at a versioned directory) is
+          // the maintainer's file, not ours to move aside: rewriting it would leave a modified tracked
+          // file that, once committed, replaces the team's hook with a stub. Same refusal as uninstall
+          // (CWK-096); "could not tell" is not "untracked".
+          const tracked = hookTrackedStatus(hookPath, hooksDir, gitDir);
+          if (tracked !== 'untracked') {
+            console.warn(`  [refused] ${hookName}: ${tracked === 'tracked' ? 'core.hooksPath points at a versioned directory and this hook is tracked' : 'its tracked-ness could not be confirmed'} -- CoalMine does not rewrite a file it cannot confirm is untracked. Add CoalMine to that hook yourself, or point core.hooksPath at an untracked directory.`);
+            process.exitCode = 1;
+            continue;
+          }
           const backup = hookPath + '.pre-coalmine';
-          if (fs.existsSync(backup)) {
+          // lexists, not existsSync: a DANGLING link in the backup slot reads as absent to
+          // existsSync and a copy would then write through it.
+          if (lexists(backup)) {
             console.warn(`  [warn] refused to overwrite ${hookName}: a backup already exists at ${backup} — remove or rename it to proceed`);
             process.exitCode = 1;
             continue;
           }
-          fs.copyFileSync(hookPath, backup);
+          writeRepoFile(backup, current, hooksRoot);
+          try { fs.chmodSync(backup, fs.lstatSync(hookPath).mode & 0o777); } catch {}
           console.log(`  backed up existing ${hookName} → ${backup}`);
         }
       } catch (err) {
@@ -232,7 +340,7 @@ function installGitHooks() {
         backupFailed = true;
       }
       if (backupFailed) continue;
-      fs.writeFileSync(hookPath, hookContent);
+      writeRepoFile(hookPath, hookContent, hooksRoot);
       // mode option only applies on file creation — set it explicitly so an
       // overwritten hook is executable on Unix too.
       try { fs.chmodSync(hookPath, 0o755); } catch {}
@@ -252,6 +360,12 @@ function uninstallGitHooks() {
 
     const hooksDir = resolveHooksDir(process.cwd(), gitDir);
     if (!fs.existsSync(hooksDir)) return;
+    const hooksRoot = isUnderDir(hooksDir, process.cwd()) ? process.cwd() : hooksDir; // CWK-137, same rule as install
+    const dirWhy = checkRepoDirTarget(hooksDir, hooksRoot);
+    if (dirWhy) { console.warn(refuseMsg('git hooks', dirWhy)); process.exitCode = 1; return; }
+    const sharedNoteU = sharedHooksNote(hooksDir, gitDir);
+    if (sharedNoteU) console.log(sharedNoteU);
+    const readHook = (p) => (lexists(p) ? readRepoFileBounded(p, hooksRoot, MAX_DOC_BYTES) : null);
 
     const hookNames = ['pre-commit', 'pre-push'];
     for (const hookName of hookNames) {
@@ -261,16 +375,34 @@ function uninstallGitHooks() {
       // A backup written before the ownership check was fixed can itself be an OLD
       // CoalMine hook filed as foreign — restoring it hands the user back an
       // obsolete CoalMine gate as if it were theirs. Discard, never restore.
-      if (fs.existsSync(backupPath) && isOwnHook(fs.readFileSync(backupPath, 'utf8'))) {
+      const backupBody = readHook(backupPath);
+      if (backupBody !== null && isOwnHook(backupBody)) {
         fs.unlinkSync(backupPath);
         console.log(`  discarded stale CoalMine backup: ${hookName}.pre-coalmine`);
       }
 
-      if (fs.existsSync(backupPath)) {
-        fs.copyFileSync(backupPath, hookPath);
+      if (lexists(backupPath) && lexists(hookPath)) {
+        // R13 / CWK-158 item 3 (B-u2-4, data loss): the backup goes back only over a hook that is
+        // OURS. A hook the user wrote AFTER install (or one we cannot read) is theirs: restoring over it
+        // destroyed it. Both files stay; the user merges them.
+        const cur = readHook(hookPath);
+        if (cur === null || !isOwnHook(cur)) {
+          console.warn(`  [kept] ${hookName}: the hook there now is not CoalMine's -- left untouched, and your backed-up hook stays at ${backupPath}. Merge them yourself, then delete the backup.`);
+          process.exitCode = 1;
+          continue;
+        }
+      }
+      if (lexists(backupPath)) {
+        // CWK-137: restore by content, through the contained writer -- never a copy that
+        // follows a link at either end. An unreadable/linked backup is left in place.
+        const why = backupBody === null ? `${backupPath} is not a readable regular file inside the hooks dir` : checkRepoWriteTarget(hookPath, hooksRoot);
+        if (why) { console.warn(refuseMsg(`git hook ${hookName}`, why)); process.exitCode = 1; continue; }
+        const mode = fs.lstatSync(backupPath).mode & 0o777;
+        writeRepoFile(hookPath, backupBody, hooksRoot);
+        try { fs.chmodSync(hookPath, mode); } catch {}
         fs.unlinkSync(backupPath);
         console.log(`  restored backed-up git hook: ${hookName}`);
-      } else if (fs.existsSync(hookPath) && isOwnHook(fs.readFileSync(hookPath, 'utf8'))) {
+      } else if ((() => { const b = readHook(hookPath); return b !== null && isOwnHook(b); })()) {
         // CWK-096 -- a Coal* uninstall NEVER destroys a tracked file. `resolveHooksDir`
         // CAN point at a directory the repo itself versions (this room's own
         // `.githooks/`); deleting there deletes the maintainer's tracked hook, not a
@@ -319,16 +451,23 @@ function uninstallGitHooks() {
 // ─── Config Uninstallation ───────────────────────────────────────────────────
 function uninstallConfig(arg) {
   try {
-    const cfg = PLATFORM_CONFIGS[arg];
+    const cfg = Object.hasOwn(PLATFORM_CONFIGS, arg) ? PLATFORM_CONFIGS[arg] : undefined; // R14 B-u2-7: own-key only
     if (!cfg) return;
 
     const destFile = cfg.dest;
 
     // Read-then-handle-ENOENT (no existsSync precheck): absent/unreadable = nothing to uninstall.
-    let content;
-    try {
-      content = fs.readFileSync(destFile, 'utf8');
-    } catch { return; }
+    // CWK-137: absent = nothing to uninstall; present but a link / oversized / not a
+    // regular file = REFUSED loudly (the edit would otherwise go through the link).
+    if (!lexists(destFile)) return;
+    const root = process.cwd();
+    const why = checkRepoWriteTarget(destFile, root);
+    let content = why ? null : readRepoFileBounded(destFile, root, MAX_DOC_BYTES);
+    if (content === null) {
+      console.warn(refuseMsg(path.relative(root, destFile), why || `unreadable or larger than ${MAX_DOC_BYTES} bytes`));
+      process.exitCode = 1;
+      return;
+    }
 
     const isHash = cfg.tpl.includes('clinerules');
     const start  = isHash ? CM_START_HASH : CM_START;
@@ -345,7 +484,7 @@ function uninstallConfig(arg) {
         fs.unlinkSync(destFile);
         console.log(`  removed empty trigger config: ${path.relative(process.cwd(), destFile)}`);
       } else {
-        fs.writeFileSync(destFile, content + '\n', 'utf8');
+        writeRepoFile(destFile, content + '\n', root);
         console.log(`  removed trigger config block from ${path.relative(process.cwd(), destFile)}`);
       }
     }
@@ -355,13 +494,18 @@ function uninstallConfig(arg) {
 }
 
 // ─── Skills Uninstallation ───────────────────────────────────────────────────
-function uninstallSkills(destDir, skillsList) {
+function uninstallSkills(destDir, skillsList, manifest = null) {
   try {
     if (!fs.existsSync(destDir)) return 0;
     let removed = 0;
     for (const s of skillsList) {
       const targetDir = path.join(destDir, s);
       if (fs.existsSync(targetDir)) {
+        if (manifest && manifest.skills.includes(s) && !ownedByManifest(destDir, s, manifest)) {
+          console.warn(`  [kept] ${targetDir}: the manifest names it but its contents are not provably CoalMine's -- left in place`);
+          process.exitCode = 1;
+          continue;
+        }
         fs.rmSync(targetDir, { recursive: true, force: true });
         console.log(`  removed skill: ${s} from ${targetDir}`);
         removed++;
@@ -382,9 +526,11 @@ function uninstallSkills(destDir, skillsList) {
 // MANIFEST_NAME + the per-file integrity hashes live in lib/manifest.mjs so the
 // installer (writes) and verify.mjs (checks) share one source.
 
-function readManifest(destDir) {
+function readManifest(destDir, root = destDir) {
   try {
-    const m = JSON.parse(fs.readFileSync(path.join(destDir, MANIFEST_NAME), 'utf8'));
+    const raw = readRepoFileBounded(path.join(destDir, MANIFEST_NAME), root, MAX_CONFIG_BYTES); // CWK-137
+    if (raw === null) return null;
+    const m = JSON.parse(raw);
     return m && Array.isArray(m.skills) ? m : null;
   } catch { return null; }
 }
@@ -427,7 +573,33 @@ function isForeignSkillDir(destDir, skillName, manifestSkills) {
 // (rotcanary -> rot-canary, renamed in v3.0.0.)
 const RETIRED_SKILL_NAMES = ['rotcanary'];
 
-function cleanPreviousInstall(destDir, manifest) {
+// R13 / CWK-158 item 7 (CSV-2): a manifest NAMES a dir, it does not PROVE the dir is ours -- a project
+// manifest arrives with a cloned repo, and "victim-dir" listed in it used to be recursively deleted.
+// Ownership is proven by CONTENT: the manifest's own per-file hashes. Every regular file now in the
+// dir must be recorded under <name>/<rel> with the hash it has today; a file the manifest does not
+// know, a changed file, or anything that is not a plain file (a link) makes it unproven. A manifest
+// that predates the hashes proves nothing by content, so only our own skill-meta.json marker does.
+function ownedByManifest(destDir, name, manifest) {
+  const dir = path.join(destDir, name);
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return false;
+    const hashes = manifest && manifest.hashes;
+    if (!hashes || typeof hashes !== 'object') return fs.existsSync(path.join(dir, 'skill-meta.json'));
+    const walk = (abs, relParts) => {
+      for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+        const childAbs = path.join(abs, e.name);
+        const rel = [...relParts, e.name];
+        if (e.isDirectory()) { if (!walk(childAbs, rel)) return false; continue; }
+        if (!e.isFile()) return false;
+        if (hashes[rel.join('/')] !== hashFile(childAbs)) return false;
+      }
+      return true;
+    };
+    return walk(dir, [name]);
+  } catch { return false; }
+}
+
+function cleanPreviousInstall(destDir, manifest, current = []) {
   // Orphan sweep ONLY — remove skill dirs a PREVIOUS CoalMine install left that the
   // current set no longer has (renamed/removed). Ownership is PROVEN, never guessed:
   //   • manifest.skills is our package file-list — every dir it names, we wrote;
@@ -441,8 +613,16 @@ function cleanPreviousInstall(destDir, manifest) {
   const owned = safeSkillNames(manifest ? manifest.skills : []);
   let cleaned = 0;
   for (const s of [...owned, ...RETIRED_SKILL_NAMES]) {
+    // A current-set dir is cleared and rewritten by installSkillDir anyway; only an ORPHAN needs
+    // the ownership proof (item 7). RETIRED names are CoalMine-only coinages, the named exception.
+    if (current.includes(s)) continue;
     const dir = path.join(destDir, s);
     try {
+      if (fs.existsSync(dir) && owned.includes(s) && !ownedByManifest(destDir, s, manifest)) {
+        console.warn(`  [kept] ${dir}: the manifest names it but its contents are not provably CoalMine's -- left in place`);
+        process.exitCode = 1;
+        continue;
+      }
       if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); cleaned++; }
     } catch (e) {
       console.warn(`  [warn] could not remove previous ${s}: ${e.message}`);
@@ -452,7 +632,7 @@ function cleanPreviousInstall(destDir, manifest) {
   if (manifest) console.log(`  cleaned previous install v${manifest.version ?? '?'} (${cleaned} skill dir(s))`);
 }
 
-function writeManifest(destDir, installedSkills) {
+function writeManifest(destDir, installedSkills, root = destDir) {
   try {
     let version = '0.0.0';
     try { version = JSON.parse(fs.readFileSync(path.join(repo, '.claude-plugin', 'plugin.json'), 'utf8')).version ?? version; } catch {}
@@ -460,7 +640,7 @@ function writeManifest(destDir, installedSkills) {
     // `verify.mjs <target>` checks for post-install tampering.
     const hashes = hashInstalledTree(destDir, installedSkills);
     const manifest = { version, installedAt: new Date().toISOString(), skills: installedSkills, hashes };
-    fs.writeFileSync(path.join(destDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    writeRepoFile(path.join(destDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + '\n', root); // CWK-137
   } catch (e) {
     console.warn(`  [warn] could not write install manifest: ${e.message}`);
     process.exitCode = 1;
@@ -468,9 +648,21 @@ function writeManifest(destDir, installedSkills) {
 }
 
 // ─── Reusable install steps (shared by single-agent and `all`) ──────────────
-function installSkills(dest, skills, shared) {
+function installSkills(dest, skills, shared, root = dest) {
   console.log(`\nInstalling ${skills.length} skill(s) → ${dest}`);
-  const manifest = readManifest(dest);
+  // CWK-137: a project target (`.github/skills`, `.agents/skills`, ...) must resolve inside
+  // the project -- a junction on `.github` or `.agents` would otherwise carry every
+  // skill write (and the clear-and-rewrite of each skill dir) outside it.
+  // A user-chosen target (global `claude`, an explicit PATH) is its own root: create it
+  // first so it resolves; a project target stays uncreated until its containment passes.
+  if (root === dest) { try { fs.mkdirSync(dest, { recursive: true }); } catch { /* the check below reports it */ } }
+  const destWhy = checkRepoDirTarget(dest, root);
+  if (destWhy) {
+    console.warn(refuseMsg(dest, destWhy));
+    process.exitCode = 1;
+    return { installed: 0, failed: skills.length };
+  }
+  const manifest = readManifest(dest, root);
   const manifestSkills = manifest ? manifest.skills : null;
   // Trust boundary: the target is the user's dir. Refuse any skill whose target dir
   // already holds FOREIGN files (a name collision we don't own) — installSkillDir would
@@ -486,7 +678,7 @@ function installSkills(dest, skills, shared) {
   }
   // Program-style version transition: remove what the PREVIOUS install owned
   // (manifest orphans + retired tombstone), then write the new set fresh.
-  cleanPreviousInstall(dest, manifest);
+  cleanPreviousInstall(dest, manifest, skills);
   let n = 0;
   const installed = [];
   for (const s of toInstall) {
@@ -501,13 +693,13 @@ function installSkills(dest, skills, shared) {
       process.exitCode = 1;
     }
   }
-  writeManifest(dest, installed);
+  writeManifest(dest, installed, root);
   return { installed: n, failed: skills.length - n };
 }
 
 function applyConfig(targetKey, label) {
   console.log(`\nConfiguring auto-trigger for: ${label}`);
-  const cfg = PLATFORM_CONFIGS[targetKey];
+  const cfg = Object.hasOwn(PLATFORM_CONFIGS, targetKey) ? PLATFORM_CONFIGS[targetKey] : undefined; // R14 B-u2-7: own-key only
   if (cfg) upsertConfig(cfg.dest, cfg.tpl);
   else console.log(`  (no platform config template for "${label}" — skills only)`);
 }
@@ -544,8 +736,11 @@ function copyDefaultConfig() {
       return;
     }
     const configDest = ownDirDefault(process.cwd()); // whichever agent dir the project already has — new installs get the new shape
-    fs.mkdirSync(path.dirname(configDest), { recursive: true });
-    fs.copyFileSync(path.join(repo, 'platform-configs', '.coalmine.json'), configDest);
+    // CWK-137: through the contained writer -- a junction on `.claude`/`.agents` or a
+    // dangling link at the config path is refused, never written through.
+    const cfgWhy = checkRepoWriteTarget(configDest, process.cwd());
+    if (cfgWhy) { console.warn(refuseMsg(path.relative(process.cwd(), configDest), cfgWhy)); process.exitCode = 1; return; }
+    writeRepoFile(configDest, fs.readFileSync(path.join(repo, 'platform-configs', '.coalmine.json'), 'utf8'), process.cwd());
     console.log(`  created default settings → ${configDest}`);
   } catch (err) {
     console.warn(`  [warn] failed to copy settings: ${err.message}`);
@@ -562,6 +757,20 @@ function copyDefaultConfig() {
 // against the original file.
 function main() {
 const args = process.argv.slice(2);
+// R14 / B-u2-6: validate argv BEFORE anything resolves a path. `--help` used to be taken for a
+// PATH and installed nine skills into ./--help/; any other flag-shaped word is an error too.
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(`Usage: node scripts/install.mjs [--uninstall | -u] <${Object.keys(TARGETS).join('|')}|all|PATH>`);
+  console.log('Example: node scripts/install.mjs claude   (installs the nine skills; --uninstall removes them)');
+  return;
+}
+const unknownFlag = args.find((x) => x.startsWith('-') && x !== '--uninstall' && x !== '-u');
+if (unknownFlag !== undefined) {
+  console.error(`Unknown option: ${unknownFlag}`);
+  console.error(`Usage: node scripts/install.mjs [--uninstall | -u] <${Object.keys(TARGETS).join('|')}|all|PATH>`);
+  process.exitCode = 2;
+  return;
+}
 const isUninstall = args.includes('--uninstall') || args.includes('-u');
 const targetArg = args.filter(x => x !== '--uninstall' && x !== '-u')[0];
 
@@ -617,7 +826,7 @@ if (targetKey === 'all') {
     const d = TARGETS[key];
     if (!seenDest.has(d)) {            // several agents can share one dir (.agents/skills)
       seenDest.add(d); dirs++;
-      const r = installSkills(d, skills, shared);
+      const r = installSkills(d, skills, shared, process.cwd());
       installs += r.installed; fails += r.failed;
     }
     const pc = PLATFORM_CONFIGS[key];
@@ -640,7 +849,8 @@ if (targetKey === 'all') {
   return;
 }
 
-const dest = TARGETS[targetKey] ?? path.resolve(targetArg);
+// R14 / B-u2-7: an own-key lookup. `TARGETS['constructor']` is Object, not a path, and crashed the next line.
+const dest = Object.hasOwn(TARGETS, targetKey) ? TARGETS[targetKey] : path.resolve(targetArg);
 
 if (path.resolve(dest) === path.resolve(skillsSrc)) {
   console.error('Target directory cannot be the source skills directory.');
@@ -654,11 +864,14 @@ if (isUninstall) {
   // to current names but ONLY the dirs we can prove we own — a foreign dir that merely
   // shares a skill's name is left in place (same H12 guard as install). Retired
   // tombstone names are swept regardless (the one named exception).
-  const previous = readManifest(dest);
+  const uninstallRoot = skillsRootFor(targetKey, dest);
+  const destWhy = lexists(dest) ? checkRepoDirTarget(dest, uninstallRoot) : null;
+  if (destWhy) { console.warn(refuseMsg(dest, destWhy)); process.exitCode = 1; return; } // CWK-137: never rm through a junction
+  const previous = readManifest(dest, uninstallRoot);
   const ownedNames = previous
     ? previous.skills
     : skills.filter((s) => !isForeignSkillDir(dest, s, null));
-  const removedCount = uninstallSkills(dest, [...safeSkillNames(ownedNames), ...RETIRED_SKILL_NAMES]);
+  const removedCount = uninstallSkills(dest, [...safeSkillNames(ownedNames), ...RETIRED_SKILL_NAMES], previous);
   try { fs.rmSync(path.join(dest, MANIFEST_NAME), { force: true }); } catch {}
   uninstallConfig(targetKey);
   uninstallGitHooks();
@@ -673,7 +886,7 @@ if (isUninstall) {
 
 const shared = loadShared();
 if (shared === null) return;
-const { installed: n, failed } = installSkills(dest, skills, shared);
+const { installed: n, failed } = installSkills(dest, skills, shared, skillsRootFor(targetKey, dest));
 applyConfig(targetKey, targetArg);
 console.log('\nConfiguring git hooks...');
 installGitHooks();

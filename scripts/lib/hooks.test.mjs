@@ -13,6 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { MAX_CONFIG_BYTES } from './repo-fs.mjs';
+import { startFifoWriter, withHomeReporter } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOUCH = path.join(repo, 'hooks', 'rot-canary-touch.js');
@@ -35,7 +37,11 @@ function runHook(script, input, tmp, args = [], cwd = tmp) {
 }
 
 function mkTmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'cm-hooktest-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-hooktest-'));
+  // R14 (CSV-4/6/7): the per-session markers live in the owner-only <tmpdir>/coalmine/ subdir; a
+  // test that plants one before the hook runs needs it to exist (the hooks create it themselves).
+  fs.mkdirSync(path.join(dir, 'coalmine'), { mode: 0o700 });
+  return dir;
 }
 
 // UMB-133: a sandbox whose walk is ANCHORED inside it. runHook fakes HOME/USERPROFILE to the
@@ -112,7 +118,7 @@ test('project .coalmine.json can disable the canary', () => {
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ disabledCanaries: ['rot-canary'] }), 'utf8');
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'CFG', tool_input: { file_path: 'C:\\proj\\a.js' } }), tmp);
     assert.equal(r.status, 0);
-    assert.ok(!fs.existsSync(path.join(tmp, 'rot-canary-CFG.touched')), 'disabled canary must record nothing');
+    assert.ok(!fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-CFG.touched')), 'disabled canary must record nothing');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -125,7 +131,7 @@ test('touch hook records edited code file and exits 0', () => {
     const real = path.join(proj, 'a.js');
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'T1', tool_input: { file_path: real } }), tmp, [], proj);
     assert.equal(r.status, 0);
-    const touched = path.join(tmp, 'rot-canary-T1.touched');
+    const touched = path.join(tmp, 'coalmine', 'rot-canary-T1.touched');
     assert.ok(fs.existsSync(touched), '.touched file must be created in sandbox TEMP');
     assert.ok(fs.readFileSync(touched, 'utf8').includes('a.js'));
   } finally {
@@ -137,12 +143,12 @@ test('touch hook records edited code file and exits 0', () => {
 test('touch + stop reject a traversal-shaped session_id (Phoenix #10 sandbox guard)', () => {
   const tmp = mkTmp();
   const evil = '../../../etc/cmhooktest-target';
-  const escaped = path.join(tmp, 'rot-canary-' + evil) + '.touched'; // resolves OUTSIDE the sandbox tmpdir
+  const escaped = path.join(tmp, 'coalmine', 'rot-canary-' + evil) + '.touched'; // resolves OUTSIDE the sandbox tmpdir
   try {
     const r = runHook(TOUCH, JSON.stringify({ session_id: evil, tool_input: { file_path: 'C:\\proj\\a.js' } }), tmp);
     assert.equal(r.status, 0, 'touch is fail-silent on a bad sid (Phoenix #4)');
     assert.ok(!fs.existsSync(escaped), 'touch wrote NO file outside the sandbox tmpdir');
-    assert.ok(!fs.existsSync(path.join(tmp, 'rot-canary-' + evil + '.touched')), 'nothing written for a rejected sid');
+    assert.ok(!fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-' + evil + '.touched')), 'nothing written for a rejected sid');
     const s = runHook(STOP, JSON.stringify({ session_id: evil, stop_hook_active: false }), tmp);
     assert.equal(s.status, 0, 'stop is fail-silent on a bad sid');
   } finally {
@@ -159,7 +165,7 @@ test('touch hook dedups case-insensitively on win32 and never crashes', () => {
     const lower = path.join(proj, 'app.js');
     runHook(TOUCH, JSON.stringify({ session_id: 'T2', tool_input: { file_path: upper } }), tmp, [], proj);
     runHook(TOUCH, JSON.stringify({ session_id: 'T2', tool_input: { file_path: lower } }), tmp, [], proj);
-    const lines = fs.readFileSync(path.join(tmp, 'rot-canary-T2.touched'), 'utf8').split('\n').filter(Boolean);
+    const lines = fs.readFileSync(path.join(tmp, 'coalmine', 'rot-canary-T2.touched'), 'utf8').split('\n').filter(Boolean);
     if (process.platform === 'win32') {
       assert.equal(lines.length, 1, 'same path differing only by case must be recorded once on win32');
     } else {
@@ -192,7 +198,7 @@ test('stop hook emits decision:block nudge listing touched files, filtering non-
   try {
     const real = path.join(tmp, 'edited-a.js');
     fs.writeFileSync(real, 'x');
-    const base = path.join(tmp, 'rot-canary-S1');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-S1');
     // One real path + one garbage line — only the real one may surface.
     fs.writeFileSync(base + '.touched', real + '\n\u0000\u0001garbage-not-a-path\n');
     const stdin = JSON.stringify({ session_id: 'S1', stop_hook_active: false });
@@ -212,7 +218,7 @@ test('stop hook emits decision:block nudge listing touched files, filtering non-
 test('stop hook cleans up session temp files once the batch is acknowledged', () => {
   const tmp = mkTmp();
   try {
-    const base = path.join(tmp, 'rot-canary-S2');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-S2');
     fs.writeFileSync(base + '.touched', 'C:\\proj\\a.js\n');
     fs.writeFileSync(base + '.smells', '');
     // The .scanned marker stores the .touched mtime captured at nudge time;
@@ -236,7 +242,7 @@ test('stop hook honors language override in .coalmine.json', () => {
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ language: 'ja' }), 'utf8');
     const real = path.join(tmp, 'edited-a.js');
     fs.writeFileSync(real, 'x');
-    const base = path.join(tmp, 'rot-canary-S3');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-S3');
     fs.writeFileSync(base + '.touched', real + '\n');
     const stdin = JSON.stringify({ session_id: 'S3', stop_hook_active: false });
 
@@ -263,8 +269,8 @@ test('touch hook honors tripwireMaxFileSizeKb in .coalmine.json', () => {
     assert.equal(r.status, 0);
 
     // It should record the touched file path, but should NOT flag it as smell (smell scan is skipped)
-    assert.ok(fs.existsSync(path.join(tmp, 'rot-canary-T3.touched')), 'touched path is still recorded');
-    assert.ok(!fs.existsSync(path.join(tmp, 'rot-canary-T3.smells')), 'large file smells check was skipped due to size cap');
+    assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-T3.touched')), 'touched path is still recorded');
+    assert.ok(!fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-T3.smells')), 'large file smells check was skipped due to size cap');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(proj, { recursive: true, force: true });
@@ -284,11 +290,11 @@ test('touch hook honors watchedExtensions override in .coalmine.json', () => {
 
     const r1 = runHook(TOUCH, JSON.stringify({ session_id: 'T4', tool_input: { file_path: fileJs } }), tmp, [], proj);
     assert.equal(r1.status, 0);
-    assert.ok(!fs.existsSync(path.join(tmp, 'rot-canary-T4.touched')), 'unwatched JS file is ignored');
+    assert.ok(!fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-T4.touched')), 'unwatched JS file is ignored');
 
     const r2 = runHook(TOUCH, JSON.stringify({ session_id: 'T4', tool_input: { file_path: filePy } }), tmp, [], proj);
     assert.equal(r2.status, 0);
-    assert.ok(fs.existsSync(path.join(tmp, 'rot-canary-T4.touched')), 'watched PY file is recorded');
+    assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-T4.touched')), 'watched PY file is recorded');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(proj, { recursive: true, force: true });
@@ -307,7 +313,7 @@ test('touch hook honors tripwireMaxLines override in .coalmine.json', () => {
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'T5', tool_input: { file_path: fileLines } }), tmp, [], proj);
     assert.equal(r.status, 0);
 
-    const smellsFile = path.join(tmp, 'rot-canary-T5.smells');
+    const smellsFile = path.join(tmp, 'coalmine', 'rot-canary-T5.smells');
     assert.ok(fs.existsSync(smellsFile), 'smell file was created');
     assert.ok(fs.readFileSync(smellsFile, 'utf8').includes('file >5 lines'), 'triggered custom maxLines smell warning');
   } finally {
@@ -327,7 +333,7 @@ test('touch hook clamps a negative tripwireMaxLines → no mass false-smell (Boa
     fs.writeFileSync(oneLine, 'x'); // 1 line, no trailing newline
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'T5b', tool_input: { file_path: oneLine } }), tmp, [], proj);
     assert.equal(r.status, 0);
-    const smellsFile = path.join(tmp, 'rot-canary-T5b.smells');
+    const smellsFile = path.join(tmp, 'coalmine', 'rot-canary-T5b.smells');
     const smells = fs.existsSync(smellsFile) ? fs.readFileSync(smellsFile, 'utf8') : '';
     assert.ok(!smells.includes('lines'), 'a negative tripwireMaxLines must not produce a line-count smell on a 1-line file');
   } finally {
@@ -361,7 +367,7 @@ test('loadCfg parses JSONC with a backslash-terminated string before a later // 
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'T6', tool_input: { file_path: fileLines } }), tmp, [], proj);
     assert.equal(r.status, 0);
 
-    const smellsFile = path.join(tmp, 'rot-canary-T6.smells');
+    const smellsFile = path.join(tmp, 'coalmine', 'rot-canary-T6.smells');
     assert.ok(fs.existsSync(smellsFile), 'config parsed: smell file created from the JSONC override');
     assert.ok(
       fs.readFileSync(smellsFile, 'utf8').includes('file >5 lines'),
@@ -385,9 +391,9 @@ test('size tripwire: a declared over-run (top-of-file ponytail, drifted N) is NO
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'SZ1', tool_input: { file_path: f } }), tmp, [], proj);
     assert.equal(r.status, 0);
     assert.equal(r.stdout, '', 'hook stays silent (Phoenix #13)');
-    assert.ok(fs.existsSync(path.join(tmp, 'rot-canary-SZ1.touched')),
+    assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-SZ1.touched')),
       'declared file is still RECORDED for the stop-scan — the exemption covers the size smell only');
-    const smellsFile = path.join(tmp, 'rot-canary-SZ1.smells');
+    const smellsFile = path.join(tmp, 'coalmine', 'rot-canary-SZ1.smells');
     const smells = fs.existsSync(smellsFile) ? fs.readFileSync(smellsFile, 'utf8') : '';
     assert.ok(!smells.includes('file >'), 'a declared over-run must not produce a size smell');
   } finally {
@@ -412,7 +418,7 @@ test('size tripwire: an UNDECLARED over-run stays flagged, and a waiver declarat
       const r = runHook(TOUCH, JSON.stringify({ session_id: 'SZ2', tool_input: { file_path: f } }), tmp, [], proj);
       assert.equal(r.status, 0);
     }
-    const rows = fs.readFileSync(path.join(tmp, 'rot-canary-SZ2.smells'), 'utf8').split('\n').filter(Boolean);
+    const rows = fs.readFileSync(path.join(tmp, 'coalmine', 'rot-canary-SZ2.smells'), 'utf8').split('\n').filter(Boolean);
     const plainRow = rows.find((l) => l.startsWith(plain + ':'));
     assert.ok(plainRow && plainRow.includes('file >5 lines (10)'), 'the undeclared over-run is still flagged — this half must not weaken');
     const confRow = rows.find((l) => l.startsWith(conflicted + ':'));
@@ -438,10 +444,10 @@ test('size tripwire: test files are out of scope — .test. basename and a tests
       const r = runHook(TOUCH, JSON.stringify({ session_id: 'SZ3', tool_input: { file_path: f } }), tmp, [], proj);
       assert.equal(r.status, 0);
     }
-    const touched = fs.readFileSync(path.join(tmp, 'rot-canary-SZ3.touched'), 'utf8');
+    const touched = fs.readFileSync(path.join(tmp, 'coalmine', 'rot-canary-SZ3.touched'), 'utf8');
     assert.ok(touched.includes('big.test.js') && touched.includes('helper.js'),
       'test files are still RECORDED for the stop-scan — only the size smell is out of scope');
-    const smellsFile = path.join(tmp, 'rot-canary-SZ3.smells');
+    const smellsFile = path.join(tmp, 'coalmine', 'rot-canary-SZ3.smells');
     const smells = fs.existsSync(smellsFile) ? fs.readFileSync(smellsFile, 'utf8') : '';
     assert.ok(!smells.includes('file >'), 'no size smell on test files');
   } finally {
@@ -481,9 +487,9 @@ test('size tripwire: the tests/ segment exemption survives the root and the file
     // unreadable config), and the real assertion below is a NEGATIVE. Without this
     // positive state-effect check, a future gate that made the hook bail on this
     // fixture would turn the test green while proving nothing.
-    const touched = fs.readFileSync(path.join(tmp, 'rot-canary-SZLINK.touched'), 'utf8');
+    const touched = fs.readFileSync(path.join(tmp, 'coalmine', 'rot-canary-SZLINK.touched'), 'utf8');
     assert.ok(touched.includes('helper.js'), 'the hook actually processed the fixture (not a silent bail)');
-    const smellsFile = path.join(tmp, 'rot-canary-SZLINK.smells');
+    const smellsFile = path.join(tmp, 'coalmine', 'rot-canary-SZLINK.smells');
     const smells = fs.existsSync(smellsFile) ? fs.readFileSync(smellsFile, 'utf8') : '';
     assert.ok(!smells.includes('file >'), 'a tests/ file must stay exempt when root and file are spelled differently');
   } finally {
@@ -509,7 +515,7 @@ test('size tripwire: the declaration must sit in the file head — a deep marker
       const r = runHook(TOUCH, JSON.stringify({ session_id: 'SZ4', tool_input: { file_path: f } }), tmp, [], proj);
       assert.equal(r.status, 0);
     }
-    const smellsFile = path.join(tmp, 'rot-canary-SZ4.smells');
+    const smellsFile = path.join(tmp, 'coalmine', 'rot-canary-SZ4.smells');
     const smells = fs.existsSync(smellsFile) ? fs.readFileSync(smellsFile, 'utf8') : '';
     assert.ok(!smells.includes('header.js'), 'a header-block declaration (≤ line 30) is honored');
     assert.ok(smells.includes('deep.js') && smells.includes('file >5 lines'),
@@ -543,7 +549,7 @@ test('size tripwire: a poison declaration line cannot blow the latency budget (R
     const ms = Date.now() - t0;
     assert.equal(r.status, 0);
     assert.ok(ms < 2000, `hook took ${ms} ms on a poison declaration line — the ReDoS bound is gone`);
-    const smells = fs.readFileSync(path.join(tmp, 'rot-canary-SZ5.smells'), 'utf8');
+    const smells = fs.readFileSync(path.join(tmp, 'coalmine', 'rot-canary-SZ5.smells'), 'utf8');
     assert.ok(smells.includes('file >800 lines (801)'), 'digits with no "lines" payload is NOT a declaration — still flagged');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -563,7 +569,7 @@ test('stop hook honors autoScanFileCapSlice override in .coalmine.json', () => {
     fs.writeFileSync(fileB, 'x');
     fs.writeFileSync(fileC, 'x');
     
-    const base = path.join(tmp, 'rot-canary-S4');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-S4');
     fs.writeFileSync(base + '.touched', `${fileA}\n${fileB}\n${fileC}\n`);
     
     const r = runHook(STOP, JSON.stringify({ session_id: 'S4', stop_hook_active: false }), tmp);
@@ -587,7 +593,7 @@ test('stop hook clamps autoScanFileCap:0 → no empty-list / "capped at 0" nudge
     const fileB = path.join(tmp, 'b.js');
     fs.writeFileSync(fileA, 'x');
     fs.writeFileSync(fileB, 'x');
-    const base = path.join(tmp, 'rot-canary-S5');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-S5');
     fs.writeFileSync(base + '.touched', `${fileA}\n${fileB}\n`);
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'S5', stop_hook_active: false }), tmp);
@@ -616,7 +622,7 @@ test('stop hook clamps autoScanFileCapSlice:-1 → does NOT drop the last touche
     fs.writeFileSync(fileA, 'x');
     fs.writeFileSync(fileB, 'x');
     fs.writeFileSync(fileC, 'x');
-    const base = path.join(tmp, 'rot-canary-S6');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-S6');
     fs.writeFileSync(base + '.touched', `${fileA}\n${fileB}\n${fileC}\n`);
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'S6', stop_hook_active: false }), tmp);
@@ -759,7 +765,7 @@ test('stop hook: a FRESH symlink at the marker is never obeyed as a throttle —
   // every sweep, refreshable by the planter forever (no write-through; an unbounded
   // temp-cleanup DoS). This pins the arm that makes the self-healing claim actually true.
   const tmp = mkTmp();
-  const target = mkTmp(); // what the planted link points at — must stay untouched
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-hooktest-target-')); // what the planted link points at — must stay untouched
   try {
     const markerDir = path.join(tmp, 'coalmine');
     fs.mkdirSync(markerDir, { recursive: true });
@@ -812,11 +818,11 @@ test('stop hook: the .scanned temp marker is created 0o600, not the default mode
     // was never created. Same real-file shape as the nudge tests above.
     const real = path.join(tmp, 'edited-mode.js');
     fs.writeFileSync(real, 'x');
-    const touched = path.join(tmp, 'rot-canary-MODE.touched');
+    const touched = path.join(tmp, 'coalmine', 'rot-canary-MODE.touched');
     fs.writeFileSync(touched, real + '\n');
     const r = runHook(STOP, JSON.stringify({ session_id: 'MODE', stop_hook_active: false }), tmp);
     assert.equal(r.status, 0);
-    const scanned = path.join(tmp, 'rot-canary-MODE.scanned');
+    const scanned = path.join(tmp, 'coalmine', 'rot-canary-MODE.scanned');
     assert.ok(fs.existsSync(scanned), 'the acknowledgement marker must have been written');
     assert.equal(
       fs.statSync(scanned).mode & 0o777,
@@ -858,7 +864,7 @@ test('touch hook: .touched and .smells are created 0o600, not the default mode (
     );
     assert.equal(r.status, 0);
     for (const suffix of ['.touched', '.smells']) {
-      const p = path.join(tmp, 'rot-canary-T600' + suffix);
+      const p = path.join(tmp, 'coalmine', 'rot-canary-T600' + suffix);
       assert.ok(fs.existsSync(p), `${suffix} must have been written`);
       assert.equal(fs.statSync(p).mode & 0o777, 0o600, `${suffix} must be owner-only`);
     }
@@ -981,7 +987,7 @@ test("stop hook floors tempSweepStaleDays:0 to >=1 — must not delete this sess
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ tempSweepStaleDays: 0 }), 'utf8');
     const real = path.join(tmp, 'edited-a.js');
     fs.writeFileSync(real, 'x');
-    const base = path.join(tmp, 'rot-canary-S7');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-S7');
     fs.writeFileSync(base + '.touched', real + '\n');
     const recent = Date.now() - 5000;
     fs.utimesSync(base + '.touched', new Date(recent), new Date(recent));
@@ -1004,7 +1010,7 @@ test('scanExcludePaths (2026-07-30): a matching touched file is dropped from the
     const skipped = path.join(tmp, 'scratchpad-probe.js');
     fs.writeFileSync(kept, 'x');
     fs.writeFileSync(skipped, 'x');
-    const base = path.join(tmp, 'rot-canary-SE1');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE1');
     fs.writeFileSync(base + '.touched', `${kept}\n${skipped}\n`);
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE1', stop_hook_active: false }), tmp);
@@ -1029,7 +1035,7 @@ test('scanExcludePaths (CWK-054): when EVERY touched file is excluded, the stop 
     const b = path.join(tmp, 'scratchpad-b.js');
     fs.writeFileSync(a, 'x');
     fs.writeFileSync(b, 'x');
-    const base = path.join(tmp, 'rot-canary-SE9');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE9');
     fs.writeFileSync(base + '.touched', `${a}
 ${b}
 `);
@@ -1054,7 +1060,7 @@ test('scanExcludePaths (CWK-054): anti-cry-wolf holds — a stop that touched NO
   const tmp = mkTmp();
   try {
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ scanExcludePaths: ['scratchpad'] }), 'utf8');
-    const base = path.join(tmp, 'rot-canary-SE10');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE10');
     fs.writeFileSync(base + '.touched', '');
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE10', stop_hook_active: false }), tmp);
@@ -1080,7 +1086,7 @@ test('scanEverything (CWK-057): bypasses scanExcludePaths — an excluded file I
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ scanExcludePaths: ['scratchpad'] }), 'utf8');
     const excluded = path.join(tmp, 'scratchpad-probe.js');
     fs.writeFileSync(excluded, 'x');
-    const base = path.join(tmp, 'rot-canary-SE11');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE11');
     fs.writeFileSync(base + '.touched', excluded + '\n');
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE11', stop_hook_active: false }), tmp);
@@ -1112,7 +1118,7 @@ test('scanEverything (CWK-057): bypasses the autoScanFileCap slice — every tou
       fs.writeFileSync(f, 'x');
       files.push(f);
     }
-    const base = path.join(tmp, 'rot-canary-SE13');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE13');
     fs.writeFileSync(base + '.touched', files.join('\n') + '\n');
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE13', stop_hook_active: false }), tmp);
@@ -1138,7 +1144,7 @@ test('scanEverything (CWK-057): a PROJECT-level true is clamped to false when th
     const kept = path.join(tmp, 'real-code.js');
     fs.writeFileSync(excluded, 'x');
     fs.writeFileSync(kept, 'x');
-    const base = path.join(tmp, 'rot-canary-SE12');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE12');
     fs.writeFileSync(base + '.touched', kept + '\n' + excluded + '\n');
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE12', stop_hook_active: false }), tmp);
@@ -1160,7 +1166,7 @@ test('scanExcludePaths honors a * wildcard fragment (lightweight glob, not a ful
     const skipped = path.join(tmp, 'probe.scratch.js');
     fs.writeFileSync(kept, 'x');
     fs.writeFileSync(skipped, 'x');
-    const base = path.join(tmp, 'rot-canary-SE3');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE3');
     fs.writeFileSync(base + '.touched', `${kept}\n${skipped}\n`);
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE3', stop_hook_active: false }), tmp);
@@ -1187,7 +1193,7 @@ test('scanExcludePaths: consecutive "*" in a fragment cannot blow the latency bu
     // the sandbox tmp path comfortably clears the ~180-char repro length.
     const f = path.join(tmp, 'a'.repeat(150) + '.js');
     fs.writeFileSync(f, 'x');
-    const base = path.join(tmp, 'rot-canary-SE6');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE6');
     fs.writeFileSync(base + '.touched', f + '\n');
 
     const t0 = Date.now();
@@ -1217,7 +1223,7 @@ test('scanExcludePaths: alternating "*" (the classic evil-regex shape) cannot bl
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ scanExcludePaths: [frag] }), 'utf8');
     const f = path.join(tmp, 'a'.repeat(100) + '.js'); // no 'ZZZ' -> forces a full non-match scan
     fs.writeFileSync(f, 'x');
-    const base = path.join(tmp, 'rot-canary-SE8');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE8');
     fs.writeFileSync(base + '.touched', f + '\n');
 
     const t0 = Date.now();
@@ -1243,7 +1249,7 @@ test('scanExcludePaths fragments use "/" portably — a "/"-separated fragment s
     fs.mkdirSync(path.join(tmp, 'scratchpad'), { recursive: true });
     const f = path.join(tmp, 'scratchpad', 'probe.mjs');
     fs.writeFileSync(f, 'x');
-    const base = path.join(tmp, 'rot-canary-SE7');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE7');
     fs.writeFileSync(base + '.touched', f + '\n');
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE7', stop_hook_active: false }), tmp);
@@ -1273,7 +1279,7 @@ test('scanExcludePaths: a literal "?" in a fragment does not over-match (regress
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ scanExcludePaths: ['notes?.js'] }), 'utf8');
     const unrelated = path.join(tmp, 'notes.js'); // must NOT match — 's' must not become optional
     fs.writeFileSync(unrelated, 'x');
-    const base = path.join(tmp, 'rot-canary-SE5');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE5');
     fs.writeFileSync(base + '.touched', unrelated + '\n');
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE5', stop_hook_active: false }), tmp);
@@ -1303,7 +1309,7 @@ test('scanExcludePaths: a literal "?" in a fragment matches its literal target (
       t.skip(`cannot create a file literally named "notes?.js" on this volume (${e.code}) — this arm needs a Unix-like filesystem`);
       return;
     }
-    const base = path.join(tmp, 'rot-canary-SE5B');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE5B');
     fs.writeFileSync(base + '.touched', literalFile + '\n');
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE5B', stop_hook_active: false }), tmp);
     assert.equal(r.status, 0);
@@ -1332,7 +1338,7 @@ test('scanExcludePaths: every touched file excluded + no memory-drift → no LOU
     fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ scanExcludePaths: ['probe'] }), 'utf8');
     const skipped = path.join(tmp, 'probe.js');
     fs.writeFileSync(skipped, 'x');
-    const base = path.join(tmp, 'rot-canary-SE4');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE4');
     fs.writeFileSync(base + '.touched', skipped + '\n');
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE4', stop_hook_active: false }), tmp);
@@ -1403,7 +1409,7 @@ test('enableConductor safer-value-wins: legacy-key-only escalation (global condu
 function plantTouchedFixture(tmp, label) {
   const f = path.join(tmp, `${label}.js`);
   fs.writeFileSync(f, 'x');
-  fs.writeFileSync(path.join(tmp, `rot-canary-${label}.touched`), `${f}\n`);
+  fs.writeFileSync(path.join(tmp, 'coalmine', `rot-canary-${label}.touched`), `${f}\n`);
   return f;
 }
 
@@ -1535,7 +1541,7 @@ test('scanExcludePaths merges as a UNION across global+project — a project lis
     fs.writeFileSync(kept, 'x');
     fs.writeFileSync(globalExcluded, 'x');
     fs.writeFileSync(projectExcluded, 'x');
-    const base = path.join(tmp, 'rot-canary-SE2');
+    const base = path.join(tmp, 'coalmine', 'rot-canary-SE2');
     fs.writeFileSync(base + '.touched', `${kept}\n${globalExcluded}\n${projectExcluded}\n`);
 
     const r = runHook(STOP, JSON.stringify({ session_id: 'SE2', stop_hook_active: false }), tmp);
@@ -1839,7 +1845,7 @@ test('AG touch: toolCall.args payload (camelCase) records the edited file', () =
     const r = runHook(TOUCH, stdin, tmp, ['PostToolUse']);
     assert.equal(r.status, 0);
     assert.equal(r.stdout, '', 'touch stays silent');
-    const touched = path.join(tmp, 'rot-canary-AGT1.touched');
+    const touched = path.join(tmp, 'coalmine', 'rot-canary-AGT1.touched');
     assert.ok(fs.existsSync(touched), '.touched recorded from the AG toolCall.args shape');
     assert.ok(fs.readFileSync(touched, 'utf8').includes('edited-b.js'));
   } finally {
@@ -1853,14 +1859,14 @@ test('AG stop: emits the explicit no-op {} (no Stop inject channel in the curren
   try {
     const real = path.join(tmp, 'edited-c.js');
     fs.writeFileSync(real, 'x');
-    fs.writeFileSync(path.join(tmp, 'rot-canary-AGS1.touched'), real + '\n');
+    fs.writeFileSync(path.join(tmp, 'coalmine', 'rot-canary-AGS1.touched'), real + '\n');
     const r = runHook(STOP, JSON.stringify({ session_id: 'AGS1' }), tmp, ['Stop']);
     assert.equal(r.status, 0);
     // Contract re-derived 2026-07-23: the engine documents NO Stop-output inject
     // channel; the pilot-era additionalContext key is a dead letter. The valid
     // output is the explicit no-op {} — never the dead key, never decision:block.
     assert.equal(r.stdout.trim(), '{}', 'AG Stop output is the explicit empty object');
-    assert.ok(fs.existsSync(path.join(tmp, 'rot-canary-AGS1.scanned')), 'the scan side effects (ack marker) still ran');
+    assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-AGS1.scanned')), 'the scan side effects (ack marker) still ran');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -1881,14 +1887,14 @@ test('AG touch+stop pair on the current-spec payload: conversationId keys the sh
     }), tmp, ['PostToolUse']);
     assert.equal(t1.status, 0);
     assert.equal(t1.stdout, '', 'touch stays silent');
-    const touched = path.join(tmp, 'rot-canary-AGCONV2.touched');
+    const touched = path.join(tmp, 'coalmine', 'rot-canary-AGCONV2.touched');
     assert.ok(fs.existsSync(touched), '.touched keyed by conversationId');
     assert.ok(fs.readFileSync(touched, 'utf8').includes('edited-conv.js'), 'relative path resolved against workspacePaths[0]');
 
     const r = runHook(STOP, JSON.stringify({ conversationId: 'AGCONV2' }), tmp, ['Stop']);
     assert.equal(r.status, 0);
     assert.equal(r.stdout.trim(), '{}', 'AG Stop no-op output');
-    assert.ok(fs.existsSync(path.join(tmp, 'rot-canary-AGCONV2.scanned')), 'stop read the conversationId-keyed state (one chain across the pair)');
+    assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-AGCONV2.scanned')), 'stop read the conversationId-keyed state (one chain across the pair)');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(proj, { recursive: true, force: true });
@@ -1970,7 +1976,7 @@ function plantCodeSession(tmp, sid) {
   fs.mkdirSync(proj, { recursive: true });
   const code = path.join(proj, 'a.js');
   fs.writeFileSync(code, 'x();\n');
-  fs.writeFileSync(path.join(tmp, `rot-canary-${sid}.touched`), code + '\n');
+  fs.writeFileSync(path.join(tmp, 'coalmine', `rot-canary-${sid}.touched`), code + '\n');
   return code;
 }
 
@@ -1982,8 +1988,8 @@ test('touch hook records a MEMORY.md edit as .memmoved marker, never into .touch
     fs.writeFileSync(mem, '# m\n');
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'MD1', tool_input: { file_path: mem } }), tmp);
     assert.equal(r.status, 0);
-    assert.ok(fs.existsSync(path.join(tmp, 'rot-canary-MD1.memmoved')), '.memmoved marker created');
-    assert.ok(!fs.existsSync(path.join(tmp, 'rot-canary-MD1.touched')), 'MEMORY.md never enters the code .touched list');
+    assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-MD1.memmoved')), '.memmoved marker created');
+    assert.ok(!fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-MD1.touched')), 'MEMORY.md never enters the code .touched list');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(proj, { recursive: true, force: true });
@@ -2022,7 +2028,7 @@ test('stop hook drift-only case (code edited then deleted, no MEMORY update) emi
     // Record a code edit whose file no longer exists at stop time (edited then deleted) —
     // "code moved" for the drift check, but nothing extant to scan → no loud report.
     const ghost = path.join(tmp, 'proj', 'gone.js');
-    fs.writeFileSync(path.join(tmp, 'rot-canary-MD6.touched'), ghost + '\n');
+    fs.writeFileSync(path.join(tmp, 'coalmine', 'rot-canary-MD6.touched'), ghost + '\n');
     const r = runHook(STOP, JSON.stringify({ session_id: 'MD6', stop_hook_active: false }), tmp);
     assert.equal(r.status, 0);
     const out = JSON.parse(r.stdout);
@@ -2042,7 +2048,7 @@ test('stop hook stays drift-silent when a MEMORY.md edit was recorded (.memmoved
   try {
     fs.writeFileSync(path.join(tmp, 'MEMORY.md'), '# project memory\n');
     plantCodeSession(tmp, 'MD3');
-    fs.writeFileSync(path.join(tmp, 'rot-canary-MD3.memmoved'), '');
+    fs.writeFileSync(path.join(tmp, 'coalmine', 'rot-canary-MD3.memmoved'), '');
     const r = runHook(STOP, JSON.stringify({ session_id: 'MD3', stop_hook_active: false }), tmp);
     assert.equal(r.status, 0);
     assert.ok(r.stdout.includes('rot-canary'), 'the scan nudge itself still fires');
@@ -2096,7 +2102,7 @@ test('touch hook excludes a file living under the sandbox os.tmpdir() (scratchpa
     fs.writeFileSync(scratch, 'x();\n');
     const r1 = runHook(TOUCH, JSON.stringify({ session_id: 'TMPX1', tool_input: { file_path: scratch } }), tmp);
     assert.equal(r1.status, 0);
-    assert.ok(!fs.existsSync(path.join(tmp, 'rot-canary-TMPX1.touched')), 'a tmpdir-resident code file must not be recorded');
+    assert.ok(!fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-TMPX1.touched')), 'a tmpdir-resident code file must not be recorded');
 
     // A MEMORY.md living under the same os.tmpdir() must not set .memmoved either —
     // temp files count for nothing, including the drift-marker convention file.
@@ -2104,7 +2110,7 @@ test('touch hook excludes a file living under the sandbox os.tmpdir() (scratchpa
     fs.writeFileSync(memInTmp, '# scratch\n');
     const r2 = runHook(TOUCH, JSON.stringify({ session_id: 'TMPX2', tool_input: { file_path: memInTmp } }), tmp);
     assert.equal(r2.status, 0);
-    assert.ok(!fs.existsSync(path.join(tmp, 'rot-canary-TMPX2.memmoved')), 'a tmpdir-resident MEMORY.md must not set .memmoved');
+    assert.ok(!fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-TMPX2.memmoved')), 'a tmpdir-resident MEMORY.md must not set .memmoved');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -2118,7 +2124,7 @@ test('touch hook still records a normal project file living OUTSIDE os.tmpdir() 
     fs.writeFileSync(real, 'x();\n');
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'TMPX3', tool_input: { file_path: real } }), tmp);
     assert.equal(r.status, 0);
-    const touched = path.join(tmp, 'rot-canary-TMPX3.touched');
+    const touched = path.join(tmp, 'coalmine', 'rot-canary-TMPX3.touched');
     assert.ok(fs.existsSync(touched), 'a project file outside os.tmpdir() is still recorded');
     assert.ok(fs.readFileSync(touched, 'utf8').includes('edited-real.mjs'));
   } finally {
@@ -2136,11 +2142,488 @@ test('touch hook does NOT exclude a sibling directory whose name merely PREFIXES
     fs.writeFileSync(real, 'x();\n');
     const r = runHook(TOUCH, JSON.stringify({ session_id: 'TMPX4', tool_input: { file_path: real } }), tmp);
     assert.equal(r.status, 0);
-    const touched = path.join(tmp, 'rot-canary-TMPX4.touched');
+    const touched = path.join(tmp, 'coalmine', 'rot-canary-TMPX4.touched');
     assert.ok(fs.existsSync(touched), 'a sibling dir sharing a string prefix with tmpdir must NOT be excluded');
     assert.ok(fs.readFileSync(touched, 'utf8').includes('a.js'));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(sibling, { recursive: true, force: true });
+  }
+});
+
+// ─── CWK-137: repo-derived reads are bounded, regular-file only, and contained ─────────
+// A cloned repository is untrusted: every path the hooks read from it can be a link, a
+// FIFO or a device. On 59ee1e7 a planted `AGENTS.md -> /dev/zero` or config link ran the
+// hooks out of memory (std::bad_alloc), a FIFO blocked them forever, and a rules-root link
+// walked outside the project. POSIX-only legs probe the capability and skip VISIBLY.
+function runHookCapped(script, input, tmp, extraEnv = {}) {
+  return spawnSync(process.execPath, [script], {
+    input,
+    encoding: 'utf8',
+    cwd: tmp,
+    timeout: 20_000,
+    env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp, USERPROFILE: tmp, HOME: tmp, ...extraEnv },
+  });
+}
+function canPosixDevice(dir) {
+  if (process.platform === 'win32' || !fs.existsSync('/dev/zero')) return false;
+  const probe = path.join(dir, '.probe-link');
+  try { fs.symlinkSync('/dev/zero', probe); fs.unlinkSync(probe); return true; } catch { return false; }
+}
+function canMkfifo(dir) {
+  if (process.platform === 'win32') return false;
+  const p = path.join(dir, '.probe-fifo');
+  if (spawnSync('mkfifo', [p]).status !== 0) return false;
+  fs.unlinkSync(p);
+  return true;
+}
+
+test('CWK-137: a .claude/rules junction that ESCAPES the project is not walked -- an outside stamp does not silence onboarding', (t) => {
+  const tmp = mkAnchoredTmp();
+  const outside = mkTmp();
+  t.after(() => { fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  fs.writeFileSync(path.join(outside, 'gold-standard.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+  fs.mkdirSync(path.join(tmp, '.claude'));
+  fs.symlinkSync(outside, path.join(tmp, '.claude', 'rules'), 'junction');
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a stamp reached only through an escaping link must NOT count as the project verified');
+});
+
+test('CWK-137: a .claude/rules junction that stays INSIDE the project is still walked (a link is not automatically hostile)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const real = path.join(tmp, 'docs', 'rules');
+  fs.mkdirSync(real, { recursive: true });
+  fs.writeFileSync(path.join(real, 'gold-standard.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+  fs.mkdirSync(path.join(tmp, '.claude'));
+  fs.symlinkSync(real, path.join(tmp, '.claude', 'rules'), 'junction');
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'a contained link keeps working');
+});
+
+test('CWK-137: AGENTS.md -> /dev/zero does not exhaust memory -- the conductor exits 0 promptly (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canPosixDevice(tmp)) { t.skip('no /dev/zero or no symlinks on this platform'); return; }
+  fs.symlinkSync('/dev/zero', path.join(tmp, 'AGENTS.md'));
+  const r = runHookCapped(CONDUCTOR, '', tmp);
+  assert.equal(r.error, undefined, `the conductor must not hang or be killed: ${r.error}`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes('[CoalMine]'), 'the conductor still runs');
+});
+
+test('CWK-137: a project config -> /dev/zero does not exhaust memory in any hook (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canPosixDevice(tmp)) { t.skip('no /dev/zero or no symlinks on this platform'); return; }
+  fs.mkdirSync(path.join(tmp, '.claude', 'coal'), { recursive: true });
+  fs.symlinkSync('/dev/zero', path.join(tmp, '.claude', 'coal', 'coalmine.json'));
+  plantTouchedFixture(tmp, 'Z1');
+  for (const [name, script, input] of [
+    ['conductor', CONDUCTOR, ''],
+    ['touch', TOUCH, JSON.stringify({ session_id: 'Z1', tool_input: { file_path: path.join(tmp, 'Z1.js') } })],
+    ['stop', STOP, JSON.stringify({ session_id: 'Z1', stop_hook_active: false })],
+  ]) {
+    const r = runHookCapped(script, input, tmp);
+    assert.equal(r.error, undefined, `${name} must not hang or be killed: ${r.error}`);
+    assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /bad_alloc|heap out of memory/, `${name} must not run out of memory`);
+  }
+});
+
+test('CWK-137: a FIFO in the rules tree does not block the conductor (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canMkfifo(tmp)) { t.skip('no mkfifo on this platform'); return; }
+  fs.mkdirSync(path.join(tmp, '.claude', 'rules'), { recursive: true });
+  assert.equal(spawnSync('mkfifo', [path.join(tmp, '.claude', 'rules', 'x.md')]).status, 0);
+  const r = runHookCapped(CONDUCTOR, '', tmp);
+  assert.equal(r.error, undefined, `the conductor must not block on a FIFO: ${r.error}`);
+  assert.equal(r.status, 0);
+});
+
+test('CWK-137: a FIFO README.md does not block the stop hook language probe (POSIX)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canMkfifo(tmp)) { t.skip('no mkfifo on this platform'); return; }
+  assert.equal(spawnSync('mkfifo', [path.join(tmp, 'README.md')]).status, 0);
+  plantTouchedFixture(tmp, 'F1');
+  // A language env that names no language, so detectLang falls through to the repo docs.
+  const r = runHookCapped(STOP, JSON.stringify({ session_id: 'F1', stop_hook_active: false }), tmp,
+    { LANG: 'C', LC_ALL: 'C', LC_MESSAGES: '', LANGUAGE: '' });
+  assert.equal(r.error, undefined, `the stop hook must not block on a FIFO: ${r.error}`);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.length > 0, 'the scan nudge is still emitted');
+});
+
+// ─── CWK-137 findings-back (INSPECT MEDIUM-1): pin the layers the first tests masked ─────
+// Each test below goes RED under one named mutation that left the first suite green
+// (H1 size bound, H2 walk bounds, H4/H6/M1 the lstat kind gate). The mutation list is in
+// scratchpad/cwk137/build-note.md, FINDINGS-BACK 1.
+function writeSizedConfig(dir, bytes) {
+  const shell = JSON.stringify({ enableConductor: false, pad: '' });
+  const body = JSON.stringify({ enableConductor: false, pad: 'x'.repeat(bytes - shell.length) });
+  assert.equal(Buffer.byteLength(body), bytes, 'fixture sanity: the config is exactly the requested size');
+  fs.mkdirSync(path.join(dir, '.claude', 'coal'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude', 'coal', 'coalmine.json'), body);
+}
+
+test('CWK-137: a project config of exactly MAX_CONFIG_BYTES is honored (enableConductor:false silences the conductor)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  writeSizedConfig(tmp, MAX_CONFIG_BYTES);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '', 'a config AT the bound is read and obeyed');
+});
+
+test('CWK-137: a project config of MAX_CONFIG_BYTES + 1 is SKIPPED, not parsed -- the conductor still emits', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  writeSizedConfig(tmp, MAX_CONFIG_BYTES + 1);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('[CoalMine]'), 'a config one byte over the bound must not be honored');
+});
+
+// The walk budget is shared by every rule root and a spent budget stops the WHOLE walk, so
+// a stamp in AGENTS.md (the last root) is reached only when .claude/rules stays within it.
+// Entry order inside one directory is filesystem-defined; across roots it is fixed.
+function plantRuleEntries(dir, count) {
+  const rules = path.join(dir, '.claude', 'rules');
+  fs.mkdirSync(rules, { recursive: true });
+  for (let i = 0; i < count; i++) fs.writeFileSync(path.join(rules, `e${i}.txt`), '');
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+}
+
+test('CWK-137: the rule walk stops after MAX_RULE_WALK_ENTRIES -- a stamp past entry 5000 is not reached', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantRuleEntries(tmp, 5001);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a spent walk budget must not read past it');
+});
+
+test('CWK-137: the rule walk reaches a stamp when exactly MAX_RULE_WALK_ENTRIES entries precede it (the bound itself)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantRuleEntries(tmp, 5000);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'at the bound the walk still reaches AGENTS.md');
+});
+
+function plantNestedStamp(dir, depth) {
+  let d = path.join(dir, '.claude', 'rules');
+  for (let i = 1; i <= depth; i++) d = path.join(d, String(i));
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'gold-standard.md'), '<!-- coalmine: verified 2026-07-01 revalidate 90d -->\n', 'utf8');
+}
+
+test('CWK-137: the rule walk does not descend past MAX_RULE_WALK_DEPTH -- a stamp at depth 17 is not reached', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantNestedStamp(tmp, 17);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a stamp below the depth bound must not be read');
+});
+
+test('CWK-137: the rule walk reaches a stamp at depth 16 (the bound itself)', (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  plantNestedStamp(tmp, 16);
+  const r = runHook(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'at the depth bound the stamp is read');
+});
+
+test('CWK-137: a FIFO in the rules tree is never OPENED by the conductor -- a blocked writer proves it (POSIX)', async (t) => {
+  const tmp = mkAnchoredTmp();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (!canMkfifo(tmp)) { t.skip('no mkfifo on this platform'); return; }
+  const fifo = path.join(tmp, '.claude', 'rules', 'x.md');
+  fs.mkdirSync(path.dirname(fifo), { recursive: true });
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  const { exited } = await startFifoWriter(fifo, path.join(tmp, '.writer-ready'));
+  const r = runHookCapped(CONDUCTOR, '', tmp);
+  assert.equal(r.status, 0);
+  assert.equal(await exited, 'blocked', 'the conductor must skip the FIFO before open -- the writer would have unblocked');
+});
+
+// ─── UMB-174 (b) + CWK-135 (a): the UNREADABLE line (this room is the flock EXEMPLAR) ──────
+// A config that EXISTS at the path the walk selects but cannot be used is REPORTED on the
+// SessionStart line, never silently ignored. The flock string, verbatim (em dash included):
+//   UNREADABLE: <path> exists but is not a readable config (<reason>); it was skipped — canonical = <canonical>
+// <reason> is one of 'malformed JSON' · 'a directory' · 'unreadable' · 'not a JSON object'.
+// The PROJECT tier's canonical is .claude/coal/coalmine.json; the GLOBAL tier names its own
+// file (~/.claude/.coalmine.json), because a global config has nowhere else to move to.
+// This room prefixes it as it prefixes IGNORED ('- CoalMine config: ') and appends the
+// relay instruction; the flock string itself is the part between the two.
+const FLOCK = (where, reason, canonical) => `UNREADABLE: ${where} exists but is not a readable config (${reason}); it was skipped — canonical = ${canonical}`;
+const PROJECT_CANON = '.claude/coal/coalmine.json';
+const GLOBAL_CANON = '~/.claude/.coalmine.json';
+const unreadableLines = (stdout) => stdout.split('\n').filter((l) => l.includes('UNREADABLE:'));
+const expectedLine = (where, reason, canonical) => `- CoalMine config: ${FLOCK(where, reason, canonical)} (relay to the user in their language).`;
+
+// A project cwd and a SEPARATE fake HOME, so the global file never doubles as a project candidate.
+function projectAndHome(t) {
+  const proj = mkAnchoredTmp();
+  const home = mkTmp();
+  t.after(() => { fs.rmSync(proj, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  return { proj, home };
+}
+function writeProjectCfg(proj, body) {
+  fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.claude', 'coal', 'coalmine.json'), body);
+}
+
+test('UMB-174: a MALFORMED config at the canonical project path is REPORTED once (reason "malformed JSON"); the fixed file at the same path is silent', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{"enableConductor": false');
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'malformed JSON', PROJECT_CANON)]);
+  assert.ok(r.stdout.includes('[CoalMine]'), 'the skipped config contributes nothing -- the conductor still runs');
+  writeProjectCfg(proj, '{"skipOnboarding": true}');
+  const r2 = runHook(CONDUCTOR, '', home, [], proj);
+  assert.deepEqual(unreadableLines(r2.stdout), [], 'negative control: a well-formed config at the same path produces no line');
+});
+
+test('UMB-174: a DIRECTORY at the canonical project path is REPORTED (reason "a directory")', (t) => {
+  const { proj, home } = projectAndHome(t);
+  fs.mkdirSync(path.join(proj, '.claude', 'coal', 'coalmine.json'), { recursive: true });
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'a directory', PROJECT_CANON)]);
+});
+
+test('R6 AMENDMENT 2: VALID JSON that is not an object is REPORTED (reason "not a JSON object"), never silent', (t) => {
+  const { proj, home } = projectAndHome(t);
+  for (const body of ['[1, 2]', '"auto"', '42', 'null']) {
+    writeProjectCfg(proj, body);
+    const r = runHook(CONDUCTOR, '', home, [], proj);
+    assert.equal(r.status, 0);
+    assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'not a JSON object', PROJECT_CANON)], `body ${body}`);
+  }
+});
+
+test('R6 AMENDMENT 2: a leading U+FEFF is stripped before the parse -- a BOM-prefixed config is READ, not reported', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '﻿{"skipOnboarding": true}');
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [], 'a BOM is not malformed JSON');
+  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'and the config is HONORED: skipOnboarding took effect');
+});
+
+// Capability-probed, never process.platform: chmod 0 denies a read on POSIX (non-root); on
+// NTFS only an ACL does, and Node reports that as EPERM, not EACCES. One skippable leg.
+function denyRead(file) {
+  try {
+    fs.chmodSync(file, 0);
+    try { fs.readFileSync(file); } catch (e) { if (e && (e.code === 'EACCES' || e.code === 'EPERM')) return 'chmod'; }
+    fs.chmodSync(file, 0o600);
+  } catch {}
+  const me = os.userInfo().username;
+  const deny = spawnSync('icacls', [file, '/deny', `${me}:(R)`], { encoding: 'utf8' });
+  if (deny.error || deny.status !== 0) return null;
+  try { fs.readFileSync(file); } catch (e) { if (e && (e.code === 'EACCES' || e.code === 'EPERM')) return 'icacls'; }
+  spawnSync('icacls', [file, '/reset'], { encoding: 'utf8' });
+  return null;
+}
+function restoreRead(file, how) {
+  if (how === 'chmod') { try { fs.chmodSync(file, 0o600); } catch {} }
+  if (how === 'icacls') spawnSync('icacls', [file, '/reset'], { encoding: 'utf8' });
+}
+
+test('UMB-174: an UNREADABLE config (EACCES, or EPERM from a Windows ACL) is REPORTED (reason "unreadable")', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{"skipOnboarding": true}');
+  const target = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  const how = denyRead(target);
+  if (!how) { t.skip('this volume/OS denies the owning process a read through neither chmod nor icacls'); return; }
+  // The ACL/mode is restored in finally, NOT t.after: after-hooks run in registration order,
+  // so the fixture removal registered earlier would hit the still-denied file first (EPERM).
+  let r;
+  try { r = runHook(CONDUCTOR, '', home, [], proj); } finally { restoreRead(target, how); }
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(PROJECT_CANON, 'unreadable', PROJECT_CANON)]);
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'the unreadable config contributed nothing');
+});
+
+test('CWK-135 (a): a malformed GLOBAL config is REPORTED with the GLOBAL file as its canonical, never the project path', (t) => {
+  const { proj, home } = projectAndHome(t);
+  const globalFile = path.join(home, '.claude', '.coalmine.json');
+  fs.mkdirSync(path.dirname(globalFile), { recursive: true });
+  fs.writeFileSync(globalFile, 'not json at all');
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [expectedLine(globalFile, 'malformed JSON', GLOBAL_CANON)]);
+});
+
+test('CWK-135 (a): a project AND a global failure each get their own line, each naming its own tier', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '[]');
+  const globalFile = path.join(home, '.claude', '.coalmine.json');
+  fs.mkdirSync(path.dirname(globalFile), { recursive: true });
+  fs.mkdirSync(globalFile);
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.deepEqual(unreadableLines(r.stdout), [
+    expectedLine(PROJECT_CANON, 'not a JSON object', PROJECT_CANON),
+    expectedLine(globalFile, 'a directory', GLOBAL_CANON),
+  ]);
+});
+
+test('HEAD RULING (R8): a config the CWK-137 reader refuses for SIZE stays silent -- no new reason is invented', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, JSON.stringify({ pad: 'x'.repeat(MAX_CONFIG_BYTES) }));
+  const r = runHook(CONDUCTOR, '', home, [], proj);
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), []);
+});
+
+test('UMB-174: the Antigravity adapter reports UNREADABLE too (it shares buildLines)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{oops');
+  const stdin = JSON.stringify({ session_id: 'UMB174AG', cwd: proj, hook_event_name: 'PreInvocation' });
+  const r = runHook(CONDUCTOR, stdin, home, ['PreInvocation'], proj);
+  assert.equal(r.status, 0);
+  assert.ok(agInject(r.stdout).includes(FLOCK(PROJECT_CANON, 'malformed JSON', PROJECT_CANON)), 'AG ephemeralMessage carries the flock string');
+});
+
+// ─── R12 (CodeQL #74-#79, js/file-system-race): the config refusal probe's outcomes ──────
+// The path checks (cfgPlacement) and the probe open (cfgOpenVerdict) are two uses of one path;
+// a non-file swapped in between must not be reported as an unreadable config. The spy preload
+// (r12-open-spy.cjs) swaps the target at the Nth open the hook makes of the one config path.
+const SPY = path.join(repo, 'scripts', 'lib', 'r12-open-spy.cjs');
+function withSpy(env, fn) {
+  const prev = {};
+  for (const k of Object.keys(env)) { prev[k] = process.env[k]; process.env[k] = env[k]; }
+  try { return withHomeReporter(SPY, fn); } finally {
+    for (const k of Object.keys(env)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+  }
+}
+function canMkfifoHere(dir) {
+  if (process.platform === 'win32') return false;
+  const probe = path.join(dir, '.probe-fifo');
+  const r = spawnSync('mkfifo', [probe]);
+  if (r.status !== 0) return false;
+  fs.unlinkSync(probe);
+  return true;
+}
+
+// R12 bounce 2, MEDIUM-1 (reviewer witness): an IN-ROOT symlinked config (the link rule allows it:
+// its realpath lies inside the project) whose TARGET is mode 0 is genuinely unreadable and must
+// be reported `unreadable`. The first R12 fix re-asked the denied open with lstat, which does not
+// follow the link, so this went silent. POSIX non-root only (chmod 0, file symlinks).
+test('R12: an in-root symlinked config whose target is unreadable is still reported UNREADABLE (POSIX)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
+  const targetFile = path.join(proj, 'cfg-target.json');
+  fs.writeFileSync(targetFile, '{"skipOnboarding": true}');
+  const link = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  try { fs.symlinkSync(targetFile, link, 'file'); } catch { t.skip('no file symlinks here'); return; }
+  const how = denyRead(targetFile);
+  if (how !== 'chmod') { restoreRead(targetFile, how); t.skip('chmod 0 does not deny the owner a read here (root, or a volume that ignores mode)'); return; }
+  let r;
+  try { r = runHook(CONDUCTOR, '', home, [], proj); } finally { restoreRead(targetFile, how); }
+  assert.equal(r.status, 0);
+  const got = unreadableLines(r.stdout);
+  assert.equal(got.length, 1, `one UNREADABLE line for the in-root link to an unreadable file: ${JSON.stringify(got)}`);
+  assert.ok(got[0].includes('(unreadable)'), `the reason is unreadable: ${got[0]}`);
+});
+
+// A mode-0 FIFO swapped in after the path checks: the open is DENIED (EACCES), and on HEAD that
+// denial read as the CONFIG being unreadable -- an UNREADABLE line for a thing that is not a
+// config at all. POSIX non-root only: probed with the same chmod-0 probe as the UMB-174 test.
+test('R12: a non-file swapped in between the path checks and the open is never reported UNREADABLE (mode-0 FIFO, POSIX)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  writeProjectCfg(proj, '{"skipOnboarding": true}');
+  const target = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  if (!canMkfifoHere(home)) { t.skip('mkfifo unavailable on this volume'); return; }
+  const how = denyRead(target);
+  if (how !== 'chmod') { restoreRead(target, how); t.skip('chmod 0 does not deny the owner a read here (root, or a volume that ignores mode)'); return; }
+  const log = path.join(home, 'spy.log');
+  let r;
+  try { r = withSpy({ CM_SPY_TARGET: target, CM_SPY_LOG: log, CM_SPY_SWAP: 'fifo000', CM_SPY_SWAP_AT: '4' }, () => runHook(CONDUCTOR, '', home, [], proj)); } finally { restoreRead(target, how); }
+  assert.equal(r.status, 0);
+  const events = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+  assert.ok(events.includes('open 4 threw=EACCES'), `the swap landed before the 4th open (the refusal probe whose reason the conductor reports) and that open was denied: ${events.join(' | ')}`);
+  assert.deepEqual(unreadableLines(r.stdout), [], 'a FIFO is not a config: no UNREADABLE line');
+});
+
+// ─── R13 / CWK-158 item 1 + CWK-141 (1): the clamp must DROP an unknown or ill-typed project value ──────
+// The loop used to `continue` on an out-of-enum value (and the UNION loop on a non-array), leaving the
+// project's raw junk in the shallow merge: a cloned repo's { rotCanaryMode: 'on' } or
+// { disabledCanaries: null } then defeated the owner's explicit global off / ["all"] / false on
+// every consent gate (probe A, 8 bypass rows at 4e84429 and HEAD). Now the junk reads as ABSENT:
+// the global (or the schema default) wins. Each row plants a global that silences the gate and a
+// junk project value, and asserts the gate STAYS silent -- through the real hook.
+const CLAMP_JUNK_STOP = [
+  ['dc-null', { disabledCanaries: ['rot-canary'] }, { disabledCanaries: null }],
+  ['dc-string', { disabledCanaries: ['rot-canary'] }, { disabledCanaries: 'x' }],
+  ['dc-number', { disabledCanaries: ['rot-canary'] }, { disabledCanaries: 5 }],
+  ['dc-legacy-string', { disabledCanaries: ['rot-canary'] }, { disable: 'x' }],
+  ['rcm-on', { rotCanaryMode: 'off' }, { rotCanaryMode: 'on' }],
+  ['rcm-null', { rotCanaryMode: 'off' }, { rotCanaryMode: null }],
+  ['rcm-legacy-junk', { rotCanaryMode: 'off' }, { mode: 'on' }],
+  ['rcm-number', { rotCanaryMode: 'off' }, { rotCanaryMode: 7 }],
+];
+for (const [label, g, p] of CLAMP_JUNK_STOP) {
+  test(`clamp drops a junk project value (${label}): the global silence on the Stop gate holds (CWK-158 item 1)`, () => {
+    const tmp = mkAnchoredTmp();
+    try {
+      fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify(g), 'utf8');
+      fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify(p), 'utf8');
+      const sid = 'CJ' + label.split('-').join('');
+      plantTouchedFixture(tmp, sid);
+      const r = runHook(STOP, JSON.stringify({ session_id: sid, stop_hook_active: false }), tmp);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '', 'the explicit global choice must hold against a junk project value -- the scan must not run');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [label, p] of [['ec-null', { enableConductor: null }], ['ec-string', { enableConductor: 'yes' }], ['ec-legacy-junk', { conductor: 'x' }]]) {
+  test(`clamp drops a junk project value (${label}): a global enableConductor:false still silences the conductor (CWK-158 item 1)`, () => {
+    const tmp = mkAnchoredTmp();
+    try {
+      fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify({ enableConductor: false }), 'utf8');
+      fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify(p), 'utf8');
+      const r = runHook(CONDUCTOR, '', tmp);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '', 'global enableConductor:false must hold against a junk project value');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+test('clamp drops a junk project scanEverything: a global false is not escalated by a non-boolean (CWK-141 (1), the other clamped key)', () => {
+  const tmp = mkAnchoredTmp();
+  try {
+    fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify({ scanEverything: false, scanExcludePaths: ['scratchpad'] }), 'utf8');
+    fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ scanEverything: 'true' }), 'utf8');
+    const excluded = path.join(tmp, 'scratchpad-probe.js');
+    const kept = path.join(tmp, 'real-code.js');
+    fs.writeFileSync(excluded, 'x');
+    fs.writeFileSync(kept, 'x');
+    fs.writeFileSync(path.join(tmp, 'coalmine', 'rot-canary-CJSE.touched'), kept + '\n' + excluded + '\n');
+    const r = runHook(STOP, JSON.stringify({ session_id: 'CJSE', stop_hook_active: false }), tmp);
+    assert.equal(r.status, 0);
+    const out = JSON.parse(r.stdout);
+    assert.ok(out.reason.includes('skipped per scanExcludePaths'), 'the exclude still fired: the string "true" is not the boolean true');
+    assert.ok(!(out.systemMessage || '').includes('scanEverything is ON'), 'and no override notice for an override that never took');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });

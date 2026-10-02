@@ -2,6 +2,172 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.22.1] - 2026-10-02
+
+On macOS, the session-end scan no longer skips every edited file when the project's folder has two spellings.
+
+### Fixed
+- **R14 red — `scanExcludePaths` could exempt every touched file on macOS.** Since the project-relative match arrived in 3.22.0, a fragment such as `**/scratchpad/**` was compared with each edited file's path relative to the project. On macOS the folder the hook runs in and the folder the edit tool reports can be two spellings of one folder (`/private/var/...` against `/var/...`), so the relative path climbed out of the project, the code fell back to the absolute path, and an ancestor folder named like a fragment excluded every file: the hook found nothing to scan and printed only the all-skipped notice, no scan report. Both sides are now resolved to their real path before they are compared (`fs.realpathSync.native`); if either cannot be resolved, both stay lexical (never one of each), and with two spellings that lexical pair can still miss. A project reached by one spelling only was never affected. — test: `scripts/lib/r14-fixes.test.mjs` (`the project-relative match survives two spellings of the project dir`)
+
+### Changed
+- **Internal — three code-scanning patterns the 3.22.0 push opened (#80 to #90) were addressed in the code**: the read-only marker open now states its mode (`0o600`, inert without `O_CREAT`), the shared marker helpers are split so each hook carries only the functions it calls, and a test parses README URLs instead of matching substrings. No behaviour change for users. Whether the alerts clear is shown only by the code-scanning list after the next push. — test: `scripts/lib/markers.test.mjs`, `scripts/lib/plugin-readme.test.mjs`
+
+**What you need to do:** nothing is required. To receive the changed hook files, on Claude Code run `claude plugin update coalmine@coalmine`; users of `coalmine@claude-community` receive them when that catalog's pin moves; for any other agent, update your CoalMine checkout and re-run `node scripts/install.mjs <agent>`.
+
+## [3.22.0] - 2026-10-02
+
+The release ZIPs now put each skill inside its own folder as Anthropic's guide asks, and rot-canary's session files move out of reach of other users on a shared machine.
+
+### Security
+- **CWK-158 item 8 (CSV-4, CSV-6, CSV-7) — rot-canary's session markers can no longer be hijacked from a shared temp folder.** The `.touched`, `.smells`, `.scanned` and `.memmoved` markers sat directly in the OS temp folder. On a shared POSIX `/tmp`, another user could plant a FIFO there (the Stop hook's blocking read hung) or a symlink (the `.scanned` write followed it and overwrote the victim file with a timestamp). They now live in a `coalmine/` folder inside the temp folder, which the hooks use only if it is a real folder, not a link, owned by you and not writable by group or others (POSIX); otherwise they record and read nothing. Reads no longer block and are limited to 1 MiB; writes do not follow a link. Control characters are stripped from `.smells` lines before they reach the scan report (B-u1-L6). The PowerShell fallbacks (`alt/powershell`) keep their flat markers, which `alt/powershell/README.md` now says. — test: `scripts/lib/markers.test.mjs`
+- **CWK-158 B-u3-2b — your real global config is no longer mistaken for a project's legacy config under a moved HOME.** The check compared against `os.homedir()`, which follows `HOME` and `USERPROFILE`; a run with those moved (a sandbox, a test) could take the real `~/.claude/.coalmine.json` of a user whose home is a git work tree for a project config, and `configure.mjs` would migrate it and delete the original. The check now also compares against the account record (`os.userInfo().homedir`), which no variable moves. — test: `scripts/lib/r14-install.test.mjs`
+- **CWK-158 B-u1-7 — a project checked out under a folder named `scratchpad` is no longer exempt from the scan.** A `scanExcludePaths` fragment such as `**/scratchpad/**` was matched against the absolute path, so a project that merely sat under such a folder had every file excluded. Fragments are now matched against the path relative to the project. — test: `scripts/lib/r14-fixes.test.mjs`
+
+### Added
+- **CWK-180 — the plugin folder now ships a `README.md`.** `plugin/README.md` is built from `plugin-src/README.md`, and `verify.mjs` fails a tree whose copy is missing, stale or under 40 words. It says what the plugin is, what each of the three hooks runs and when, that the hooks fetch and send nothing, what the example uses are, and where `gold-standard` reads a project's memory file. — test: `scripts/lib/plugin-readme.test.mjs`
+
+### Changed
+- **CWK-185 (b1) — the claude.ai skill ZIPs hold the skill's folder, not its contents.** The release workflow zipped the inside of each skill folder, so `SKILL.md` sat at the root of the archive; Anthropic's guide says the archive must contain `<skill-name>/SKILL.md` and that a `SKILL.md` at the root is not recognized as a skill. The workflow now zips each folder from its parent and lists every archive's entries before the Release is created. No upload of one of these ZIPs to claude.ai has been confirmed yet, and the workflow has not yet run on a tag; the README says so and no longer calls claude.ai "works with". README's Option A3 and `PRIVACY.md` were re-grounded the same way: the upload place is Customize > Skills, and `/coalmine:update`'s `git ls-remote` version check is now named in `PRIVACY.md`. — test: `scripts/release-notes.test.mjs`, `scripts/lib/asset-upload-mode.test.mjs`, `scripts/lib/release-shape.test.mjs`
+- **CWK-158 B-u3-11 / LOW-2 — the plugin description no longer says "report-not-fix".** `plugin.json` ended with "report-not-fix" in the same sentence that says `gold-standard` fills and adopts rules, and `rot-canary` applies safe fixes without a menu when `autoFixMode` is `safe`. It now reads "Reports first; fixes go through your choice (autoFixMode safe applies safe fixes without a menu)". The plugin folder's README and `PRIVACY.md` were corrected the same way: the stop hook reads the first 4 KiB of `README.md`, `MEMORY.md` and `AGENTS.md` to pick its reply language, `gold-standard` may also correct a contradicted memory entry after you choose it, and `source-grounding` fetches without a menu first and asks only when a source cannot be fetched. — test: none (prose; `verify.mjs` checks that `plugin/README.md` is current with its source)
+- **CWK-158 B-u1-8 — the session-start conductor also reads `STANDARDS.md` for `coalmine: verified` stamps**, the file `gold-standard` falls back to as its home for rules, and `/coalmine:stats` lists it. — test: `scripts/lib/r14-fixes.test.mjs`
+- **CWK-158 B-u1-L18 — each of the three shipped hooks now declares a 10 second timeout in `hooks.json`.** They run in about a quarter of a second, most of it Node start-up. — test: `scripts/lib/r14-low.test.mjs`
+- **CWK-158 B-u2-5b, R13 LOW-3 — the installer's notes about a hooks folder outside the project.** When `core.hooksPath` points outside the project and outside the repo's own git folder, install and uninstall print one `NOTE` that the folder is shared by every repo that uses it. A hooks folder outside the project that does not exist yet is refused with "create that folder and re-run, or unset `core.hooksPath`", instead of advice meant for a link problem; nothing is created outside the project. — test: `scripts/lib/r14-install.test.mjs`
+- **CWK-158 B-u1-10 — `commands/update.md` says the rule-freshness nudge is silenced by `updateMode: off`**, which it is. — test: none (prose)
+
+### Fixed
+- **CWK-158 B-u1-11 / B-u3-7 — the self-update question no longer points at a script the plugin does not ship.** It told the agent to run `node scripts/configure.mjs --updateMode …`; a plugin install has no `scripts/`. It now asks the agent to set `"updateMode"` in `~/.claude/.coalmine.json`, and the reminder line says the same. — test: `scripts/lib/r14-fixes.test.mjs`
+- **CWK-158 B-u2-6 / B-u2-7 — `install.mjs --help` no longer installs nine skills into a folder called `--help`.** A flag-shaped word is now an option: `--help` prints usage and exits 0, and an unknown option prints usage and exits 2. A target such as `constructor` is a folder name, not a crash. — test: `scripts/lib/r14-fixes.test.mjs`
+- **CWK-158 R14-N1 — the installer reads `core.hooksPath` with the git configuration you chose.** It stripped `GIT_CONFIG_GLOBAL` and its siblings, so a user whose global git config was selected that way got hooks in `.git/hooks` that git never read, under a success message. Only those two reads keep the selection. — test: `scripts/lib/r14-install.test.mjs`
+- **CWK-158 B-u1-15 — the Cursor stop wrapper forwards a `systemMessage`** (alone or beside a reason) as the follow-up. — test: `scripts/lib/r14-fixes.test.mjs`
+- **CWK-158 B-u1-4a — the touch hook finds the edited file in more event shapes**: `toolArgs`, a top-level `file_path`, and `TargetFile`. — test: `scripts/lib/r14-low.test.mjs`
+- **CWK-158 B-u1-L4 — a language named `constructor` or `__proto__` falls back to English** instead of stopping the Stop hook. — test: `scripts/lib/r14-low.test.mjs`
+- **CWK-158 CSV-10 — the conductor reads at most 200 stamp openers per document**; past that bound the past-due count undercounts, which is the safe direction (the largest real document here carries 8). — test: `scripts/lib/r14-low.test.mjs`
+
+**What you need to do:** nothing is required. If you downloaded a skill ZIP from an earlier Release to use on claude.ai, download it again from this one: the earlier archives hold `SKILL.md` at the root, which Anthropic's guide says is not recognized. To receive the changed files, on Claude Code run `claude plugin update coalmine@coalmine`; users of `coalmine@claude-community` receive them when that catalog's pin moves; for any other agent, update your CoalMine checkout and re-run `node scripts/install.mjs <agent>`.
+
+## [3.21.2] - 2026-10-02
+
+The installer now leaves your own git hooks working, and a junk value in a cloned repo's config no longer overrides your global off switches.
+
+### Security
+- **CWK-158 item 1 + CWK-141 (1) — a project config value the clamp does not recognise is now dropped, not kept.** The config cascade lets a cloned repo's `.coalmine.json` only quieten what your global config sets. Before this fix, a project value outside a key's allowed set (`null`, a string such as `"on"`, a number) was left in the merge as it was, and it replaced your global choice: `{"rotCanaryMode": "on"}`, `{"enableConductor": null}` or `{"updateMode": "x"}` in a cloned repo defeated your global `off`, and `{"disabledCanaries": null}` (or a string or a number) replaced your global list. Now such a value reads as absent: your global value stands, or the factory default where your global layer says nothing. An unknown value in your GLOBAL file reads as the factory default. This covers `updateMode`, `enableConductor`, `rotCanaryMode`, `disabledCanaries` and `scanExcludePaths` in the three hooks and in the PowerShell fallbacks (`alt/powershell`), where a JSON `null` counts as a present value and a non-boolean is never turned into a boolean. `scanEverything` was not affected (its strict `true` check never accepted the string `"true"`); its row is kept as a control. — test: `scripts/lib/hooks.test.mjs` (`clamp drops a junk project value (…)`, one row per key and shape) · `scripts/lib/conductor-update.test.mjs` · `scripts/lib/ps-config.test.ps1`
+- **CWK-158 item 7 — install and uninstall no longer delete a folder only because an install manifest names it.** A manifest (`.coalmine-manifest.json`) can arrive with a cloned repository, and a folder it listed, such as `victim-dir`, was removed recursively. A listed folder is now removed only when every file in it is recorded in the manifest's own hashes with the hash it has today. An unrecorded file, a changed file or a link makes it unproven: the installer prints `[kept] <folder>: …`, leaves it in place and exits non-zero. A manifest from before the hashes existed proves ownership only by CoalMine's own `skill-meta.json` marker. — test: `scripts/lib/install.test.mjs` (`CWK-158 item 7: …`, three tests)
+
+### Changed
+- **CWK-158 item 2 — the git hook the installer writes into your repo is a small chain-only hook, not CoalMine's own repo gate.** Before, the installer copied CoalMine's `.githooks/pre-commit` and `.githooks/pre-push` into your repo. Those run `scripts/verify.mjs` and `scripts/test.mjs` of the project they sit in, which is a no-op in most projects and a surprise blocker in one that has such scripts, and your own hook was renamed aside and never ran again. The installed hook now runs the hook it replaced (kept beside it as `<hook>.pre-coalmine`, with its arguments and exit status passed through) and nothing else, so installing CoalMine never turns off a gate you had. A hook your repo tracks (`core.hooksPath` at a versioned directory such as `.husky/` or `.githooks/`) is not rewritten: the installer prints `[refused] <hook>: …` and exits non-zero, the same refusal uninstall already had. — test: `scripts/lib/install.test.mjs` (`CWK-158 item 2: …`, three tests)
+
+### Fixed
+- **CWK-158 item 3 — uninstall no longer restores a backed-up hook over a hook you wrote after installing.** The restore put `<hook>.pre-coalmine` back over whatever was at the hook path. It now does so only over a hook that is CoalMine's. If the hook there is yours (or unreadable), both files stay, the installer prints `[kept] <hook>: …` and exits non-zero, and you merge them. — test: `scripts/lib/install.test.mjs` (`CWK-158 item 3: …`)
+- **CWK-158 item 4 — a `core.hooksPath` that starts with `~` now expands the way git expands it.** The installer read the value as plain text, so `~/hooks` became `<project>/~/hooks` while git ran `$HOME/hooks`: the hook landed in a folder git never reads. It now reads the value as a path (`git config --type=path`). If that git is too old for `--type` and the value starts with `~`, the installer reports that it cannot expand it instead of guessing. — test: `scripts/lib/install.test.mjs` (`CWK-158 item 4: …`)
+- **CWK-158 item 5 — `configure.mjs` no longer anchors its project search on a legacy config in a folder above the one you ran it from, unless that folder is the git root.** Its search used to stop at the first parent folder holding `.claude/.coalmine.json`, then move that file into the project's own config folder and delete the original. That legacy file now anchors the search only in the folder you ran `configure.mjs` from. A `.git` folder above still anchors it: run from a subfolder of a git project, a legacy config at the git root is still read and migrated, as before. The hooks' read order is unchanged. — test: `scripts/lib/configure.test.mjs` (`CWK-158 item 5: …`)
+
+**What you need to do:** nothing is required, and if the installer printed a `[refused]` or `[kept]` line it left that file alone: read the line and decide. To receive the changed files, on Claude Code run `claude plugin update coalmine@coalmine`; users of `coalmine@claude-community` receive them when that catalog's pin moves; for any other agent, update your CoalMine checkout and re-run `node scripts/install.mjs <agent>`. If CoalMine's old gate hooks are already in a repo of yours, re-run the installer there to replace them with the chain-only hook.
+
+## [3.21.1] - 2026-10-01
+
+The probe behind the UNREADABLE line now keeps its path checks and its open in separate functions, and a user sees no difference.
+
+### Security
+- **CodeQL #74–#79 (`js/file-system-race`) — the probe behind the `UNREADABLE:` line is restructured so no path check sits in the same function as its open.** The six alerts are one site, `cfgRefusalReason` in `hooks/_shared/node-config.js`, synced into the three hooks and their `plugin/` copies; the function arrived in v3.21.0, so no earlier release has it. Its path checks (is the candidate a directory, a contained regular file, an unreadable entry) now live in `cfgPlacement`, and its one probe open lives in `cfgOpenVerdict`, which closes the handle unread; `cfgRefusalReason` itself now makes no file system call. The verdicts are those of v3.21.0, except one: a non-file swapped in after the path checks is no longer reported as `unreadable`. When the open is denied (`EACCES`, `EPERM`), `cfgOpenVerdict` asks `statSync(file).isFile()`, which follows a link, so a symlink inside the project that points at an unreadable regular file is still reported `unreadable`, and a FIFO swapped in after the path checks, directly or behind a link, stays silent. The probe still never reads the file. This is the shape `readRepoFileBounded` already has. Whether the alerts clear is shown only by the code-scanning list after the next push. — test: `scripts/lib/hooks.test.mjs` (`R12: an in-root symlinked config whose target is unreadable is still reported UNREADABLE (POSIX)`, `R12: a non-file swapped in between the path checks and the open is never reported UNREADABLE (mode-0 FIFO, POSIX)`)
+
+**What you need to do:** nothing is required. To receive the changed hook files, on Claude Code run `claude plugin update coalmine@coalmine`; users of `coalmine@claude-community` receive them when that catalog's pin moves; for any other agent, update your CoalMine checkout and re-run `node scripts/install.mjs <agent>`.
+
+## [3.21.0] - 2026-10-01
+
+Session start now reports a config it could not read, and the release workflow alone now creates Releases.
+
+### Added
+- **UMB-174 (b) — an `UNREADABLE:` line when a config exists but cannot be used.** The session-start conductor (on Claude Code, Antigravity and Gemini CLI alike) now reports, in the flock's wording, a config the walk selected that it could not read: `UNREADABLE: <path> exists but is not a readable config (<reason>); it was skipped — canonical = .claude/coal/coalmine.json`. The four reasons are `malformed JSON` · `a directory` · `unreadable` (EACCES, or EPERM from a Windows ACL) · `not a JSON object` (valid JSON that is not an object, R6 amendment 2). A leading U+FEFF is still stripped before the parse, so a BOM-prefixed config is read, not reported. Which config is used is unchanged: only the silence goes. A config the CWK-137 reader refuses (a link out of the project, over 1 MiB, a FIFO or device) stays silent. — test: `scripts/lib/hooks.test.mjs` (`UMB-174:` / `R6 AMENDMENT 2:` / `HEAD RULING (R8):`)
+- **CWK-135 (a) — the global tier names its own path.** An unreadable `~/.claude/.coalmine.json` gets its own `UNREADABLE:` line whose canonical is `~/.claude/.coalmine.json`, never the project path, because a global config has no project location to move to. — test: `scripts/lib/hooks.test.mjs` (`CWK-135 (a):`)
+
+### Changed
+- **CWK-124 — the release workflow is now the sole creator of this repo's Releases, and it derives the title and body from the CHANGELOG entry.** `.github/workflows/claude-ai-zips.yml` is the flock's canon workflow (byte-identical to the `TheColliery/.github` overlay) and replaces the earlier one. On a stable `v*` tag it runs `verify.mjs`, stages the skill directories, zips each one, derives the Release title (`vX.Y.Z - <summary>`) and body from the top `CHANGELOG.md` entry with `scripts/release-notes.mjs`, creates the Release (or edits it, if a re-run finds one), attaches the ZIPs and `SHA256SUMS.txt`, then re-reads the Release and compares its title and body by SHA256. The top entry must be a dated `## [X.Y.Z]` heading that matches the tag and open with a one-line summary: an `[Unreleased]` heading, a version that does not match the tag, or a missing summary stops the run with a `ChangelogShapeError`. A tag with a hyphen (a pre-release) and a run against a branch get no Release and no ZIPs. The maintainer no longer posts a Release by hand. The asset set is unchanged (nine ZIPs and `SHA256SUMS.txt`, measured identical to the earlier workflow's). Seven new test files joined `scripts/test.mjs`. — test: `scripts/lib/release-shape.test.mjs` · `scripts/lib/release-prune.test.mjs` · `scripts/lib/asset-upload-mode.test.mjs` · `scripts/release-notes.test.mjs` · `scripts/verify-release-shape.test.mjs` · `scripts/decide-upload.test.mjs` · `scripts/prune-release-zips.test.mjs`
+
+### Fixed
+- **A FIFO planted where the in-place fallback writes no longer hangs the write.** The fallback's open is `O_WRONLY` on a path an attacker can swap for a FIFO, and that open blocks until a reader appears, before any check on the handle can run. It now opens with `O_NONBLOCK` as well (`O_WRONLY | O_NONBLOCK | O_NOFOLLOW`, each where the platform has it): a FIFO with no reader fails at the open with `ENXIO` and the original error is rethrown. `O_NONBLOCK` does not change writes to a regular file, and Windows has neither the flag nor FIFOs in a directory. — test: `scripts/lib/repo-fs.test.mjs` (`writeRepoFile EPERM fallback: a FIFO planted before the fallback opens fails fast, never hangs`)
+- **CodeQL #70–#73 (`js/unused-local-variable`) — `MAX_DOC_BYTES` moved out of the shared config region into the conductor, its only reader**, so the stop and touch hooks no longer carry it. — test: `scripts/lib/repo-fs.test.mjs` (`the hooks carry the SAME two bounds as repo-fs.mjs`)
+
+### Security
+- **CodeQL #69 (`js/file-system-race`) — the write-side in-place fallback now checks the open handle, not the path.** When Windows refuses the rename over a file another process holds open, `writeRepoFile` falls back to an in-place write for a single-link regular file. In v3.20.2 that fallback checked the path first, so a link swapped in between the check and the open was followed. It now opens the target without truncating (`O_NOFOLLOW` where the platform has it), checks `isFile` and `nlink === 1` on that handle, then truncates and writes through it; a link already planted before the open (inside the refused rename) fails the open on POSIX. **Residual, named:** Windows has no `O_NOFOLLOW`, so there a symlink swapped in during that window is still followed; it must still resolve to a single-link regular file, and creating a symlink on Windows needs a privilege. — test: `scripts/lib/repo-fs.test.mjs` (`writeRepoFile EPERM fallback: a link planted BEFORE the fallback opens (inside the refused rename) is never followed`, and the swap-after-the-check test beside it)
+- **CWK-133 + CWK-136 — every `git` the installer, the gates and the fixtures run strips the inherited `GIT_*` environment.** Inside a linked worktree, a git hook exports an absolute `GIT_DIR`; a `git` spawned with the inherited environment then acts on the repository that `GIT_DIR` names (measured: a fixture `git init` re-initialised it). Every `git` spawn under `scripts/` now goes through `gitEnv()`, which deletes the whole `GIT_*` family and pins `GIT_CEILING_DIRECTORIES`. `verify.mjs` gained a census over `scripts/**/*.mjs` that fails on a `spawn`, `spawnSync`, `execFile` or `execFileSync` of `git` with no `env:`, or one passing `process.env` without `gitEnv()`, and that refuses `git` run through a shell string (`exec` or `execSync`) whether or not `gitEnv()` is present. — test: `scripts/lib/git-env.test.mjs`, `scripts/lib/git-env-census.test.mjs`
+
+**What you need to do:** nothing is required. If session start now prints an `UNREADABLE:` line, that config was already being skipped; fix or delete the file it names (see Configure in the README).
+
+## [3.20.2] - 2026-09-24
+
+A link planted in a cloned repository can no longer crash the hooks or make install and configure write outside it.
+
+### Security
+A cloned repository is untrusted input, and three defects let one act on your machine through a planted
+symbolic link (a junction on Windows), FIFO or device file. **Every release from 1.0.0 (the first
+release, untagged: its heading below is dated 2026-06-09) through v3.20.1 is affected**; the
+range comes from a walk of versions (`plugin.json` history, these headings and the tags), not of tags alone.
+The per-defect first version and the full advisory are in
+[SECURITY.md](https://github.com/TheColliery/CoalMine/blob/main/SECURITY.md#-security-advisories). No CVE id is claimed; none exists. Found by a blind
+automated security review (2026-09-24).
+
+- **CWK-137 (1 of 3) — the hooks read repo-derived paths with no bound.** A link to `/dev/zero` at
+  `AGENTS.md`, `MEMORY.md`, `README.md`, a rules file or the project `coalmine.json` crashed the hook
+  (`std::bad_alloc`, exit 134, measured on Linux under a 3 GB address-space cap); a FIFO at any of those
+  paths, or a `.claude/rules` link to `/`, made the hook never return. The same unbounded read sat in
+  `verify.mjs <target>` and its manifest check. Reads now go through `readRepoFileBounded`, in the three
+  hooks (`hooks/_shared/node-config.js`, synced by `build-plugin.mjs`) and in `scripts/lib/repo-fs.mjs`
+  for the CLIs. It does `lstat` first. A regular file proceeds. A symlink proceeds only when its
+  `realpath.native` target lies inside the project root and is a regular file. A FIFO, device, socket,
+  directory, or a link that escapes the project or dangles is skipped before `open`. The open uses
+  `O_NONBLOCK` where the platform has it, the fd is re-checked (regular file, size), and a file over
+  its bound is **skipped, never truncated**: `MAX_CONFIG_BYTES` = 1 MiB for configs, `MAX_DOC_BYTES` =
+  4 MiB for governance docs (measured: the largest real config is 9,114 B and the largest real doc is
+  216,465 B). The conductor's two rule-tree walks became one bounded walk, `forEachRuleDoc`, capped at
+  `MAX_RULE_WALK_ENTRIES` = 5000 entries and `MAX_RULE_WALK_DEPTH` = 16 levels; an escaping `.claude/rules`
+  root is not entered. The stop hook's language probe reads a 4096-byte prefix through the same helper.
+  Your own home files (the global config, the mode switch, the update stamp) keep their symlinks, since
+  dotfile managers link them, but still must be a regular file within the bound. **Behaviour that is
+  now narrower, on purpose:** a project config or rule file that is a link out of the project, or larger
+  than its bound, is ignored by the hooks. `verify.mjs <target>` reports such an installed file as
+  `REFUSED` (distinct from `MISSING`) and such a `SKILL.md` as unreadable. The PowerShell fallback hooks carry the same check as `Test-CoalmineSafeFile`
+  (`hooks/_shared/ps-config.ps1`), **stricter than Node by design**: PowerShell 5.1 has no
+  `realpath.native`, so it refuses every reparse point on the file or on any directory between the file
+  and the project root, even one that stays inside — test: `scripts/lib/repo-fs.test.mjs`, the
+  `CWK-137:` tests in `scripts/lib/hooks.test.mjs` and `scripts/lib/ps-config.test.ps1`.
+- **CWK-137 (2 of 3) — `install.mjs` wrote through a planted link.** With `.github/copilot-instructions.md`
+  linked to `~/.bashrc`, `install.mjs copilot` appended CoalMine's rules block to the shell rc and
+  reported success (measured on the newest 1.0.0 tree, v2.0.0 and v3.20.1). The same write-through applied to the platform rules
+  file each target writes, an existing git hook or its `.pre-coalmine` backup slot, the default project
+  config, the manifest, and a link on any of the nine project-level agent folders `install.mjs` writes
+  into as of v3.20.1 (`.github`, `.agents`, `.claude`, `.gemini`, `.cursor`, `.windsurf`, `.junie`, `.kiro`,
+  `.augment`) that carried the skills install and the default config outside the project. Writes now go through `writeRepoFile`: the nearest existing ancestor must resolve
+  inside the project, the target must not be a link and must be a regular file, and the bytes go to a
+  sibling temp opened with `wx` and are renamed into place, so a link planted after the check is replaced
+  and never written through. A refusal is loud: `[refused] <path>: <reason>`, exit 1, nothing written.
+  A hooks directory outside the worktree (a linked worktree's gitdir, an absolute `core.hooksPath`) is its
+  own root, on the reasoning that git configuration chose it rather than a file the repo planted. That holds
+  for a git clone, which carries neither `.git/config` nor a `.git` file, and not for a tree delivered as an
+  archive, so it is a named residual below. Where Windows refuses the rename over
+  a file another process holds open (`EPERM`/`EBUSY`/`EACCES`, e.g. re-installing the hooks from inside a
+  running pre-commit), the write falls back to an in-place write only for a single-link regular file — test:
+  `scripts/lib/repo-fs.test.mjs` and the `CWK-137:` tests in `scripts/lib/install.test.mjs`.
+- **CWK-137 (3 of 3) — `configure.mjs` read, backed up and overwrote through a planted link.** With the
+  project config linked to `~/.bashrc`, `configure.mjs` treated it as malformed, copied its bytes into a
+  `.bak` inside the repository, then overwrote the link target (measured on v3.3.0 and v3.20.1: the rc file
+  ended as `{ "language": "en" }` and the `.bak` held the original bytes). It now checks the read path and
+  the write path with `checkRepoWriteTarget` before any read or backup, refuses with the path named
+  (exit 1), reads through `readRepoFileBounded`, and writes the config and the `.bak` through
+  `writeRepoFile`. **`configure.mjs --global` keeps its follow-through write** to `~/.claude/.coalmine.json`,
+  because dotfile managers link that file; its read is bounded and regular-file only — test:
+  `scripts/lib/repo-fs.test.mjs` and the `CWK-137:` tests in `scripts/lib/configure.test.mjs`.
+
+Residuals, named: a regular file swapped in between the `lstat` and the `open` may lie outside the root
+(the fd re-check still holds the read to a bounded regular file); a link planted between a write's check and
+its rename is replaced, not followed, except on the single-link in-place fallback above, where a link swapped
+in between its `lstat` and its open is not caught. A tree delivered as an archive can carry a planted
+`.git/config` with an outside `core.hooksPath` (or a `.git` file naming an outside gitdir), and `install.mjs`
+will then replace git hooks in that directory; the bound is that the bytes are CoalMine's own fixed gate
+script, never attacker text, and an existing hook is first kept as `<hook>.pre-coalmine`. An agent's own
+file reads through its tools are the host's permission system, not covered here.
+
+**What you need to do:** update. On Claude Code run `claude plugin update coalmine@coalmine`; users of `coalmine@claude-community` receive it when that catalog's pin moves; for any other agent, update your CoalMine checkout and re-run `node scripts/install.mjs <agent>`. If you ran CoalMine in a clone you did not write, the "What to check" list in the [advisory](https://github.com/TheColliery/CoalMine/blob/main/SECURITY.md#-security-advisories) says what to look for.
+
 ## [3.20.1] - 2026-09-22
 
 ### Changed

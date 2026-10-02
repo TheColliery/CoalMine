@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { inject, renderSkillMd, installSkillDir, listSkills, SHARED_REFERENCES } from './render.mjs';
+import { gitEnv } from './git-env.mjs';
 
 const NL = String.fromCharCode(10);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -138,7 +139,7 @@ test('SHARED_REFERENCES is a non-empty list of {name, src} entries', () => {
 test('verify.mjs negative path: stale dist fails, clean copy passes', () => {
   const tmp = mkTmp('cm-verify-');
   try {
-    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt']) {
+    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src']) {
       fs.cpSync(path.join(repo, d), path.join(tmp, d), { recursive: true });
     }
     const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
@@ -164,7 +165,7 @@ test('verify.mjs negative path: stale dist fails, clean copy passes', () => {
 test('verify.mjs negative path: an over-cap .claude-plugin/plugin.json description FAILs the gate', () => {
   const tmp = mkTmp('cm-verify-');
   try {
-    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt']) {
+    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src']) {
       fs.cpSync(path.join(repo, d), path.join(tmp, d), { recursive: true });
     }
     const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
@@ -270,7 +271,7 @@ test('verify.mjs 2.9 config-keys: an undeclared key named in a SKILL.md fails th
 test('verify.mjs 2.8 dist-changelog: a dist change with no CHANGELOG entry fails the WHOLE gate — proves the wiring, not just the module', () => {
   const tmp = mkTmp('cm-verify-distchangelog-');
   try {
-    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt']) {
+    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src']) {
       fs.cpSync(path.join(repo, d), path.join(tmp, d), { recursive: true });
     }
     // A SELF-CONTAINED fixture CHANGELOG — not copied from the live repo. Copying it
@@ -282,7 +283,7 @@ test('verify.mjs 2.8 dist-changelog: a dist change with no CHANGELOG entry fails
     fs.writeFileSync(path.join(tmp, 'CHANGELOG.md'), '# Changelog\n\n## [3.14.0] - 2026-01-01\n\n### Added\n- baseline\n');
 
     const git = (args) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -290,6 +291,9 @@ test('verify.mjs 2.8 dist-changelog: a dist change with no CHANGELOG entry fails
     git(['config', 'user.email', 'test@test.invalid']);
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     // A machine-global tag.gpgSign/tag.forceSignAnnotated would force a bare `git tag
     // <name>` into an annotated, signed tag needing a message, failing non-interactively
     // with "fatal: no tag message?" — the exact fixture defect INSPECT's own RED-first
@@ -370,7 +374,7 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
     fs.writeFileSync(path.join(tmp, 'LOCAL-NOTES.md'), 'machine-local' + NL);
 
     const git = (args) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -378,6 +382,9 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
     git(['config', 'user.email', 'test@test.invalid']);
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
 
@@ -459,7 +466,7 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
     fs.writeFileSync(path.join(tmp, '.gitignore'), 'throwaway-build/' + NL);
 
     const git = (args) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -467,6 +474,9 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
     git(['config', 'user.email', 'test@test.invalid']);
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
 
@@ -573,7 +583,7 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
       NL + 'See `totally-fake-root/notes.md` for details.' + NL);
 
     const git = (args, opts = {}) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8', ...opts });
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', ...opts });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };
@@ -582,6 +592,12 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
     git(['config', 'core.autocrlf', 'true']);
+    // `git commit` starts `git maintenance run --auto` as its own process (measured with
+    // GIT_TRACE2_EVENT: cmd_name "maintenance" follows "commit"); it is not ours to wait on,
+    // and a CI leg (ubuntu node 22, git 2.55) failed this test's cleanup with ENOTEMPTY on
+    // .git. The fixture never wants it.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
     assert.ok(fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8').includes('\r\n\r\n'),
@@ -601,24 +617,24 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
     // fixture failure (git missing, the .gitignore fixture itself broken) and stays
     // fatal. The CONTROL and END-TO-END assertions below run unconditionally either
     // way, so every runner still tests the actual CoalMine behavior.
-    const bare = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/\n' });
+    const bare = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/\n' });
     if (bare.status === 1) {
       t.diagnostic('this Git does not reproduce the lone-CR false-match (bare.status === 1) -- skipping the quirk-specific assertions only; control + end-to-end still run below');
     } else {
       assert.equal(bare.status, 0,
         `RED: the bare feed must reproduce the false match on THIS fixture (or answer 1 if this Git version does not) -- got status ${bare.status}, a genuine fixture failure`);
-      const probed = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/.pointer-check-probe\n' });
+      const probed = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/.pointer-check-probe\n' });
       assert.equal(probed.status, 1,
         'the injection-site feed correctly reports the SAME root as NOT ignored');
-      const verbose = spawnSync('git', ['check-ignore', '-v', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'totally-fake-root/\n' });
+      const verbose = spawnSync('git', ['check-ignore', '-v', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/\n' });
       assert.match(verbose.stdout, /\.gitignore:2:/,
         'the matching pattern must be the lone-CR line (line 2), naming the source unambiguously');
     }
 
     // CONTROL: a genuinely-ignored root still matches under BOTH feeds -- the probe
     // loses no true positive.
-    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'dist/\n' }).status, 0);
-    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, encoding: 'utf8', input: 'dist/.pointer-check-probe\n' }).status, 0);
+    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'dist/\n' }).status, 0);
+    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'dist/.pointer-check-probe\n' }).status, 0);
 
     // A MERELY-CRLF pattern line (the old fixture's own shape) does NOT reproduce it
     // on this box/git version -- kept as the honest, re-aimed sentence (see the header

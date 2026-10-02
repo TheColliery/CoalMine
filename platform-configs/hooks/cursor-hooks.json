@@ -6,7 +6,7 @@
       { "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }
     ],
     "stop": [
-      { "command": "node -e \"const cp=require('child_process'),fs=require('fs');const r=cp.spawnSync(process.execPath,['C:/path/to/CoalMine/hooks/rot-canary-stop.js'],{input:fs.readFileSync(0),encoding:'utf8',timeout:5000});if(r.error&&r.error.code==='ETIMEDOUT'){process.exit(0)}try{const o=JSON.parse(r.stdout);if(o&&o.reason)console.log(JSON.stringify({followup_message:o.reason}))}catch{}\"" }
+      { "command": "node -e \"const cp=require('child_process'),fs=require('fs');const r=cp.spawnSync(process.execPath,['C:/path/to/CoalMine/hooks/rot-canary-stop.js'],{input:fs.readFileSync(0),encoding:'utf8',timeout:5000});if(r.error&&r.error.code==='ETIMEDOUT'){process.exit(0)}try{const o=JSON.parse(r.stdout);const m=o&&[o.reason,o.systemMessage].filter(Boolean).join(' ');if(m)console.log(JSON.stringify({followup_message:m}))}catch{}\"" }
     ]
   }
 }

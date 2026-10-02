@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { checkPointers, pointerCandidates, looksPathShaped, PENDING_POINTERS, classifyCheckIgnoreResult, applyCheckIgnoreProbe, PROBE_SUFFIX, DEFAULT_SURFACE_PLAN, collectSurfaces } from './pointer-check.mjs';
+import { gitEnv } from './git-env.mjs';
 
 const NL = String.fromCharCode(10);
 // A resolver standing in for git + the filesystem. Each fixture names its own tree, so no
@@ -423,7 +424,7 @@ function mkGitRepoForIgnoreProbe() {
   // git-optional capability gate (per the reviewer's own reading of the file), so a
   // setup failure is loud, not a silent skip.
   const g = (args) => {
-    const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8' });
+    const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
     if (r.status !== 0) {
       throw new Error(`fixture setup failed: git ${args.join(' ')}: ${r.stderr || r.error?.message}`);
     }
@@ -433,6 +434,9 @@ function mkGitRepoForIgnoreProbe() {
   g(['config', 'user.email', 'test@test.invalid']);
   g(['config', 'user.name', 'Test']);
   g(['config', 'commit.gpgsign', 'false']);
+  // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+  g(['config', 'maintenance.auto', 'false']);
+  g(['config', 'gc.auto', '0']);
   fs.writeFileSync(path.join(tmp, 'x.txt'), 'x');
   fs.writeFileSync(path.join(tmp, '.gitignore'), 'ignored-dir/' + NL);
   g(['add', '-A']);
@@ -475,7 +479,7 @@ test('classifyCheckIgnoreResult: a REAL git check-ignore --stdin exit other than
     // `preFixLogic` below still runs its loop and still reproduces the bug on this
     // shape).
     const ci = spawnSync('git', ['check-ignore', '--stdin', '--bogus-flag-xyz'],
-      { cwd: tmp, encoding: 'utf8' });
+      { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
     assert.equal(ci.error, undefined,
       'this fixture is chosen to never race a stdin write -- an error here means the determinism assumption above no longer holds and needs re-checking, not silencing');
     assert.notEqual(ci.status, 0, 'this probe only proves anything if git actually took a non-0/1 exit');
@@ -500,7 +504,7 @@ test('classifyCheckIgnoreResult: a REAL exit 0 (a fed path IS ignored) succeeds,
   const tmp = mkGitRepoForIgnoreProbe();
   try {
     const ci = spawnSync('git', ['check-ignore', '--stdin'],
-      { cwd: tmp, encoding: 'utf8', input: 'ignored-dir/probe\n' });
+      { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'ignored-dir/probe\n' });
     assert.equal(ci.status, 0);
     const verdict = classifyCheckIgnoreResult(ci);
     assert.equal(verdict.ok, true);
@@ -514,7 +518,7 @@ test('classifyCheckIgnoreResult: a REAL exit 1 (nothing fed is ignored) succeeds
   const tmp = mkGitRepoForIgnoreProbe();
   try {
     const ci = spawnSync('git', ['check-ignore', '--stdin'],
-      { cwd: tmp, encoding: 'utf8', input: 'not-ignored-at-all/probe\n' });
+      { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'not-ignored-at-all/probe\n' });
     assert.equal(ci.status, 1);
     const verdict = classifyCheckIgnoreResult(ci);
     assert.equal(verdict.ok, true);

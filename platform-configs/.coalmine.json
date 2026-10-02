@@ -107,7 +107,7 @@
   "updateMode": "ask",
 
   // ## Days between self-update checks (auto) or reminders (remind). Also throttles the nudge so it never re-nags within the window.
-  // # Setting type: Int32 (minimum 1)
+  // # Setting type: Int32 (1-365; a value outside that range falls back to 14)
   // # Default value: 14
   "updateCheckDays": 14,
 

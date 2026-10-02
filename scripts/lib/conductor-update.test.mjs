@@ -350,6 +350,22 @@ test('updateMode safer-value-wins: project cannot escalate an explicit global "o
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
+// R13 / CWK-158 item 1 + CWK-141 (1): an out-of-enum or ill-typed project value is DROPPED, not
+// left raw in the merge -- the explicit global "off" holds (probe A, row um-x: the ask directive
+// used to be emitted under a junk project value).
+for (const [label, junk] of [['x', 'x'], ['null', null], ['number', 3], ['object', {}]]) {
+  test(`updateMode clamp drops a junk project value (${label}): an explicit global "off" holds`, () => {
+    const tmp = mkProject({ updateMode: junk });
+    try {
+      writeGlobal(tmp, { updateMode: 'off' });
+      const r = runConductor(tmp);
+      assert.equal(r.status, 0);
+      assert.ok(!r.stdout.includes('self-update'), 'global off must hold against a junk project updateMode');
+      assert.equal(readStamp(tmp), null, 'and no update-check stamp is created');
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+}
+
 test('updateMode safer-value-wins: project MAY move safer (auto global -> off project)', () => {
   const tmp = mkProject({ updateMode: 'off' }); // project going SAFER is always allowed
   try {

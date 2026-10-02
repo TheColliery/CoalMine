@@ -282,3 +282,75 @@ test('configure fails loud on an invalid value and writes nothing', () => {
     assert.ok(!fs.existsSync(path.join(dir, NEW_REL)) && !fs.existsSync(path.join(dir, LEGACY_REL)), 'no config may be written anywhere on failure');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ─── CWK-137: configure never reads, backs up, or writes through a planted link ─────
+// On 59ee1e7 a `.claude/coal/coalmine.json -> ~/.bashrc` link was read, its bytes were
+// copied into a `.bak` INSIDE the repo, and the link target was overwritten (PoC-3).
+function canFileSymlink(dir) {
+  const probe = path.join(dir, '.probe-link');
+  try { fs.symlinkSync(path.join(dir, 'x'), probe, 'file'); fs.unlinkSync(probe); return true; } catch { return false; }
+}
+function findBak(dir) {
+  const hits = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory() && !e.isSymbolicLink()) walk(p); else if (e.name.endsWith('.bak')) hits.push(p); } };
+  walk(dir);
+  return hits;
+}
+
+test('CWK-137: a .claude/coal junction escaping the project is REFUSED -- no overwrite, no .bak anywhere', (t) => {
+  const dir = freshProject();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfg-out-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  const SECRET = 'export SECRET_TOKEN=abc123\n'; // not JSON: the old code backed it up, then overwrote it
+  fs.writeFileSync(path.join(outside, 'coalmine.json'), SECRET);
+  fs.mkdirSync(path.join(dir, '.claude'));
+  fs.symlinkSync(outside, path.join(dir, '.claude', 'coal'), 'junction');
+  const res = runConfigure(['--updateMode', 'off'], dir);
+  assert.notEqual(res.status, 0, `a refusal must fail loud:\n${res.stdout}${res.stderr}`);
+  assert.match(res.stderr, /refused to use the config file/);
+  assert.match(res.stderr, /coalmine\.json/, 'the message names the path');
+  assert.equal(fs.readFileSync(path.join(outside, 'coalmine.json'), 'utf8'), SECRET, 'the outside file is untouched');
+  assert.deepEqual(fs.readdirSync(outside), ['coalmine.json'], 'no .bak and no temp land outside');
+  assert.deepEqual(findBak(dir), [], 'no .bak copy of the outside bytes lands in the repo');
+});
+
+test('CWK-137: a project config symlink to a home dotfile is REFUSED -- no overwrite, no .bak (POSIX, or privileged Windows)', (t) => {
+  const dir = freshProject();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cfg-home-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  if (!canFileSymlink(dir)) { t.skip('file symlinks need privilege on this volume'); return; }
+  const SECRET = 'export SECRET_TOKEN=abc123\n';
+  const bashrc = path.join(home, '.bashrc');
+  fs.writeFileSync(bashrc, SECRET);
+  fs.mkdirSync(path.join(dir, '.claude', 'coal'), { recursive: true });
+  fs.symlinkSync(bashrc, path.join(dir, '.claude', 'coal', 'coalmine.json'), 'file');
+  const res = runConfigure(['--updateMode', 'off'], dir);
+  assert.notEqual(res.status, 0);
+  assert.equal(fs.readFileSync(bashrc, 'utf8'), SECRET, 'the fake ~/.bashrc is untouched');
+  assert.deepEqual(findBak(dir), [], 'no .bak copy of the dotfile lands in the repo');
+});
+
+// R13 / CWK-158 item 5 (B-u3-2b, the 2026-09-26 incident): HOME is sandboxed (CONTRIBUTING's prescription), so
+// isGlobalCfgFile -- which compares against os.homedir() -- could not recognise the REAL global config sitting in
+// an ANCESTOR of the cwd; the walk took it for a legacy PROJECT config and the writer migrated (moved + deleted)
+// it. The writer now anchors on the nested legacy shape only at the cwd itself.
+test('CWK-158 item 5: configure never migrates a nested legacy config that sits ABOVE the cwd (a real profile seen through a sandboxed HOME)', () => {
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-outerhome-'));
+  const sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-sandboxhome-'));
+  try {
+    fs.mkdirSync(path.join(outer, '.claude'), { recursive: true });
+    const realGlobal = path.join(outer, '.claude', '.coalmine.json');
+    const BODY = JSON.stringify({ language: 'th', updateMode: 'off' });
+    fs.writeFileSync(realGlobal, BODY, 'utf8');
+    const proj = path.join(outer, 'work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const r = spawnSandboxed(process.execPath, [CONFIGURE, '--language', 'en'], { cwd: proj, sandboxDir: sandboxHome });
+    assert.equal(r.status, 0, `configure must pass:\n${r.stdout}${r.stderr}`);
+    assert.equal(fs.readFileSync(realGlobal, 'utf8'), BODY, 'the config above the cwd keeps its bytes and is not deleted');
+    assert.ok(!fs.existsSync(path.join(outer, '.claude', 'coal', 'coalmine.json')), 'nothing was written at the ancestor');
+    assert.ok(fs.existsSync(path.join(proj, '.claude', 'coal', 'coalmine.json')), 'the config is written at the cwd project instead');
+  } finally {
+    fs.rmSync(outer, { recursive: true, force: true });
+    fs.rmSync(sandboxHome, { recursive: true, force: true });
+  }
+});

@@ -14,14 +14,14 @@ const os = require('os');
 const path = require('path');
 
 // Onboarding offer is a separate line so .coalmine.json skipOnboarding can drop it.
-const ONBOARDING = '- gold-standard (important): no "coalmine: verified" stamp in .claude/rules/, .agents/rules/, or AGENTS.md → offer /gold-standard ONCE this session (Run now / Queue / Skip; respect Skip). Re-offer when a stamp is past its revalidate date.';
+const ONBOARDING = '- gold-standard (important): no "coalmine: verified" stamp in .claude/rules/, .agents/rules/, AGENTS.md, or STANDARDS.md → offer /gold-standard ONCE this session (Run now / Queue / Skip; respect Skip). Re-offer when a stamp is past its revalidate date.';
 const CONDUCTOR_HEAD = [
   '[CoalMine] 9 quality canaries installed. Conduct them (answer in the USER\'S language; offer via your question tool; never auto-run costly work without a chosen option):',
   '- rot-canary: hooks auto-scan touched files at session end (QUICK, capped via autoScanFileCap; offer the fix menu if a user is present). DEEP whole-repo scan only on request.',
 ];
 const CONDUCTOR_TAIL = [
   '- Specialists — offer on domain entry (never auto-run): deps/packages → supply-chain-audit · schema/contract/serialization → drift-canary · async/retry/failure paths → resilience-audit · hot loops/queries/caches → scale-canary · tests/coupling/DI → testability-canary · logging/metrics/tracing → telemetry-canary · version-sensitive facts → source-grounding.',
-  '- Honor every .coalmine.json override if present (the installed commented file documents all keys).',
+  '- Honor every .coalmine.json override if present (the Configure section of the README documents all keys).',
   '- Self error-report: if a CoalMine component misbehaves, OFFER to file it at https://github.com/TheColliery/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit.',
 ];
 
@@ -46,7 +46,15 @@ const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
 // `existsSync(p)` precedes every call and the global side must exist for the collision to arise.
 function isGlobalCfgFile(p) {
   try {
-    return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
+    // R14 / B-u3-2b (the git-home case): os.homedir() follows HOME/USERPROFILE, which a sandboxed run moves away from
+    // the real profile, so the REAL ~/.claude/.coalmine.json was taken for a project's legacy config and migrated.
+    // os.userInfo().homedir reads the OS account record, which no environment variable moves. Compare against both.
+    const here = fs.realpathSync.native(p);
+    const homes = [os.homedir()];
+    try { homes.push(os.userInfo().homedir); } catch { /* no account record: the env home alone */ }
+    return homes.some((h) => {
+      try { return here === fs.realpathSync.native(path.join(h, '.claude', '.coalmine.json')); } catch { return false; }
+    });
   } catch { return false; }
 }
 
@@ -142,18 +150,159 @@ function projectConfigPath(root) {
   return ownDirDefault(root); // nothing found anywhere -- own-dir is both the read and write target
 }
 
+// CWK-137 -- BOUNDED READS OF REPO-DERIVED PATHS. A cloned repo is untrusted: its
+// `.coalmine.json`, `AGENTS.md` and rule files can be symlinks to /dev/zero (the
+// conductor allocated ~8 GB and died, std::bad_alloc, measured on 59ee1e7), FIFOs
+// (open() blocks forever) or links out of the repo. Every hook read of such a path
+// goes through readRepoFileBounded; a refused read is a SILENT skip (Phoenix #4/#13).
+// The rules, identical to scripts/lib/repo-fs.mjs (the CLI copy -- a hook cannot
+// import an ESM lib, Phoenix #9; repo-fs.test.mjs asserts both bounds match -- the
+// config bound here, the document bound in coalmine-conductor.js):
+//   lstat; a regular file proceeds; a symlink proceeds only when its realpath.native
+//   target lies inside the root's realpath AND is a regular file; a FIFO, device,
+//   socket, directory, or escaping/dangling link is skipped BEFORE open. Then open
+//   (O_NONBLOCK where it exists, so a FIFO swapped in after the lstat cannot block),
+//   fstat the fd, and re-check regular + size on the fd. Over the bound = SKIPPED,
+//   never truncated: a truncated JSON config would parse as malformed, a truncated
+//   stamp scan would miss stamps silently.
+// `root` null = no containment: the user's own home files (the global config, the
+// update stamp, the mode switch) are legitimately symlinked by dotfile managers, but
+// still get regular-file + size, since /dev/zero there is still a hang.
+// RESIDUAL, named: a regular file swapped in between the lstat and the open may lie
+// outside the root; the fd check still holds it to a bounded regular-file read.
+// Bound measured on this box 2026-09-24 over every repo under source/repos (27,451
+// files): the largest real `.coalmine.json` is 9,114 B (the shipped commented template).
+// The DOCUMENT bound (MAX_DOC_BYTES) lives in coalmine-conductor.js, its only reader:
+// kept here it rode into the stop and touch hooks unused (CodeQL #70-#73).
+const MAX_CONFIG_BYTES = 1024 * 1024;   // ~115x the largest config
+const REPO_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
+function isContained(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
+  try {
+    const lst = fs.lstatSync(p);
+    if (!lst.isSymbolicLink() && !lst.isFile() && !lst.isDirectory()) return null;
+    if (root != null && !isContained(fs.realpathSync.native(p), fs.realpathSync.native(root))) return null;
+    const st = lst.isSymbolicLink() ? fs.statSync(p) : lst;
+    if (st.isFile()) return 'file';
+    if (st.isDirectory()) return 'dir';
+    return null;
+  } catch { return null; }
+}
+function readRepoFileBounded(file, root, maxBytes, prefixOnly) {
+  if (repoEntryKind(file, root) !== 'file') return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, REPO_READ_FLAGS);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    if (st.size > maxBytes && !prefixOnly) return null;
+    const want = Math.min(st.size, maxBytes);
+    const buf = Buffer.alloc(want);
+    let got = 0;
+    while (got < want) {
+      const n = fs.readSync(fd, buf, got, want - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+
 // One BOM- and comment-tolerant JSONC read. Strips // and /* */ comments outside
 // strings: the string alternative consumes an escaped char (\\.) or any
 // non-quote/non-backslash char, so a value ending in \\ terminates the string
 // correctly instead of leaking escape state into the next token (which would
 // mis-strip a later //-containing string → silent revert).
-function readCfgFile(file) {
+// `root` = the project root for a repo-derived config, null for the global one (CWK-137).
+function readCfgFile(file, root) {
+  return readCfgResult(file, root).cfg;
+}
+
+// UMB-174 (b) + R6 AMENDMENT 2: the same read, plus WHY a config that exists was not
+// used, so the conductor can say so on its one sanctioned SessionStart line instead of
+// staying silent. `reason` is one of the flock's four, or null:
+//   'malformed JSON'    -- JSON.parse threw (a leading U+FEFF is stripped BEFORE the
+//                          parse, RFC 8259 §8.1; PS 5.1 writes one whenever asked for UTF-8)
+//   'not a JSON object' -- valid JSON that is not a plain object ([1], "x", 3, null)
+//   'a directory'       -- the candidate is a directory (or a contained link to one)
+//   'unreadable'        -- the OS denied the read: EACCES, or EPERM (a Windows ACL denial)
+// null = read and used, or absent, or REFUSED by the CWK-137 reader (a link out of the
+// root, over MAX_CONFIG_BYTES, a FIFO or device): those stay SILENT by the head's ruling
+// (a new reason for them is a flock-wide question, returned to main). The fs error is
+// keyed on its CODE, never its message (node/runtime.md §7). The SELECTION is unchanged:
+// every caller already skips a null cfg exactly as before.
+function readCfgResult(file, root) {
+  let raw;
+  try { raw = readRepoFileBounded(file, root, MAX_CONFIG_BYTES); } catch { raw = null; }
+  if (raw === null) return { cfg: null, reason: cfgRefusalReason(file, root) };
+  let parsed;
   try {
-    const content = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+    const content = raw.replace(/^\uFEFF/, '');
     const cleanJson = content.replace(/"(?:\\.|[^"\\])*"|\/\/.*|\/\*[\s\S]*?\*\//g, (m) => (m[0] === '"' ? m : ''));
-    const parsed = JSON.parse(cleanJson);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  } catch {}
+    parsed = JSON.parse(cleanJson);
+  } catch { return { cfg: null, reason: 'malformed JSON' }; }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { cfg: parsed, reason: null };
+  return { cfg: null, reason: 'not a JSON object' };
+}
+
+// Why readRepoFileBounded gave nothing back -- consulted ONLY on that failure path, so a
+// config that reads cleanly costs no extra syscall. A second open is made only for a
+// regular, contained file, so a FIFO is still never opened.
+// R12 (CodeQL #74-#79, js/file-system-race): this function holds NO fs call on `file`. The
+// path checks live in cfgPlacement and the open in cfgOpenVerdict, the way readRepoFileBounded
+// leans on repoEntryKind. What makes the alerts' pattern go away is that SPLIT: no path
+// check shares a function with the open (by the query's source it pairs a check and an
+// open of one path only inside one function). Only the next push's code-scanning list shows
+// whether they clear.
+function cfgRefusalReason(file, root) {
+  const where = cfgPlacement(file, root);
+  if (where === 'a directory' || where === 'unreadable') return where;
+  return where === 'file' ? cfgOpenVerdict(file) : null;
+}
+
+// Where the config candidate sits, decided WITHOUT opening it: 'a directory' | 'unreadable'
+// (lstat itself was denied) | 'file' (a regular, contained file: worth one probe open) | null.
+function cfgPlacement(file, root) {
+  let lst;
+  try { lst = fs.lstatSync(file); } catch (e) { return cfgDenied(e) ? 'unreadable' : null; }
+  const kind = repoEntryKind(file, root);
+  if (kind === 'dir') return 'a directory';
+  if (kind === 'file') return 'file';
+  // A Windows ACL read-deny makes realpathSync.native on the FILE throw EPERM (measured:
+  // lstat and stat succeed, realpath and open do not), so repoEntryKind cannot place it.
+  // A plain file (never a link) lives where its parent directory does, so containment is
+  // checked through the PARENT's realpath instead -- a link out of the root, a FIFO or a
+  // device still falls through to silence.
+  if (!lst.isFile()) return null;
+  try {
+    const dirReal = fs.realpathSync.native(path.dirname(file));
+    if (root != null && !isContained(path.join(dirReal, path.basename(file)), fs.realpathSync.native(root))) return null;
+  } catch { return null; }
+  return 'file';
+}
+function cfgDenied(e) { return !!(e && (e.code === 'EACCES' || e.code === 'EPERM')); }
+
+// The probe open: it exists only to learn the OS verdict (errno EACCES/EPERM); an open that
+// succeeds is closed unread and the verdict is silent (the bound refused it, over
+// MAX_CONFIG_BYTES). A denied open may belong to a non-file swapped in after the path checks
+// (a mode-0 FIFO), so statSync decides: it follows a link, so a link to an unreadable regular
+// file still reads 'unreadable', and a FIFO (swapped in, or behind a link) stays silent. The
+// worst a further race can do is change one advisory line. The two R12 outcome tests in
+// hooks.test.mjs (in-root link, mode-0 FIFO swap) pin this.
+function cfgOpenVerdict(file) {
+  let fd;
+  try { fd = fs.openSync(file, REPO_READ_FLAGS); } catch (e) {
+    if (!cfgDenied(e)) return null;
+    try { return fs.statSync(file).isFile() ? 'unreadable' : null; } catch { return null; }
+  }
+  try { fs.closeSync(fd); } catch {}
   return null;
 }
 
@@ -246,6 +395,14 @@ function viaArr(obj, key, legacyKey) { // same preference, array-shaped (for UNI
   if (legacyKey && Array.isArray(obj[legacyKey])) return obj[legacyKey];
   return undefined;
 }
+// The project's value for `key` (and its legacy alias) is unusable: restore what the GLOBAL layer
+// said under each name, or remove the name so every read site falls to its own default.
+function dropProject(merged, globalCfg, key, legacy) {
+  for (const name of legacy ? [key, legacy] : [key]) {
+    if (globalCfg && globalCfg[name] !== undefined) merged[name] = globalCfg[name];
+    else delete merged[name];
+  }
+}
 const SAFER_ENUM = {
   updateMode: { order: ['off', 'remind', 'ask', 'auto'], default: 'ask' },
   enableConductor: { order: [false, true], default: true, legacy: 'conductor' }, // index 0 = safest; default = config-schema.mjs's declared factory default (README Configure table)
@@ -294,8 +451,9 @@ function loadCfg(base) {
   _cfgBase = key;
   _cfg = null;
   try {
-    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'));
-    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(base === undefined ? process.cwd() : base)));
+    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'), null);
+    const projRoot = findGitRoot(base === undefined ? process.cwd() : base);
+    const projectCfg = readCfgFile(projectConfigPath(projRoot), projRoot);
     if (globalCfg || projectCfg) {
       const merged = {};
       for (const src of [globalCfg, projectCfg]) {
@@ -316,9 +474,17 @@ function loadCfg(base) {
         if (projectVal === undefined) continue; // project expressed no opinion via either name
         const globalVal = via(globalCfg, key, legacy);
         const globalValue = globalVal !== undefined ? globalVal : def;
-        const gi = order.indexOf(fold(globalValue));
+        const gi0 = order.indexOf(fold(globalValue));
+        const gi = gi0 === -1 ? order.indexOf(def) : gi0; // an unknown GLOBAL value reads as the schema default
         const pi = order.indexOf(fold(projectVal));
-        if (gi === -1 || pi === -1) continue; // unknown value: leave the shallow-merge result
+        if (pi === -1) {
+          // R13 / CWK-158 item 1 + CWK-141 (1): an unknown or ill-typed PROJECT value (null, a
+          // string outside the enum, a number) is DROPPED -- it reads as ABSENT, so the global
+          // (or the schema default) decides. It used to `continue` and leave the raw junk in the
+          // shallow merge, which defeated an explicit global off/false on every consent gate.
+          dropProject(merged, globalCfg, key, legacy);
+          continue;
+        }
         // Store the CANONICAL member (order[i]), never the raw-cased winner: a
         // consumer that trusts the merge output and compares with strict === --
         // rotCanaryMode's `mode === 'off' || mode === 'manual'` in rot-canary-stop.js/
@@ -336,7 +502,13 @@ function loadCfg(base) {
       // UNION (dedup), not "pick one side" — either side may add.
       for (const [key, { default: def, lower, legacy }] of Object.entries(UNION_ARRAY_KEYS)) {
         const projectArr = viaArr(projectCfg, key, legacy);
-        if (projectArr === undefined) continue; // project expressed no opinion via either name
+        if (projectArr === undefined) {
+          // R13 / CWK-158 item 1: a project value that is PRESENT but not an array (null, a string,
+          // a number) used to survive the merge raw and replace the owner's global list; it is
+          // dropped now -- the global list (or the default) stands.
+          if (projectCfg && (projectCfg[key] !== undefined || (legacy && projectCfg[legacy] !== undefined))) dropProject(merged, globalCfg, key, legacy);
+          continue; // otherwise the project expressed no opinion via either name
+        }
         const globalArr = viaArr(globalCfg, key, legacy) ?? def; // absent global = its schema default ([]), never "nothing to union"
         const foldFn = lower ? fold : (v) => v;
         const result = [...new Set([...globalArr, ...projectArr].map(foldFn))];
@@ -401,9 +573,10 @@ function oldUpdateStampPath() {
 // stamp (migration read). null when neither exists / is unreadable.
 function readUpdateStamp() {
   for (const p of [updateStampPath(), oldUpdateStampPath()]) {
-    try {
-      return fs.readFileSync(p, 'utf8').trim();
-    } catch { /* try the next location */ }
+    // CWK-137: bounded + regular-file only (a FIFO planted at the stamp path would block
+    // SessionStart forever). Home state, so no containment root.
+    const body = readRepoFileBounded(p, null, MAX_CONFIG_BYTES);
+    if (body !== null) return body.trim();
   }
   return null;
 }
@@ -440,11 +613,11 @@ function writeUpdateStamp(today) {
 function updateDirective(mode, days) {
   switch (mode) {
     case 'ask':
-      return `- CoalMine self-update (ask the user ONCE via your question tool, in their language): "How should CoalMine keep itself current?" Offer 3 — **auto** (I check for a newer version about every ${days} days and apply updates when you approve; ~1-2K tokens per check), **remind** (a free periodic reminder; you run \`claude plugin update coalmine@coalmine\` yourself), **off** (no reminders). Save the choice: \`node scripts/configure.mjs --updateMode <auto|remind|off>\` (run from the CoalMine repo). Do not check now — the saved mode drives future sessions.`;
+      return `- CoalMine self-update (ask the user ONCE via your question tool, in their language): "How should CoalMine keep itself current?" Offer 3 — **auto** (I check for a newer version about every ${days} days and apply updates when you approve; ~1-2K tokens per check), **remind** (a free periodic reminder; you run \`claude plugin update coalmine@coalmine\` yourself), **off** (no reminders). Save the choice by setting \`"updateMode"\` to the picked value (auto, remind or off) in the global config \`~/.claude/.coalmine.json\` (create the file if it is absent; keep every other key as it is). The plugin ships no scripts/ folder, so there is nothing to run; a CoalMine source checkout also offers \`node scripts/configure.mjs --global --updateMode <value>\`. Do not check now — the saved mode drives future sessions.`;
     case 'auto':
       return '- CoalMine self-update (standing consent — do this now): follow /coalmine:update to web-check the latest CoalMine tag vs the installed plugin.json version. If newer, OFFER `claude plugin update coalmine@coalmine` + `/reload-plugins`; if current, say "up to date"; if git/network is unavailable, say so and suggest updating manually later (never assume).';
     case 'remind':
-      return `- CoalMine self-update reminder (relay to the user in their language, no action needed): it has been ~${days}d since the last CoalMine update-check — consider \`claude plugin update coalmine@coalmine\` to refresh, or switch to auto (\`node scripts/configure.mjs --updateMode auto\`).`;
+      return `- CoalMine self-update reminder (relay to the user in their language, no action needed): it has been ~${days}d since the last CoalMine update-check — consider \`claude plugin update coalmine@coalmine\` to refresh, or switch to auto (set \`"updateMode": "auto"\` in \`~/.claude/.coalmine.json\`).`;
     default:
       return null; // 'off' (or unknown) → nothing for kind 1
   }
@@ -482,18 +655,62 @@ const REVALIDATE_RE = /revalidate\s+(\d+)d/;
 // A real stamp is ~80-150 chars; a well-formed stamp fits easily, a poisoned blob
 // can never grow the regex's work past this bound.
 const STAMP_WINDOW = 2048;
+// R14 / CSV-10: at most this many stamp openers are examined per document. The largest real document on this box
+// carries 8 stamps (re-derive: grep -c 'coalmine: verified' over the rules trees); a hostile document of dense
+// openers would otherwise cost one 2 KiB regex run per 16 bytes. Past the bound the count undercounts (the safe direction).
+const MAX_STAMP_OPENERS = 200;
 
-function countPastDueStamps(roots, today, cfg) {
+// CWK-137 -- the KIND 2 walks read REPO-DERIVED paths, so both are bounded. The roots are
+// classified with repoEntryKind (lstat + realpath containment, never a following statSync:
+// a repo planting `.claude/rules -> /` made the walk traverse the whole filesystem, a 30 s
+// timeout measured on 59ee1e7), every document read goes through readRepoFileBounded (a
+// `.md` FIFO blocked open() forever), and the walk itself is capped. readdir's Dirent does
+// NOT follow links, so a linked subdirectory is never descended into and a linked `.md` is
+// judged by repoEntryKind like any other read. Bounds: the largest rule tree on this box
+// (every repo under source/repos, measured 2026-09-24) holds 14 files, two levels deep.
+// The document bound, measured 2026-09-24 over every repo under source/repos: the largest
+// governance markdown is 216,465 B (a zone umbrella mirror; AGENTS.md 216,047 B). Lives here,
+// not in the shared node-config region, because only this hook reads documents (CodeQL
+// #70-#73); scripts/lib/repo-fs.mjs holds the CLI copy and repo-fs.test.mjs pins the pair.
+const MAX_DOC_BYTES = 4 * 1024 * 1024;  // ~19x the largest doc (AGENTS.md grew ~70% in six weeks)
+const MAX_RULE_WALK_ENTRIES = 5000;
+const MAX_RULE_WALK_DEPTH = 16;
+function forEachRuleDoc(root, visit) { // visit(body) returns true to stop early
+  let budget = MAX_RULE_WALK_ENTRIES;
+  const scan = (p) => {
+    const body = readRepoFileBounded(p, root, MAX_DOC_BYTES);
+    return body !== null && visit(body) === true;
+  };
+  const walk = (dir, depth) => {
+    if (depth > MAX_RULE_WALK_DEPTH) return false;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+    for (const e of entries) {
+      if (--budget < 0) return true; // budget spent -- stop the whole walk
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (walk(p, depth + 1)) return true; }
+      else if (e.name.endsWith('.md') && scan(p)) return true;
+    }
+    return false;
+  };
+  for (const r of ruleRoots(root)) {
+    const kind = repoEntryKind(r, root);
+    if (kind === 'dir' && walk(r, 0)) return;
+    if (kind === 'file' && scan(r)) return; // AGENTS.md (a file, not a dir)
+  }
+}
+
+function countPastDueStamps(root, today, cfg) {
   let count = 0;
   // clamp: a raw negative/0/NaN ruleRevalidateDays would mark every stamp past-due
   // (mass false nagging). Floor to >=1 day (same class as the other config clamps).
   const generalFallback = (cfg && Number.isFinite(cfg.ruleRevalidateDays)) ? Math.max(1, Math.floor(cfg.ruleRevalidateDays)) : 90;
-  const scanFile = (p) => {
-    let body;
-    try { body = fs.readFileSync(p, 'utf8'); } catch { return; }
+  forEachRuleDoc(root, (body) => {
     STAMP_OPEN.lastIndex = 0;
     let o;
+    let openers = 0;
     while ((o = STAMP_OPEN.exec(body)) !== null) {
+      if (++openers > MAX_STAMP_OPENERS) break;
       // Match the full stamp only within a bounded slice anchored at this opener.
       const m = STAMP_RE.exec(body.slice(o.index, o.index + STAMP_WINDOW));
       if (m) {
@@ -506,22 +723,8 @@ function countPastDueStamps(roots, today, cfg) {
       // overlapping openers inside one window are still each considered.
       if (STAMP_OPEN.lastIndex <= o.index) STAMP_OPEN.lastIndex = o.index + 1;
     }
-  };
-  const walk = (dir) => {
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith('.md')) scanFile(p);
-    }
-  };
-  for (const r of roots) {
-    let st;
-    try { st = fs.statSync(r); } catch { continue; }
-    if (st.isDirectory()) walk(r);
-    else scanFile(r); // AGENTS.md (a file, not a dir)
-  }
+    return false;
+  });
   return count;
 }
 
@@ -535,6 +738,8 @@ function ruleRoots(root) {
     path.join(root, '.claude', 'rules'),
     path.join(root, '.agents', 'rules'),
     path.join(root, 'AGENTS.md'),
+    // R14 / B-u1-8: gold-standard's FILL home falls back to STANDARDS.md, so its stamps count too.
+    path.join(root, 'STANDARDS.md'),
   ];
 }
 
@@ -542,28 +747,14 @@ function ruleRoots(root) {
 // math or window-bounded capture -- it only asks "is there a stamp at all", so it can
 // short-circuit on the very first hit. Used to auto-suppress the onboarding offer once the repo
 // has been gold-standard'd at least once (no need to keep suggesting a first run every session).
-function hasVerifiedStamp(roots) {
-  const fileHasStamp = (p) => {
-    let body;
-    try { body = fs.readFileSync(p, 'utf8'); } catch { return false; }
+function hasVerifiedStamp(root) {
+  let found = false;
+  forEachRuleDoc(root, (body) => {
     STAMP_OPEN.lastIndex = 0;
-    return STAMP_OPEN.test(body);
-  };
-  const dirHasStamp = (dir) => {
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory() ? dirHasStamp(p) : (e.name.endsWith('.md') && fileHasStamp(p))) return true;
-    }
-    return false;
-  };
-  for (const r of roots) {
-    let st;
-    try { st = fs.statSync(r); } catch { continue; }
-    if (st.isDirectory() ? dirHasStamp(r) : fileHasStamp(r)) return true;
-  }
-  return false;
+    found = STAMP_OPEN.test(body);
+    return found;
+  });
+  return found;
 }
 
 // Builds the head+onboarding+tail scaffold, deciding onboarding suppression against the given
@@ -576,7 +767,7 @@ function hasVerifiedStamp(roots) {
 // NOT suppressing on any internal error, same as the pre-carve default).
 function buildLines(cfg, base) {
   let skipOnboarding = false;
-  try { skipOnboarding = !!(cfg && cfg.skipOnboarding === true) || hasVerifiedStamp(ruleRoots(findGitRoot(base))); } catch {}
+  try { skipOnboarding = !!(cfg && cfg.skipOnboarding === true) || hasVerifiedStamp(findGitRoot(base)); } catch {}
   let notes = [];
   try { notes = configPathNotes(findGitRoot(base)); } catch {}
   return skipOnboarding ? [...CONDUCTOR_HEAD, ...notes, ...CONDUCTOR_TAIL] : [...CONDUCTOR_HEAD, ONBOARDING, ...notes, ...CONDUCTOR_TAIL];
@@ -617,8 +808,31 @@ function configPathNotes(root) {
       if (known.has(p) || !fs.existsSync(path.join(root, p))) continue;
       notes.push(`- CoalMine config: IGNORED: ${p} is not a config path; canonical = ${CANONICAL_CFG} (relay to the user in their language — settings in it have NO effect).`);
     }
+    // UMB-174 (b): the candidate the walk SELECTED exists but is not a readable config ->
+    // one UNREADABLE line in the flock's verbatim wording. The selection is unchanged (the
+    // walk still picks it and it still contributes nothing); only the silence goes.
+    if (found && !isGlobalCfgFile(found)) {
+      const { reason } = readCfgResult(found, root);
+      if (reason) notes.push(unreadableNote(rel(found), reason, CANONICAL_CFG));
+    }
+  } catch {}
+  // CWK-135 (a): the GLOBAL tier names its OWN path as canonical -- a global config has no
+  // project location to move to, so pointing it at .claude/coal/coalmine.json would tell
+  // the user to do something that does not fix it (Standard System 4: say what to do next).
+  try {
+    const globalFile = path.join(os.homedir(), '.claude', '.coalmine.json');
+    const { reason } = readCfgResult(globalFile, null);
+    if (reason) notes.push(unreadableNote(globalFile, reason, GLOBAL_CANONICAL_CFG));
   } catch {}
   return notes;
+}
+
+// The flock string (UMB-174 (b)), verbatim after this room's line prefix. Constant text
+// around a FIXED path (a candidate from the closed list, or the global file) and one of the
+// four fixed reasons -- never a name taken from the directory or the file's contents.
+const GLOBAL_CANONICAL_CFG = '~/.claude/.coalmine.json';
+function unreadableNote(where, reason, canonical) {
+  return `- CoalMine config: UNREADABLE: ${where} exists but is not a readable config (${reason}); it was skipped — canonical = ${canonical} (relay to the user in their language).`;
 }
 
 // --- Antigravity adapter -----------------------------------------------------
@@ -770,7 +984,7 @@ function agMain(cfg, updateMode, input) {
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
-      const n = countPastDueStamps(ruleRoots(findGitRoot(base)), todayISO(Date.now()), cfg);
+      const n = countPastDueStamps(findGitRoot(base), todayISO(Date.now()), cfg);
       if (n > 0) lines.push(pastDueDirective(n));
     } catch {}
   }
@@ -805,7 +1019,7 @@ function geminiMain(cfg, updateMode, input) {
   const lines = buildLines(cfg, base);
   if (updateMode !== 'off') {
     try {
-      const n = countPastDueStamps(ruleRoots(findGitRoot(base)), todayISO(Date.now()), cfg);
+      const n = countPastDueStamps(findGitRoot(base), todayISO(Date.now()), cfg);
       if (n > 0) lines.push(pastDueDirective(n));
     } catch {}
   }
@@ -883,9 +1097,8 @@ function main() {
   // (not the update stamp): runs every session start like the onboarding offer.
   if (updateMode !== 'off') {
     try {
-      const roots = ruleRoots(findGitRoot(process.cwd()));
       const today = todayISO(Date.now());
-      const n = countPastDueStamps(roots, today, cfg);
+      const n = countPastDueStamps(findGitRoot(process.cwd()), today, cfg);
       if (n > 0) lines.push(pastDueDirective(n));
     } catch {}
   }

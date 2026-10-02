@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 // Stages one directory per skill under dist-claude-ai/<name>/, copied from
 // plugin/skills/<name>/ with ONLY the SKILL.md frontmatter `description`
-// field rewritten to claude.ai's ZIP-install 200-char skill-listing cap
-// (vs our own 1024 cross-platform cap, desc-cap.mjs) — a DERIVED artifact;
+// field rewritten to a 200-char skill-listing cap (our own cross-platform cap
+// is 1024, desc-cap.mjs). claude.ai's skills page, read 2026-10-02, states a
+// 1,024-char limit, so the 200 trim is conservative: a description that is too
+// short still uploads, one that is too long may not. It stays until one real
+// upload at the longer length is on record (UMB-333). A DERIVED artifact;
 // skills/*/SKILL.md and plugin/skills/*/SKILL.md are never touched. The
 // claude-ai-zips workflow zips each staged directory and attaches it to
-// the GitHub Release as an asset (board #40, C2-v2 design).
+// the GitHub Release as an asset. The workflow zips each staged FOLDER from its
+// parent, so an archive holds <name>/SKILL.md (a SKILL.md at the archive root is
+// not recognized as a skill) and checks every archive's layout before upload.
+// Canonical exemplar: CoalMine (board #40).
 //
 // Entry-point imports node builtins only at the top level (node/runtime.md
 // §1) — local libs are dynamic, inside main().

@@ -23,8 +23,11 @@ concurrency:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # measured 2026-10-02: gate max 8 s over 6 runs, successful runs only; a finite clock (testing.md), ~10x the max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22

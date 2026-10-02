@@ -30,6 +30,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { gitEnv } from './git-env.mjs';
 
 // The two paths a version bump actually touches: the committed dist directory itself,
 // and the repo-root plugin.json (the version SOURCE — copied into plugin/.claude-plugin/
@@ -38,7 +39,7 @@ import path from 'node:path';
 const DIST_PATHS = ['plugin/', '.claude-plugin/plugin.json'];
 
 function git(args, repo) {
-  return spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+  return spawnSync('git', args, { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' });
 }
 
 function isGitRepo(repo) {
@@ -49,7 +50,8 @@ function isGitRepo(repo) {
 // Exported for its own unit test — the empty-tags case (status 0, empty stdout) is not
 // an error and must not be confused with "git failed".
 export function resolveLastTag(repo) {
-  const r = git(['tag', '--sort=-v:refname'], repo);
+  // R14 / B-u2-10: only release-shaped tags (v*) that are reachable from HEAD, so a stray or other-branch tag cannot become the baseline.
+  const r = git(['tag', '--merged', 'HEAD', '--list', 'v*', '--sort=-v:refname'], repo);
   if (r.status !== 0) return null;
   const tags = r.stdout.split(/\r?\n/).filter(Boolean);
   return tags[0] ?? null;

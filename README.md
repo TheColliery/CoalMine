@@ -19,7 +19,7 @@
 ![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-works_with-blue)
 ![Cline](https://img.shields.io/badge/Cline-works_with-blue)
 ![Copilot](https://img.shields.io/badge/Copilot-works_with-blue)
-![claude.ai](https://img.shields.io/badge/claude.ai-works_with-blue)
+![claude.ai](https://img.shields.io/badge/claude.ai-ZIP_upload_unconfirmed-lightgrey)
 
 [Design Principles](https://github.com/TheColliery/.github/blob/main/DESIGN-PRINCIPLES.md) · [Benchmark](https://github.com/TheColliery/.github/tree/main/benchmarks/CoalMine) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [Releases](https://github.com/TheColliery/CoalMine/releases)
 
@@ -37,7 +37,7 @@
 |---|---|---|
 | **`rot-canary`** | Dead code, bugs, resource leaks, race conditions, silent failures, stale docs | **Auto + Manual** (runs on session end / manual trigger) |
 | **`gold-standard`** | Audits project completeness against world-class exemplars | **One-time** (triggered once, governs the session) |
-| **`source-grounding`** | Prevents AI hallucinations by forcing cross-source verification | **Always-on** (background rule for all chat sessions) |
+| **`source-grounding`** | Prevents AI hallucinations by forcing cross-source verification | **Standing rule** (always on only where your own `CLAUDE.md` or `AGENTS.md` carries it; CoalMine writes no such file) · offered at session start on version-sensitive work · `/source-grounding` on demand |
 | **`supply-chain-audit`** | Audits dependency vulnerabilities, licenses, phone-home code, and build/CI security | **On-demand** (manually run when relevant) |
 | **`resilience-audit`** | Audits failure path handling (FMEA), rollbacks, retry limits, and idempotency | **On-demand** (manually run when relevant) |
 | **`telemetry-canary`** | Audits observability, log structures, metrics, and telemetry quality | **On-demand** (manually run when relevant) |
@@ -46,12 +46,12 @@
 | **`drift-canary`** | Prevents contract and schema drift (API/database contract inconsistencies) | **On-demand** (manually run when relevant) |
 
 *Run Mode Details:*
-* 📌 **Always-on:** Runs implicitly in the background to verify facts.
+* 📌 **Standing rule:** `source-grounding` is a rule for your agent, not a background process. It is always on where your own `CLAUDE.md` or `AGENTS.md` says so (CoalMine does not write that line for you); otherwise the session-start conductor offers it when you work on version-sensitive facts, and `/source-grounding` runs it on demand.
 * 🔄 **Auto + Manual:** Scans affected files at session end via lifecycle hooks (auto-wired in Claude Code; manual snippets in [`platform-configs/hooks/`](platform-configs/hooks/) for other agents). Manual trigger via `/rot-canary`.
 * ⚡ **One-time:** Governs the session by scanning and filling project-local rules.
 * 🎯 **On-demand:** Manually run for specific tasks to conserve tokens.
 
-*Canaries follow **grounding in evidence, zero grade inflation, and report before fixing**. Fixes apply through a safe loop: `Stash/Commit -> Apply fix -> Run build+tests -> Auto-revert if tests fail`.*
+*Canaries follow **grounding in evidence, zero grade inflation, and report before fixing**. Fixes apply through a safe loop: checkpoint, baseline build and tests, apply the fix, build and tests again, and auto-revert only on a NEW failure.*
 
 *Em-dash typography (`unspaced`/`spaced`/`off`, house style) is not one of the 9 — that rule belongs to [CoalLedger](https://github.com/TheColliery/CoalLedger)'s `doc-quality` canary (`emDash` config key, factory default `off`), never duplicated here.*
 
@@ -101,7 +101,7 @@
 | **Claude Code** | validated | `/plugin marketplace add TheColliery/CoalMine` → `/plugin install coalmine@coalmine` (Option A) — auto-wires the `rot-canary` Stop-hook |
 | **Antigravity** | validated (canaries) · **primed** (auto-cadence) | file-copy the skills to the global `~/.gemini/config/skills/` **or** per-project `<workspace>/.agents/skills/` (`node scripts/install.mjs antigravity`); for the full auto-cadence (conductor + rot-canary) on AG 2.0's hook engine, copy [`platform-configs/hooks/antigravity-hooks.json`](platform-configs/hooks/antigravity-hooks.json) to `<workspace>/.agents/hooks.json` or `~/.gemini/config/hooks.json` and adjust the CoalMine path |
 | **Cursor · Codex · Cline · Copilot · Gemini CLI · …** | works with | `node scripts/install.mjs <agent>` — file-copy into the agent's skills folder (targets in [Universal Agent Support](#-universal-agent-support)) |
-| **claude.ai** (web / app) | works with | Download a per-skill ZIP from [Releases](https://github.com/TheColliery/CoalMine/releases) and upload as a custom skill (Option A3) — read/analyze skills only, manual invocation, no hooks |
+| **claude.ai** (web / app) | upload path documented, not confirmed | Download a per-skill ZIP from [Releases](https://github.com/TheColliery/CoalMine/releases) and upload it as a custom skill (Option A3; Customize > Skills) — read/analyze skills only, manual invocation, no hooks. No upload of these ZIPs has been confirmed to load there yet |
 
 **primed** (the Antigravity auto-cadence status — a feature-automation marker, never a platform-trust tier; Antigravity's own platform tier is `validated` above, independent of this) = built + hermetically tested against the AG 2.0 hook spec (corroborated against the official docs 2026-07-13). **Firing itself is UNRESOLVED, not confirmed:** a 2026-07-12 pilot fired CoalMine's Stop cadence live on AG; a more isolated 2026-08-04 re-test on a real AG 2.0 install recorded ZERO fires across a real tool call. Neither measurement is retracted — see [`antigravity-hooks.json`](platform-configs/hooks/antigravity-hooks.json)'s own `$comment` — probe a copy of your own config before relying on it. Delivery of the injected context into the agent is separately unconfirmed end-to-end even when firing does occur. The 9 canaries themselves are already validated on AG — skill invocation, not the auto-cadence hooks, is what that covers.
 
@@ -115,11 +115,12 @@
 
 ### Option A2 — skills.sh (One line)
 ```bash
-npx skills add TheColliery/CoalMine
+npx skills add TheColliery/CoalMine/plugin
 ```
+Installs the 9 rendered skills from `plugin/skills/` as files: manual invocation only, no hooks. Point it at `/plugin`. The bare `TheColliery/CoalMine` form installs the unrendered `skills/` templates. (Path read from the `skills` CLI v1.7.0 source; not yet confirmed by a run.)
 
 ### Option A3 — claude.ai (web / desktop app)
-Download a canary's ZIP from the [Releases page](https://github.com/TheColliery/CoalMine/releases) (one asset per skill, built by CI on every tag) and upload it as a custom skill (Settings → Capabilities → Skills). Manual invocation only — no hooks there. **Don't hand-zip `skills/` yourself** — our own frontmatter `description` runs up to our 1024-char cap, well past claude.ai's 200-char skill-listing limit; every published ZIP has its description deterministically trimmed to fit (`scripts/build-claude-ai-zips.mjs`, source `skills/*/SKILL.md` files are never edited). Each Release also carries a `SHA256SUMS.txt` covering every ZIP — you'll typically have just the one skill's ZIP, not all nine, so verify with `sha256sum --ignore-missing -c SHA256SUMS.txt` (the plain `-c` form reports the other eight as FAILED). On Windows: `$f='rot-canary.zip'; (Get-FileHash $f).Hash -ieq (Select-String $f SHA256SUMS.txt).Line.Split()[0]` (swap in the ZIP you downloaded). Steps + capability notes: [CLAUDE-AI-INSTALL](https://github.com/TheColliery/.github/blob/main/CLAUDE-AI-INSTALL.md).
+Download a canary's ZIP from the [Releases page](https://github.com/TheColliery/CoalMine/releases) (one asset per skill, built by CI on every tag) and upload it as a custom skill, then turn it on under **Customize > Skills** in claude.ai or the desktop app (the path Anthropic's skills guide documents). Manual invocation only — no hooks there. **Status: the upload path is documented but not yet confirmed.** Anthropic's guide says the ZIP must hold the skill's folder at its top level, so the archive contains `<skill-name>/SKILL.md`, and that a `SKILL.md` at the root of the ZIP is not recognized as a skill. CoalMine's CI zips each skill folder from its parent and checks every archive entry before upload (`scripts/build-claude-ai-zips.mjs` and the release workflow), but that workflow has not yet run on a tag and no upload of one of these ZIPs has been confirmed to load on claude.ai, so this path is not called validated or "works with". ZIPs from Releases before this fix put `SKILL.md` at the archive root, which Anthropic's guide says is not recognized: download again. To check a ZIP yourself, run `unzip -l rot-canary.zip` (swap in your ZIP): every entry should start with `rot-canary/`. **Don't hand-zip `skills/` yourself** — those are unrendered templates (their shared sections are still markers); the Release ZIPs are built from the rendered `plugin/skills/` copies. Each ZIP carries the skill description trimmed to 200 characters, a conservative house cap (Anthropic documents 1,024), until one real upload at the longer length is on record. Each Release also carries a `SHA256SUMS.txt` covering every ZIP — you'll typically have just the one skill's ZIP, not all nine, so verify with `sha256sum --ignore-missing -c SHA256SUMS.txt` (the plain `-c` form reports the other eight as FAILED). On Windows: `$f='rot-canary.zip'; (Get-FileHash $f).Hash -ieq (Select-String $f SHA256SUMS.txt).Line.Split()[0]` (swap in the ZIP you downloaded). Steps + capability notes: [CLAUDE-AI-INSTALL](https://github.com/TheColliery/.github/blob/main/CLAUDE-AI-INSTALL.md).
 
 ### Option B — Universal Installer
 
@@ -136,11 +137,11 @@ node /path/to/CoalMine/scripts/install.mjs <agent|all|PATH>
 ```
 * Supported `<agent>`: `antigravity`, `cursor`, `codex`, `cline`, `copilot`, `windsurf`, `amp`, `goose`, `junie`, `gemini`, `kiro`, `augment` (for `claude`, prefer the plugin above) — see [Universal Agent Support](#-universal-agent-support) for target folders + choice-tool support.
 * `all` auto-detects and installs to all configured agents in the directory.
-* The installer sets up pre-commit/pre-push gates where git actually reads hooks — your `core.hooksPath` if the repo sets one (husky, lefthook, a tracked `.githooks/`), otherwise `.git/hooks` — writes trigger rules, and generates `.coalmine.json` config.
+* The installer puts a small pre-commit and pre-push hook where git actually reads hooks — your `core.hooksPath` if the repo sets one (a leading `~` is expanded the way git does), otherwise `.git/hooks`. That hook only runs the hook it replaced (kept beside it as `<hook>.pre-coalmine`, with its exit status and arguments passed through); it never runs CoalMine's own test and verify gate in your repo. A hook your repo tracks (husky, lefthook, a versioned `.githooks/`) is not rewritten: the installer prints `[refused] <hook>: <reason>` and exits non-zero. It also writes trigger rules and generates `.coalmine.json` config. Every write stays inside the project (or the install target you named), with one exception: the git hook goes where `core.hooksPath` points, and when that folder is outside the project (a shared hooks folder) the installer prints a `NOTE` that the change applies to every repo using it, and it will not create such a folder. A path that is a symbolic link, or that resolves outside it, is refused with `[refused] <path>: <reason>` and exit 1 — the installer never writes through a link ([security advisory](SECURITY.md#-security-advisories)).
 
 #### 3. Verify & Uninstall
 * **Verify:** `node /path/to/CoalMine/scripts/verify.mjs <agent|PATH>`
-* **Uninstall:** `node scripts/install.mjs --uninstall <agent|PATH>` — removes CoalMine's own git hooks, but never a **tracked** one: if `core.hooksPath` points at a versioned directory (e.g. a repo's own `.githooks/`) and the hook there is ours, uninstall REFUSES rather than deleting a maintainer-owned file — it prints `[refused] <hook>: <reason>` and exits non-zero; remove it yourself (e.g. `git rm <hook>`) if you want it gone.
+* **Uninstall:** `node /path/to/CoalMine/scripts/install.mjs --uninstall <agent|PATH>` — removes CoalMine's own git hooks, but never a **tracked** one: if `core.hooksPath` points at a versioned directory (e.g. a repo's own `.githooks/`) and the hook there is ours, uninstall REFUSES rather than deleting a maintainer-owned file — it prints `[refused] <hook>: <reason>` and exits non-zero; remove it yourself (e.g. `git rm <hook>`) if you want it gone. Uninstall puts your backed-up hook back (`<hook>.pre-coalmine`) only over a hook that is CoalMine's; if you wrote a new hook there since, both files stay, it prints `[kept] <hook>: <reason>` and exits non-zero, and you merge them yourself. A skill folder the install manifest names is removed only when every file in it matches the hash the manifest recorded; otherwise it is kept with a `[kept]` line and a non-zero exit. A linked path is refused the same way on uninstall.
 
 ---
 
@@ -164,7 +165,7 @@ Installing is the power button. The agent conducts the canaries and asks for con
 | **rot-canary** | Auto-scans touched files at session end (QUICK); findings end with a fix menu | Choose a fix option |
 | **memory-drift advisory** | One quiet `systemMessage` (reaches the session transcript and an interactive user) at session end when code changed but no MEMORY.md update was recorded — not part of the scan report, never blocks; needs a root MEMORY.md, off via `memoryDriftNudge=false` | Update MEMORY + crystallize if worth keeping |
 | **Specialists** | Offered when conversation enters their domain (deps, schemas, async, loops, etc.) | Accept / Skip |
-| **source-grounding** | Always-on background fact verification | — |
+| **source-grounding** | Standing rule for version-sensitive facts: always on where your `CLAUDE.md` or `AGENTS.md` carries it, offered at session start, `/source-grounding` on demand | — |
 
 *Consent Rule:* Nothing expensive runs silently. Revocable via `.coalmine.json`, `~/.claude/.rot-canary-off`, or `--uninstall`.
 
@@ -182,11 +183,19 @@ Zero-config to start — and two config levels when you want them: a global `~/.
 | `language` | `auto` | Language for prompts and nudges (`auto` \| `en` \| `th` \| `ja` \| `zh` \| `es`) |
 | `enableConductor` | `true` | Master switch for rules injection at session start |
 | `rotCanaryMode` | `auto` | rot-canary session-end auto-scan (`auto` \| `manual` \| `off`) |
+| `updateCheckDays` | `14` | Days between self-update checks or reminders (1-365; a value outside that range falls back to 14) |
 | `memoryDriftNudge` | `true` | Quiet session-end advisory when code changed but MEMORY.md didn't — no report, never blocks (needs a root MEMORY.md) |
 | `defaultTier` | `auto` | Force an execution tier (`Light` \| `Standard` \| `Heavy` \| `auto`) |
 | `disabledCanaries` | `[]` | Canaries to disable (e.g. `["rot-canary"]` or `["all"]`) |
-| `scanExcludePaths` | `[]` | Path fragments/globs skipped by the session-end auto-scan — lab tooling only (scratch probes, one-shot harnesses); shipped/tracked source is never excluded by this key |
+| `scanExcludePaths` | `[]` | Path fragments/globs (`*` wildcard, `/` separator on every OS), matched against the project-relative path, so `**/scratchpad/**` works at any depth, skipped by the session-end auto-scan — lab tooling only (scratch probes, one-shot harnesses); shipped/tracked source is never excluded by this key |
 | `scanEverything` | `false` | **The override.** `true` bypasses EVERY scan-scope cut for the run — `scanExcludePaths` ignored, `autoScanFileCap` not applied. Positive polarity: `true` = more scanning. Does NOT re-enable a disabled canary, and does not reach the recording-side cuts (`watchedExtensions`, tmpdir) or the tripwire's own `tripwireMaxFileSizeKb` cap (that file is still recorded and still scanned — only its edit-time pre-flag is skipped). **Clamped safer-value-wins:** a project-level `true` is forced to `false` unless your global layer also says `true`, so a cloned repo cannot force a full scan on your machine |
+
+<!-- flock-canonical sentence (UMB-174): copied verbatim into every sibling room's README Configure section; only the skill name and the two canonical paths change -->
+**Which folder counts as "the project".** The `rot-canary` Stop and touch hooks find the project config from the folder the agent started them in (their working directory), not from a workspace path in the hook's event data. The session-start conductor's Antigravity and Gemini CLI adapters do read the workspace path from the event. If your agent starts hooks in a different folder from the one you work in, put the config where the hooks' folder finds it, or use the global `~/.claude/.coalmine.json`.
+
+**A config that exists but cannot be read.** If the project config the read order above selects, or the global config, is malformed JSON, is a directory, cannot be opened (permissions), or is valid JSON that is not an object, the session-start context carries one line in exactly this wording, and the file is skipped as if it were absent: `UNREADABLE: <path> exists but is not a readable config (<reason>); it was skipped — canonical = <canonical>`. `<reason>` is `malformed JSON`, `a directory`, `unreadable` or `not a JSON object`; `<canonical>` is the config path for that level (`.claude/coal/coalmine.json` for a project, `~/.claude/.coalmine.json` for the global file). Fix the file, or delete it, and start a new session. The line never changes which config is used, and a config refused by the link and size rule below stays silent.
+
+**A config that is a link, or oversized.** The project config, and the rule files the conductor scans (`AGENTS.md`, `.claude/rules/**`), come with a cloned repository, so a repo can plant a link at any of those paths. The hooks read such a file only when it is a regular file, or a symlink whose target resolves inside the project and is a regular file; a link that escapes the project, a FIFO or device, or a file over 1 MiB (configs) or 4 MiB (governance docs) is **ignored** as if absent (the hooks print nothing — Phoenix #13). `node scripts/configure.mjs` **refuses** such a path instead (exit 1, the path named), never reading, backing up or overwriting through it; `--global` still writes through a link at `~/.claude/.coalmine.json`, on purpose, since dotfile managers link that file. The PowerShell fallback hooks refuse every reparse point, even one that stays inside the project. See the [security advisory](SECURITY.md#-security-advisories).
 
 Full key reference: every key + default lives in [`scripts/lib/config-schema.mjs`](scripts/lib/config-schema.mjs) and the commented template [`platform-configs/.coalmine.json`](platform-configs/.coalmine.json) — or run `node scripts/configure.mjs --help`.
 
@@ -194,7 +203,7 @@ Full key reference: every key + default lives in [`scripts/lib/config-schema.mjs
 
 ## Permissions
 
-CoalMine asks for the least it needs: **read** (main + spawned scan workers, repo-scoped) · **exec** for read-only probes only (build `--dry`, lint, dead-code checks) · **scratch-write** confined to `os.tmpdir()` session state and one `~/.claude` update-check stamp · **ask** before any fix or spend. It never requests target-file writes or deletes, and its hooks/scripts never touch the network on their own — a canary's own web check (source-grounding, CVE lookups) is the agent's own judgment call through its normal tools, not a CoalMine background call. A spawned scan worker gets strictly less than the orchestrator: no spawn power of its own, no write/delete tools, no prompts to the user. Hooks auto-wire on Claude Code and carry a tested Antigravity 2.0 contract on the same files — capability-keyed, never a hardcoded platform list.
+CoalMine asks for the least it needs: **read** (main + spawned scan workers, repo-scoped) · **exec** for read-only probes only (build `--dry`, lint, dead-code checks) · **scratch-write** confined to `os.tmpdir()` session state and one `~/.claude` update-check stamp · **ask** before any fix or spend. It never requests target-file writes or deletes, and its hooks/scripts never touch the network on their own — a canary's own web check (source-grounding, CVE lookups) is the agent's own judgment call through its normal tools, not a CoalMine background call. A spawned scan worker gets strictly less than the orchestrator: no Agent or Task tool of its own, no Edit or Write tool, no prompts to the user. It does hold `Bash` for read-only probes, and a shell can write, so its read-only rule is an instruction it follows, not a sandbox. Hooks auto-wire on Claude Code and carry a tested Antigravity 2.0 contract on the same files — capability-keyed, never a hardcoded platform list.
 
 Full series matrix + the must-fail set: [Permission Matrix](https://github.com/TheColliery/.github/blob/main/PERMISSION-MATRIX.md)
 

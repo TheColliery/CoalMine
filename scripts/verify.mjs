@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadShared, renderSkillMd, listSkills, SHARED_REFERENCES } from './lib/render.mjs';
 import { TARGETS } from './lib/targets.mjs';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
@@ -21,6 +21,8 @@ import { checkDistChangelog } from './lib/dist-changelog.mjs';
 import { checkConfigKeys, checkConfigReadPath } from './lib/config-keys.mjs';
 import { checkPointers, pointerCandidates, looksPathShaped, DEFAULT_SURFACE_PLAN, collectSurfaces, applyCheckIgnoreProbe } from './lib/pointer-check.mjs';
 import { verifyAgainstManifest } from './lib/manifest.mjs';
+import { gitEnv } from './lib/git-env.mjs';
+import { MAX_DOC_BYTES, readRepoFileBounded } from './lib/repo-fs.mjs';
 import { descriptionCapCheck, DESC_CAP } from './lib/desc-cap.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -276,12 +278,12 @@ try {
 //     to neither reddens the gate instead of going unread.
 console.log('pointers:');
 try {
-  const lsAll = spawnSync('git', ['ls-files'], { cwd: repo, encoding: 'utf8' });
+  const lsAll = spawnSync('git', ['ls-files', '-z'], { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8' }); // R14 / B-u2-L7: -z, so a newline or quote in a name cannot split or quote it
   if (lsAll.error || lsAll.status !== 0) {
     // A VISIBLE skip, never a silent carve-out: no git means no durability answer.
     console.log('  --   pointer check: git unavailable — cannot tell a tracked path from an untracked one; skipped');
   } else {
-    const tracked = new Set(lsAll.stdout.split('\n').filter(Boolean));
+    const tracked = new Set(lsAll.stdout.split(String.fromCharCode(0)).filter(Boolean));
     const trackedDirs = new Set();
     for (const f of tracked) {
       const parts = f.split('/');
@@ -353,6 +355,7 @@ try {
       ['skill-meta.json', 'three intent strings per skill; JSON, no comments'],
       ['.gitbook.yaml', 'UMB-169: three fixed keys, no comments, no pointer candidates'],
       ['SUMMARY.md', 'UMB-169: a GitBook nav list, not ship-text prose; not in DEFAULT_SURFACE_PLAN because pointerCandidates() over it returns 0 (a plan row would be vacuous), but its links ARE re-checked on every push by link-check.mjs (see .github/workflows/link-check.yml), which fails on a dead entry -- coverage lives in a live gate, not a one-time human check'],
+      ['scripts/lib/r12-open-spy.cjs', 'R12: a test-only --require preload (CJS by necessity: NODE_OPTIONS --require); scripts/ is not shipped and its comments cite only fixtures and a sibling test helper by bare name'],
       ['.coderabbit.yaml', 'CWK-120 (c): a fixed-schema YAML config; its comments cite hooks-safety.md/scripts-quality.md/DOC-PATTERN.md/SKILL-REPO-PATTERN.md by bare filename (no backticks, no /) and the vendor docs by URL, so pointerCandidates() -- which reads only backtick-wrapped, /-bearing tokens -- returns 0 over it; a plan row would be vacuous'],
     ];
     const declaredOut = (f) => DECLARED_OUT.some(([pre]) => f.startsWith(pre) || f.endsWith('/' + pre));
@@ -546,7 +549,7 @@ try {
     // site consumes it, it does not own it.
     const ignoredRoots = applyCheckIgnoreProbe({
       toProbe, fail,
-      runCheckIgnore: (input) => spawnSync('git', ['check-ignore', '--stdin'], { cwd: repo, encoding: 'utf8', input }),
+      runCheckIgnore: (input) => spawnSync('git', ['check-ignore', '--stdin'], { cwd: repo, env: gitEnv(path.dirname(repo)), encoding: 'utf8', input }),
     });
 
     const findings = checkPointers({
@@ -582,6 +585,21 @@ try {
     }
   }
 } catch (e) { fail(`pointer check crashed: ${e.message}`); }
+
+// 2.12 GIT-SPAWN CENSUS (CWK-133 + CWK-136): every git spawn under scripts/ carries an
+// explicit env: (rung 1), and an env: holding process.env must route through gitEnv()
+// (rung 2). A git spawn that inherits process.env picks up the ABSOLUTE GIT_DIR a linked-
+// worktree hook exports -- and this gate runs AS that hook. Detection lives in
+// git-env-census.mjs, dynamically imported so a missing lib is one FAIL line, never a
+// linking-time crash (node/runtime.md §1).
+console.log('git spawn census (CWK-133/136 — every git spawn under scripts/ carries env: gitEnv(...), never process.env, and none runs git through a shell string):');
+try {
+  const { censusGitSpawns, collectScriptsMjs } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'git-env-census.mjs')).href);
+  const files = collectScriptsMjs(repo);
+  const findings = censusGitSpawns(files);
+  for (const f of findings) fail(`git spawn census: ${f}`);
+  if (findings.length === 0) pass(`git spawn census: every git spawn across ${files.length} scripts/**/*.mjs file(s) routes through gitEnv() and none runs git through a shell string (blind spots: git-env-census.mjs header)`);
+} catch (e) { fail(`git spawn census crashed: ${e.message}`); }
 
 // 3. hooks present
 console.log('hooks:');
@@ -638,7 +656,7 @@ function compareAux(srcDir, dstDir, label) {
       if (e.name === 'SKILL.md') continue;
       // A shared reference (build-injected into references/) legitimately has no
       // per-skill source — checked against skills/_shared below, not here.
-      if (SHARED_REF_NAMES.has(e.name) && !fs.existsSync(path.join(srcDir, e.name))) continue;
+      if (SHARED_REF_NAMES.has(e.name) && path.basename(dstDir) === 'references' && !fs.existsSync(path.join(srcDir, e.name))) continue;
       if (!fs.existsSync(path.join(srcDir, e.name))) fail(`${label}/${e.name} has no source — run: node scripts/build-plugin.mjs`);
     }
   } catch (err) {
@@ -695,7 +713,7 @@ if (!fs.existsSync(pluginDir)) {
         if (!['skills', 'hooks', '.claude-plugin', 'agents', 'commands'].includes(e.name)) {
           fail(`plugin/${e.name} is an orphan directory — run: node scripts/build-plugin.mjs`);
         }
-      } else {
+      } else if (e.name !== 'README.md') {
         fail(`plugin/${e.name} is an orphan file — run: node scripts/build-plugin.mjs`);
       }
     }
@@ -755,6 +773,16 @@ if (!fs.existsSync(pluginDir)) {
       fail(`plugin/${extra} has no source — run: node scripts/build-plugin.mjs`);
     }
   }
+  // R14 / CWK-180: plugin/README.md ships from plugin-src/README.md (the directory refuses a plugin folder without a 40-word README).
+  try {
+    const readmeSrc = path.join(repo, 'plugin-src', 'README.md');
+    const readmeDist = path.join(pluginDir, 'README.md');
+    if (!fs.existsSync(readmeSrc)) fail('plugin-src/README.md missing — the plugin folder ships a README');
+    else if (!fs.existsSync(readmeDist)) fail('plugin/README.md missing — run: node scripts/build-plugin.mjs');
+    else if (fs.readFileSync(readmeSrc, 'utf8').replace(/\r\n/g, '\n') !== fs.readFileSync(readmeDist, 'utf8').replace(/\r\n/g, '\n')) fail('plugin/README.md STALE vs plugin-src/README.md — run: node scripts/build-plugin.mjs');
+    else if (fs.readFileSync(readmeDist, 'utf8').split(/\s+/).filter(Boolean).length < 40) fail('plugin/README.md is under 40 words (the directory minimum)');
+    else pass('plugin/README.md in sync (>= 40 words)');
+  } catch (e) { fail(`plugin/README.md check failed: ${e.message}`); }
   for (const f of ['hooks/hooks.json', 'hooks/rot-canary-touch.js', 'hooks/rot-canary-stop.js', 'hooks/coalmine-conductor.js', '.claude-plugin/plugin.json']) {
     const distFile = path.join(pluginDir, f);
     if (!fs.existsSync(distFile)) { fail(`plugin/${f} missing — run: node scripts/build-plugin.mjs`); continue; }
@@ -774,9 +802,14 @@ if (!fs.existsSync(pluginDir)) {
 
 // 5. optional install target
 const arg = process.argv[2];
-if (arg) {
+if (arg && arg.startsWith('-')) {
+  // R14 / B-u2-6: a flag-shaped word is not a path; `--help` used to be resolved to ./--help.
+  console.error(`Usage: node scripts/verify.mjs [${Object.keys(TARGETS).join('|')}|PATH]   (no argument = verify the repo and dist only)`);
+  if (arg !== '--help' && arg !== '-h') fail(`unknown option ${arg}`);
+} else if (arg) {
   const targetKey = arg.toLowerCase();
-  const dest = TARGETS[targetKey] ?? path.resolve(arg);
+  // R14 / B-u2-7: own-key lookup, so `verify.mjs constructor` is a path, not Object.
+  const dest = Object.hasOwn(TARGETS, targetKey) ? TARGETS[targetKey] : path.resolve(arg);
   console.log(`target ${dest}:`);
   for (const s of skills) {
     const targetMd = path.join(dest, s, 'SKILL.md');
@@ -784,9 +817,10 @@ if (arg) {
       fail(`${s} NOT at target`);
       continue;
     }
-    let content;
-    try { content = fs.readFileSync(targetMd, 'utf8'); }
-    catch (e) { fail(`${s} at target unreadable: ${e.message}`); continue; }
+    // CWK-137: the target may be a project dir that came with a cloned repo -- bounded,
+    // regular-file only, contained in the target.
+    const content = readRepoFileBounded(targetMd, dest, MAX_DOC_BYTES);
+    if (content === null) { fail(`${s} at target unreadable (a link out of the target, not a regular file, or over ${MAX_DOC_BYTES} bytes)`); continue; }
     if (content.includes('<!-- SHARED:')) {
       fail(`${s} at target contains unresolved template markers!`);
     } else {

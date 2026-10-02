@@ -35,7 +35,7 @@ export const CONFIG_SCHEMA = [
   { key: 'memoryDriftNudge', type: 'bool', flags: ['--memory-drift-nudge'], help: 'Session-end advisory when code changed this session but no MEMORY.md was updated (default: on; quiet model-only note, not part of the scan report, never blocks)' },
   { key: 'autoFixMode', type: 'enum', values: ['interactive', 'safe', 'off'], flags: ['-f'], help: 'Default fix-mode behavior (interactive, safe, off; default: interactive)' },
   { key: 'updateMode', type: 'enum', values: ['ask', 'auto', 'remind', 'off'], flags: ['-u', '--update-mode'], help: 'Self-update behavior at session start (ask, auto, remind, off; default: ask)' },
-  { key: 'updateCheckDays', type: 'int', min: 1, max: 365, flags: ['-p', '--update-days'], help: 'Days between self-update checks/reminders (default: 14)' },
+  { key: 'updateCheckDays', type: 'int', min: 1, max: 365, flags: ['-p', '--update-days'], help: 'Days between self-update checks/reminders (1-365, default: 14; a value outside 1-365 falls back to 14)' },
   { key: 'schemaPaths', type: 'strArr', flags: ['--schemas'], help: 'Comma-separated glob paths to schemas/API specs' },
   { key: 'migrationDirs', type: 'strArr', flags: ['--migrations'], help: 'Comma-separated database migration directories' },
   { key: 'packageManifests', type: 'strArr', flags: ['--manifests'], help: 'Comma-separated package manifest / lockfile paths' },

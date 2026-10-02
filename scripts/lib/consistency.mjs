@@ -570,15 +570,19 @@ export function checkRuleStamps(repo) {
       STAMP_OPEN.lastIndex = 0;
       let m;
       let bad = false;
-      let any = false;
       while ((m = STAMP_OPEN.exec(body)) !== null) {
-        any = true;
         // Validate only a bounded slice anchored at this opener — a well-formed
         // stamp fits easily; a poisoned blob can never grow the regex's work.
-        if (STAMP_RE.test(body.slice(m.index, m.index + STAMP_WINDOW))) { bad = false; break; }
-        bad = true;
+        // R13 / CWK-158 item 6: EVERY opener is validated. The loop used to `break` at the first
+        // well-formed stamp (and reset `bad`), so a malformed stamp after a good one never ran.
+        // The slice also ENDS at this stamp's own first `-->`: STAMP_RE is unanchored and lazy, so
+        // without that bound a malformed opener borrowed the date, `revalidate` and `-->` of a
+        // well-formed stamp further down the window (bad-then-good read as clean).
+        const win = body.slice(m.index, m.index + STAMP_WINDOW);
+        const close = win.indexOf('-->');
+        if (close === -1 || !STAMP_RE.test(win.slice(0, close + 3))) bad = true;
       }
-      if (any && bad) {
+      if (bad) {
         out.push({ level: 'FAIL', msg: `consistency: ${path.relative(repo, p)} has a malformed coalmine stamp (expected "verified <YYYY-MM-DD> ... revalidate <N>d")` });
       }
       // 3b. paths: glob shape — same walk, same file, no second pass over disk.

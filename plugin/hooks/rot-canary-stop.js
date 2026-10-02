@@ -24,27 +24,21 @@ function rcMode() {
     let f = path.join(dir, '.rot-canary-mode');
     if (!fs.existsSync(f)) f = path.join(dir, '.rotcanary-mode'); // legacy name honored
     if (fs.existsSync(f)) {
-      const v = fs.readFileSync(f, 'utf8').trim().toLowerCase();
+      // CWK-137: bounded, regular-file only -- a FIFO at the mode path would block the hook.
+      const raw = readRepoFileBounded(f, null, MAX_CONFIG_BYTES);
+      const v = raw === null ? '' : raw.trim().toLowerCase();
       if (v === 'off' || v === 'manual' || v === 'auto') return v;
     }
   } catch {}
   return 'auto';
 }
 
-function readFirstChunk(p, size = 4096) {
-  let fd;
-  try {
-    fd = fs.openSync(p, 'r');
-    const buf = Buffer.alloc(size);
-    const bytesRead = fs.readSync(fd, buf, 0, size, 0);
-    return buf.toString('utf8', 0, bytesRead);
-  } catch {
-    return '';
-  } finally {
-    if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch {}
-    }
-  }
+// The language probe's sample of a repo doc. CWK-137: a README.md/MEMORY.md/AGENTS.md
+// planted as a FIFO blocked the plain open() forever (measured on 59ee1e7, a 30 s timeout);
+// the shared bounded reader skips anything but a contained regular file, and prefixOnly
+// keeps the old first-4 KB sampling of a large doc.
+function readFirstChunk(p, root, size = 4096) {
+  return readRepoFileBounded(p, root, size, true) || '';
 }
 
 // <coalmine-shared: node-config> — synced from hooks/_shared/node-config.js by build-plugin; edit the partial, not this block
@@ -68,7 +62,15 @@ const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
 // `existsSync(p)` precedes every call and the global side must exist for the collision to arise.
 function isGlobalCfgFile(p) {
   try {
-    return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
+    // R14 / B-u3-2b (the git-home case): os.homedir() follows HOME/USERPROFILE, which a sandboxed run moves away from
+    // the real profile, so the REAL ~/.claude/.coalmine.json was taken for a project's legacy config and migrated.
+    // os.userInfo().homedir reads the OS account record, which no environment variable moves. Compare against both.
+    const here = fs.realpathSync.native(p);
+    const homes = [os.homedir()];
+    try { homes.push(os.userInfo().homedir); } catch { /* no account record: the env home alone */ }
+    return homes.some((h) => {
+      try { return here === fs.realpathSync.native(path.join(h, '.claude', '.coalmine.json')); } catch { return false; }
+    });
   } catch { return false; }
 }
 
@@ -164,18 +166,159 @@ function projectConfigPath(root) {
   return ownDirDefault(root); // nothing found anywhere -- own-dir is both the read and write target
 }
 
+// CWK-137 -- BOUNDED READS OF REPO-DERIVED PATHS. A cloned repo is untrusted: its
+// `.coalmine.json`, `AGENTS.md` and rule files can be symlinks to /dev/zero (the
+// conductor allocated ~8 GB and died, std::bad_alloc, measured on 59ee1e7), FIFOs
+// (open() blocks forever) or links out of the repo. Every hook read of such a path
+// goes through readRepoFileBounded; a refused read is a SILENT skip (Phoenix #4/#13).
+// The rules, identical to scripts/lib/repo-fs.mjs (the CLI copy -- a hook cannot
+// import an ESM lib, Phoenix #9; repo-fs.test.mjs asserts both bounds match -- the
+// config bound here, the document bound in coalmine-conductor.js):
+//   lstat; a regular file proceeds; a symlink proceeds only when its realpath.native
+//   target lies inside the root's realpath AND is a regular file; a FIFO, device,
+//   socket, directory, or escaping/dangling link is skipped BEFORE open. Then open
+//   (O_NONBLOCK where it exists, so a FIFO swapped in after the lstat cannot block),
+//   fstat the fd, and re-check regular + size on the fd. Over the bound = SKIPPED,
+//   never truncated: a truncated JSON config would parse as malformed, a truncated
+//   stamp scan would miss stamps silently.
+// `root` null = no containment: the user's own home files (the global config, the
+// update stamp, the mode switch) are legitimately symlinked by dotfile managers, but
+// still get regular-file + size, since /dev/zero there is still a hang.
+// RESIDUAL, named: a regular file swapped in between the lstat and the open may lie
+// outside the root; the fd check still holds it to a bounded regular-file read.
+// Bound measured on this box 2026-09-24 over every repo under source/repos (27,451
+// files): the largest real `.coalmine.json` is 9,114 B (the shipped commented template).
+// The DOCUMENT bound (MAX_DOC_BYTES) lives in coalmine-conductor.js, its only reader:
+// kept here it rode into the stop and touch hooks unused (CodeQL #70-#73).
+const MAX_CONFIG_BYTES = 1024 * 1024;   // ~115x the largest config
+const REPO_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
+function isContained(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
+  try {
+    const lst = fs.lstatSync(p);
+    if (!lst.isSymbolicLink() && !lst.isFile() && !lst.isDirectory()) return null;
+    if (root != null && !isContained(fs.realpathSync.native(p), fs.realpathSync.native(root))) return null;
+    const st = lst.isSymbolicLink() ? fs.statSync(p) : lst;
+    if (st.isFile()) return 'file';
+    if (st.isDirectory()) return 'dir';
+    return null;
+  } catch { return null; }
+}
+function readRepoFileBounded(file, root, maxBytes, prefixOnly) {
+  if (repoEntryKind(file, root) !== 'file') return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, REPO_READ_FLAGS);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    if (st.size > maxBytes && !prefixOnly) return null;
+    const want = Math.min(st.size, maxBytes);
+    const buf = Buffer.alloc(want);
+    let got = 0;
+    while (got < want) {
+      const n = fs.readSync(fd, buf, got, want - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+
 // One BOM- and comment-tolerant JSONC read. Strips // and /* */ comments outside
 // strings: the string alternative consumes an escaped char (\\.) or any
 // non-quote/non-backslash char, so a value ending in \\ terminates the string
 // correctly instead of leaking escape state into the next token (which would
 // mis-strip a later //-containing string → silent revert).
-function readCfgFile(file) {
+// `root` = the project root for a repo-derived config, null for the global one (CWK-137).
+function readCfgFile(file, root) {
+  return readCfgResult(file, root).cfg;
+}
+
+// UMB-174 (b) + R6 AMENDMENT 2: the same read, plus WHY a config that exists was not
+// used, so the conductor can say so on its one sanctioned SessionStart line instead of
+// staying silent. `reason` is one of the flock's four, or null:
+//   'malformed JSON'    -- JSON.parse threw (a leading U+FEFF is stripped BEFORE the
+//                          parse, RFC 8259 §8.1; PS 5.1 writes one whenever asked for UTF-8)
+//   'not a JSON object' -- valid JSON that is not a plain object ([1], "x", 3, null)
+//   'a directory'       -- the candidate is a directory (or a contained link to one)
+//   'unreadable'        -- the OS denied the read: EACCES, or EPERM (a Windows ACL denial)
+// null = read and used, or absent, or REFUSED by the CWK-137 reader (a link out of the
+// root, over MAX_CONFIG_BYTES, a FIFO or device): those stay SILENT by the head's ruling
+// (a new reason for them is a flock-wide question, returned to main). The fs error is
+// keyed on its CODE, never its message (node/runtime.md §7). The SELECTION is unchanged:
+// every caller already skips a null cfg exactly as before.
+function readCfgResult(file, root) {
+  let raw;
+  try { raw = readRepoFileBounded(file, root, MAX_CONFIG_BYTES); } catch { raw = null; }
+  if (raw === null) return { cfg: null, reason: cfgRefusalReason(file, root) };
+  let parsed;
   try {
-    const content = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+    const content = raw.replace(/^\uFEFF/, '');
     const cleanJson = content.replace(/"(?:\\.|[^"\\])*"|\/\/.*|\/\*[\s\S]*?\*\//g, (m) => (m[0] === '"' ? m : ''));
-    const parsed = JSON.parse(cleanJson);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  } catch {}
+    parsed = JSON.parse(cleanJson);
+  } catch { return { cfg: null, reason: 'malformed JSON' }; }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { cfg: parsed, reason: null };
+  return { cfg: null, reason: 'not a JSON object' };
+}
+
+// Why readRepoFileBounded gave nothing back -- consulted ONLY on that failure path, so a
+// config that reads cleanly costs no extra syscall. A second open is made only for a
+// regular, contained file, so a FIFO is still never opened.
+// R12 (CodeQL #74-#79, js/file-system-race): this function holds NO fs call on `file`. The
+// path checks live in cfgPlacement and the open in cfgOpenVerdict, the way readRepoFileBounded
+// leans on repoEntryKind. What makes the alerts' pattern go away is that SPLIT: no path
+// check shares a function with the open (by the query's source it pairs a check and an
+// open of one path only inside one function). Only the next push's code-scanning list shows
+// whether they clear.
+function cfgRefusalReason(file, root) {
+  const where = cfgPlacement(file, root);
+  if (where === 'a directory' || where === 'unreadable') return where;
+  return where === 'file' ? cfgOpenVerdict(file) : null;
+}
+
+// Where the config candidate sits, decided WITHOUT opening it: 'a directory' | 'unreadable'
+// (lstat itself was denied) | 'file' (a regular, contained file: worth one probe open) | null.
+function cfgPlacement(file, root) {
+  let lst;
+  try { lst = fs.lstatSync(file); } catch (e) { return cfgDenied(e) ? 'unreadable' : null; }
+  const kind = repoEntryKind(file, root);
+  if (kind === 'dir') return 'a directory';
+  if (kind === 'file') return 'file';
+  // A Windows ACL read-deny makes realpathSync.native on the FILE throw EPERM (measured:
+  // lstat and stat succeed, realpath and open do not), so repoEntryKind cannot place it.
+  // A plain file (never a link) lives where its parent directory does, so containment is
+  // checked through the PARENT's realpath instead -- a link out of the root, a FIFO or a
+  // device still falls through to silence.
+  if (!lst.isFile()) return null;
+  try {
+    const dirReal = fs.realpathSync.native(path.dirname(file));
+    if (root != null && !isContained(path.join(dirReal, path.basename(file)), fs.realpathSync.native(root))) return null;
+  } catch { return null; }
+  return 'file';
+}
+function cfgDenied(e) { return !!(e && (e.code === 'EACCES' || e.code === 'EPERM')); }
+
+// The probe open: it exists only to learn the OS verdict (errno EACCES/EPERM); an open that
+// succeeds is closed unread and the verdict is silent (the bound refused it, over
+// MAX_CONFIG_BYTES). A denied open may belong to a non-file swapped in after the path checks
+// (a mode-0 FIFO), so statSync decides: it follows a link, so a link to an unreadable regular
+// file still reads 'unreadable', and a FIFO (swapped in, or behind a link) stays silent. The
+// worst a further race can do is change one advisory line. The two R12 outcome tests in
+// hooks.test.mjs (in-root link, mode-0 FIFO swap) pin this.
+function cfgOpenVerdict(file) {
+  let fd;
+  try { fd = fs.openSync(file, REPO_READ_FLAGS); } catch (e) {
+    if (!cfgDenied(e)) return null;
+    try { return fs.statSync(file).isFile() ? 'unreadable' : null; } catch { return null; }
+  }
+  try { fs.closeSync(fd); } catch {}
   return null;
 }
 
@@ -268,6 +411,14 @@ function viaArr(obj, key, legacyKey) { // same preference, array-shaped (for UNI
   if (legacyKey && Array.isArray(obj[legacyKey])) return obj[legacyKey];
   return undefined;
 }
+// The project's value for `key` (and its legacy alias) is unusable: restore what the GLOBAL layer
+// said under each name, or remove the name so every read site falls to its own default.
+function dropProject(merged, globalCfg, key, legacy) {
+  for (const name of legacy ? [key, legacy] : [key]) {
+    if (globalCfg && globalCfg[name] !== undefined) merged[name] = globalCfg[name];
+    else delete merged[name];
+  }
+}
 const SAFER_ENUM = {
   updateMode: { order: ['off', 'remind', 'ask', 'auto'], default: 'ask' },
   enableConductor: { order: [false, true], default: true, legacy: 'conductor' }, // index 0 = safest; default = config-schema.mjs's declared factory default (README Configure table)
@@ -316,8 +467,9 @@ function loadCfg(base) {
   _cfgBase = key;
   _cfg = null;
   try {
-    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'));
-    const projectCfg = readCfgFile(projectConfigPath(findGitRoot(base === undefined ? process.cwd() : base)));
+    const globalCfg = readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'), null);
+    const projRoot = findGitRoot(base === undefined ? process.cwd() : base);
+    const projectCfg = readCfgFile(projectConfigPath(projRoot), projRoot);
     if (globalCfg || projectCfg) {
       const merged = {};
       for (const src of [globalCfg, projectCfg]) {
@@ -338,9 +490,17 @@ function loadCfg(base) {
         if (projectVal === undefined) continue; // project expressed no opinion via either name
         const globalVal = via(globalCfg, key, legacy);
         const globalValue = globalVal !== undefined ? globalVal : def;
-        const gi = order.indexOf(fold(globalValue));
+        const gi0 = order.indexOf(fold(globalValue));
+        const gi = gi0 === -1 ? order.indexOf(def) : gi0; // an unknown GLOBAL value reads as the schema default
         const pi = order.indexOf(fold(projectVal));
-        if (gi === -1 || pi === -1) continue; // unknown value: leave the shallow-merge result
+        if (pi === -1) {
+          // R13 / CWK-158 item 1 + CWK-141 (1): an unknown or ill-typed PROJECT value (null, a
+          // string outside the enum, a number) is DROPPED -- it reads as ABSENT, so the global
+          // (or the schema default) decides. It used to `continue` and leave the raw junk in the
+          // shallow merge, which defeated an explicit global off/false on every consent gate.
+          dropProject(merged, globalCfg, key, legacy);
+          continue;
+        }
         // Store the CANONICAL member (order[i]), never the raw-cased winner: a
         // consumer that trusts the merge output and compares with strict === --
         // rotCanaryMode's `mode === 'off' || mode === 'manual'` in rot-canary-stop.js/
@@ -358,7 +518,13 @@ function loadCfg(base) {
       // UNION (dedup), not "pick one side" — either side may add.
       for (const [key, { default: def, lower, legacy }] of Object.entries(UNION_ARRAY_KEYS)) {
         const projectArr = viaArr(projectCfg, key, legacy);
-        if (projectArr === undefined) continue; // project expressed no opinion via either name
+        if (projectArr === undefined) {
+          // R13 / CWK-158 item 1: a project value that is PRESENT but not an array (null, a string,
+          // a number) used to survive the merge raw and replace the owner's global list; it is
+          // dropped now -- the global list (or the default) stands.
+          if (projectCfg && (projectCfg[key] !== undefined || (legacy && projectCfg[legacy] !== undefined))) dropProject(merged, globalCfg, key, legacy);
+          continue; // otherwise the project expressed no opinion via either name
+        }
         const globalArr = viaArr(globalCfg, key, legacy) ?? def; // absent global = its schema default ([]), never "nothing to union"
         const foldFn = lower ? fold : (v) => v;
         const result = [...new Set([...globalArr, ...projectArr].map(foldFn))];
@@ -380,13 +546,90 @@ function loadCfg(base) {
   return _cfg;
 }
 // </coalmine-shared: node-config>
+// <coalmine-shared: markers> — synced from hooks/_shared/markers.js by build-plugin; edit the partial, not this block
+// R14 / CWK-158 item 8 (CSV-4, CSV-6, CSV-7, B-u1-L6): the per-session temp markers
+// (.touched .smells .scanned .memmoved) used to sit FLAT in os.tmpdir(), where on a shared
+// POSIX /tmp another user can plant a symlink (the .scanned write followed it) or a FIFO (a
+// blocking readFileSync hung the Stop hook, WSL exit 124). They now live in the owner-only
+// <tmpdir>/coalmine/ subdir the conductor and the sweep throttle already use, and are
+// read and written only through the helpers below:
+//   - the dir is accepted ONLY if it is a real directory (not a link), owned by this user and
+//     not group/other-writable (POSIX; fs.getuid is absent on Windows, where %TEMP% is per-user).
+//     A dir somebody else made is refused: the marker functions return null/false and the
+//     hook degrades to "no marker" (fail-silent), never writes into it.
+//   - READ = O_NONBLOCK open, fstat must be a regular file, size bounded (the
+//     readRepoFileBounded shape), so a FIFO or device cannot block and a huge file cannot
+//     be slurped.
+//   - WRITE = append with O_NOFOLLOW + fstat regular (the log-style .touched/.smells), a
+//     wx temp + rename (the whole-value .scanned), or wx create (the write-once .memmoved).
+// RESIDUALS, named: Windows has no O_NOFOLLOW/O_NONBLOCK, but its temp dir is per-user and
+// a FIFO cannot be planted; a dir pre-created by THIS user with loose bits is refused, not
+// tightened.
+const MARKER_MAX_BYTES = 1024 * 1024; // a .touched/.smells list is one short line per edited file
+const MARKER_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
+function markerDirPath() { return path.join(os.tmpdir(), 'coalmine'); }
+function ensureMarkerDir() {
+  const dir = markerDirPath();
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const st = fs.lstatSync(dir);
+    if (st.isSymbolicLink() || !st.isDirectory()) return null;
+    if (typeof process.getuid === 'function') {
+      if (st.uid !== process.getuid() || (st.mode & 0o022) !== 0) return null;
+    }
+    return dir;
+  } catch { return null; }
+}
+// <markerdir>/rot-canary-<sid>, or null when the dir is not trustworthy. `sid` is already
+// allowlisted by the caller (/^[A-Za-z0-9_-]+$/), so it cannot traverse out of the dir.
+function markerBase(sid) {
+  const dir = ensureMarkerDir();
+  return dir ? path.join(dir, `rot-canary-${sid}`) : null;
+}
+function readMarker(file) { // text, or null when absent / not a regular file / over the bound / unreadable
+  let fd;
+  try {
+    fd = fs.openSync(file, MARKER_READ_FLAGS, 0o600); // R14 red: mode is inert without O_CREAT; stated because the CodeQL query reads the mode argument only, never the flags
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > MARKER_MAX_BYTES) return null;
+    const buf = Buffer.alloc(st.size);
+    let got = 0;
+    while (got < st.size) {
+      const n = fs.readSync(fd, buf, got, st.size - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } catch { return null; } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+// </coalmine-shared: markers>
+// <coalmine-shared: markers-write> — synced from hooks/_shared/markers-write.js by build-plugin; edit the partial, not this block
+// R14 red: the existence-check and atomic-write half of the marker helpers, synced into the STOP hook only (the touch hook uses
+// neither; an unused function there is a CodeQL js/unused-local-variable alert).
+function markerExists(file) { // lstat: a link or FIFO is "present" as an entry, but readMarker will refuse it
+  try { fs.lstatSync(file); return true; } catch { return false; }
+}
+function writeMarkerAtomic(file, text) { // wx temp in the same dir, then rename over the entry (replaces a planted link, never writes through it)
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}
+    return false;
+  }
+}
+// </coalmine-shared: markers-write>
 
 // Heuristic user-language detection: explicit .coalmine.json override first, then
 // env locale, then regional characters in project docs (per hooks-safety.md section 5).
 function detectLang() {
   try {
     const cfg = loadCfg();
-    if (cfg && typeof cfg.language === 'string' && TRANSLATIONS[cfg.language.toLowerCase()]) {
+    if (cfg && typeof cfg.language === 'string' && Object.hasOwn(TRANSLATIONS, cfg.language.toLowerCase())) { // R14 / B-u1-L4: own keys only, so 'constructor' is not a language
       return cfg.language.toLowerCase();
     }
   } catch {}
@@ -401,7 +644,7 @@ function detectLang() {
     for (const file of ['README.md', 'MEMORY.md', 'AGENTS.md']) {
       const p = path.join(root, file);
       if (fs.existsSync(p)) {
-        const content = readFirstChunk(p);
+        const content = readFirstChunk(p, root);
         if (/[฀-๿]/.test(content)) return 'th';
         if (/[぀-ヿ㐀-䶿一-鿿]/.test(content)) {
           if (/[぀-ゟ゠-ヿ]/.test(content)) return 'ja';
@@ -524,10 +767,12 @@ function sweepStale(canaryActive) {
       //     NOT obtainable: our marker CONTENTS (0o600 since CWK-043 — and both
       //     markers are written EMPTY, so there is nothing in them to learn); any write
       //     THROUGH a path we own (rename replaces a directory entry; `wx` refuses a
-      //     pre-planted name); and this residual has NO reach at all to `.touched`,
-      //     `.smells` or `.scanned`, which live FLAT in os.tmpdir() under /tmp's own sticky
-      //     bit (1777 — read under WSL2, same provenance caveat as (c) below: this box's
-      //     NTFS has no such bit to read), not in this subdir.
+      //     pre-planted name). [R14, CSV-4/6/7: `.touched`, `.smells`, `.scanned` and `.memmoved`
+      //     used to live FLAT in os.tmpdir() under /tmp's sticky bit; they now live in THIS subdir,
+      //     so the residual below DOES reach them. That is why the markers region's ensureMarkerDir()
+      //     refuses a dir that is not a real directory owned by this user and free of group/other
+      //     write bits: a pre-created hostile dir costs the markers (fail-silent, no scan nudge),
+      //     never a read of a planted FIFO or a write through a planted link.]
       //
       // (b) FORGERY / SUPPRESSION — REACHABLE, deliberately, and bounded to denial.
       //     Planting a REGULAR file here with a fresh mtime makes the throttle above read
@@ -622,7 +867,13 @@ function sweepStale(canaryActive) {
       // exception path, but process death between the write and the rename strands one that
       // nothing else we own could ever collect. A live stamp exists for microseconds and the
       // cutoff is >= 1 day (clamped), so anything this reaps is definitionally dead.
-      if (!f.endsWith('.marker') && !f.endsWith('.tmp')) continue;
+      // R14 (CSV-4/6/7): this canary's own per-session markers (rot-canary-<sid>.touched / .smells /
+      // .scanned / .memmoved) now live here too. Canary-owned, so collected on the active path only,
+      // exactly like the flat-root pass above; the `.marker` throttle and the conductor's markers
+      // stay unconditional.
+      const isSessionMarker = f.startsWith('rot-canary-') && /\.(touched|smells|scanned|memmoved)$/.test(f);
+      if (isSessionMarker && !canaryActive) continue;
+      if (!isSessionMarker && !f.endsWith('.marker') && !f.endsWith('.tmp')) continue;
       const p = path.join(markerDir, f);
       try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch {}
     }
@@ -718,6 +969,27 @@ function matchesFragment(path, frag) {
     pos = idx + seg.length;
   }
   return true;
+}
+// R14 / B-u1-7 (closes B-u2-15): a fragment is matched against the file's path RELATIVE to the project root,
+// with a leading '/', so an ancestor directory of the project (a checkout under .../scratchpad/...) can no
+// longer exempt every file in it. A file outside the root keeps its absolute path (it has no project-relative form).
+// Both sides go through realpathSync.native first (node/runtime.md section 4, an IDENTITY question): process.cwd() is the
+// kernel-resolved spelling (macOS /private/var/...) while the touched list keeps the spelling the edit tool used
+// (/var/...), and two spellings of one directory made the relative path climb out of the root (CI red at f460982).
+// Unresolvable = the lexical pair (never half of each); with two spellings that pair can still climb out and fall back to the absolute path below (reach: an existing file whose realpath fails; the all-skipped notice still prints).
+function projectRelative(filePath) {
+  try {
+    let root = findGitRoot(process.cwd());
+    let file = filePath;
+    try {
+      const realRoot = fs.realpathSync.native(root);
+      const realFile = fs.realpathSync.native(filePath);
+      root = realRoot; file = realFile; // assigned only after BOTH resolve
+    } catch { /* the full lexical pair */ }
+    const rel = path.relative(root, file);
+    if (rel && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) return '/' + rel;
+  } catch {}
+  return filePath;
 }
 function matchesAnyExcludeFragment(filePath, fragments) {
   const normalized = filePath.replace(/\\/g, '/').toLowerCase();
@@ -841,17 +1113,22 @@ function main() {
   // evidence. The 2026-07-12 AG pilot's cadence DID fire, so real AG sids passed it).
   if (!sid || typeof sid !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sid)) return;
 
-  const base = path.join(os.tmpdir(), `rot-canary-${sid}`);
+  // R14 (CSV-4/6/7): the session markers live in the owner-only <tmpdir>/coalmine/ subdir and are
+  // read bounded + non-blocking (markers region above): a FIFO planted at one cannot hang this hook.
+  const base = markerBase(sid);
+  if (!base) return;
   const touched = base + '.touched';
-  if (!fs.existsSync(touched)) return;
+  const touchedRaw = readMarker(touched);
+  if (touchedRaw === null) return;
 
   let touchedMtime = 0;
   try { touchedMtime = fs.statSync(touched).mtimeMs; } catch { return; }
 
   const scanned = base + '.scanned';
   try {
-    if (fs.existsSync(scanned)) {
-      const content = fs.readFileSync(scanned, 'utf8').trim();
+    const scannedRaw = readMarker(scanned);
+    if (scannedRaw !== null) {
+      const content = scannedRaw.trim();
       // Unknown/legacy marker content (empty pre-v2.4 format) → 0 so the batch
       // re-nudges rather than being silently swallowed and deleted.
       const lastMtime = content ? Number(content) : 0;
@@ -865,12 +1142,12 @@ function main() {
 
   let files = [];
   try {
-    files = [...new Set(fs.readFileSync(touched, 'utf8').split('\n').filter(Boolean).map((x) => path.normalize(x)))];
+    files = [...new Set(touchedRaw.split('\n').filter(Boolean).map((x) => path.normalize(x)))];
   } catch { return; }
   if (!files.length) return; // no recorded edit → nothing moved this session
 
   const lang = detectLang();
-  const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
+  const t = (Object.hasOwn(TRANSLATIONS, lang) && TRANSLATIONS[lang]) || TRANSLATIONS.en;
 
   // The loud scan report can only target files that STILL EXIST; a file edited then
   // deleted this session (or a corrupt/garbage line) drops out of it. `files`
@@ -886,7 +1163,7 @@ function main() {
   let skippedCount = 0;
   const extant = excludeFrags.length
     ? extantRaw.filter((f) => {
-        if (matchesAnyExcludeFragment(f, excludeFrags)) { skippedCount++; return false; }
+        if (matchesAnyExcludeFragment(projectRelative(f), excludeFrags)) { skippedCount++; return false; }
         return true;
       })
     : extantRaw;
@@ -907,7 +1184,7 @@ function main() {
   try {
     const cfg = loadCfg();
     if (!(cfg && cfg.memoryDriftNudge === false)
-        && !fs.existsSync(base + '.memmoved')
+        && !markerExists(base + '.memmoved')
         && fs.existsSync(path.join(findGitRoot(process.cwd()), 'MEMORY.md'))) {
       driftText = t.memoryDrift || TRANSLATIONS.en.memoryDrift;
     }
@@ -994,8 +1271,10 @@ function main() {
 
     let smellText = '';
     try {
-      if (fs.existsSync(base + '.smells')) {
-        const sm = [...new Set(fs.readFileSync(base + '.smells', 'utf8').split('\n').filter(Boolean))].sort();
+      const smellsRaw = readMarker(base + '.smells');
+      if (smellsRaw !== null) {
+        // B-u1-L6: each line is a path + findings the model reads inside the block reason; strip control characters.
+        const sm = [...new Set(smellsRaw.split('\n').map((x) => x.replace(/[\u0000-\u001f\u007f]/g, ' ')).filter(Boolean))].sort();
         if (sm.length) {
           smellText = t.smellPrefix + sm.map((x) => '  ' + x).join('\n');
         }
@@ -1014,15 +1293,10 @@ function main() {
   // Acknowledgement marker — store the mtime of .touched when we started the check
   // (so a later stop in this batch re-surfaces neither the scan nor the drift note).
   try {
-    // 0o600 for the same reason as the sweep stamp above: this is a flat os.tmpdir() write
-    // (no private subdir at all here), so on a shared Unix /tmp the file's own mode is the
-    // only thing scoping it to this user. Same CodeQL sink class (#66/#67's rule), caught by
-    // the batch sweep rather than by an alert — this site was never reported.
-    // Residual (CWK-043 INSPECT N1): `mode` is open(2)'s CREATION mode, ignored when the
-    // file already exists. The `wx` sites are always newly created so it is vacuous there,
-    // but this marker is rewritten every batch — a `.scanned` left by a pre-CWK-043 version
-    // at 0o666 is NOT tightened by this code. Self-heals on the next tmp clear.
-    fs.writeFileSync(scanned, String(touchedMtime), { encoding: 'utf8', mode: 0o600 });
+    // wx temp + rename inside the owner-only marker dir (R14, CSV-4): a symlink planted at .scanned is REPLACED,
+    // never written through, and the file is created 0o600 each batch (the CWK-043 N1 residual for a pre-existing
+    // looser file no longer applies to a rewrite).
+    writeMarkerAtomic(scanned, String(touchedMtime));
   } catch {}
 
   // Emit. AG mode (an event-name argv — ONLY the Antigravity template passes one):
