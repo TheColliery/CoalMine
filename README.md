@@ -115,8 +115,9 @@
 
 ### Option A2 — skills.sh (One line)
 ```bash
-npx skills add TheColliery/CoalMine
+npx skills add TheColliery/CoalMine/plugin
 ```
+Installs the 9 rendered skills from `plugin/skills/` as files: manual invocation only, no hooks. Point it at `/plugin`. The bare `TheColliery/CoalMine` form installs the unrendered `skills/` templates. (Path read from the `skills` CLI v1.7.0 source; not yet confirmed by a run.)
 
 ### Option A3 — claude.ai (web / desktop app)
 Download a canary's ZIP from the [Releases page](https://github.com/TheColliery/CoalMine/releases) (one asset per skill, built by CI on every tag) and upload it as a custom skill (Settings → Capabilities → Skills). Manual invocation only — no hooks there. **Don't hand-zip `skills/` yourself** — our own frontmatter `description` runs up to our 1024-char cap, well past claude.ai's 200-char skill-listing limit; every published ZIP has its description deterministically trimmed to fit (`scripts/build-claude-ai-zips.mjs`, source `skills/*/SKILL.md` files are never edited). Each Release also carries a `SHA256SUMS.txt` covering every ZIP — you'll typically have just the one skill's ZIP, not all nine, so verify with `sha256sum --ignore-missing -c SHA256SUMS.txt` (the plain `-c` form reports the other eight as FAILED). On Windows: `$f='rot-canary.zip'; (Get-FileHash $f).Hash -ieq (Select-String $f SHA256SUMS.txt).Line.Split()[0]` (swap in the ZIP you downloaded). Steps + capability notes: [CLAUDE-AI-INSTALL](https://github.com/TheColliery/.github/blob/main/CLAUDE-AI-INSTALL.md).
