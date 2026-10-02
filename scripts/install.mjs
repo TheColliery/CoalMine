@@ -156,7 +156,10 @@ function resolveGitDir(repoDir) {
 // No git binary / not set / any failure → the historical <gitDir>/hooks.
 function resolveHooksDir(repoDir, gitDir) {
   try {
-    const r = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
+    // R13 / CWK-158 item 4 (B-u2-5a): read it as a PATH (`--type=path`), the way git itself does, so a
+    // leading `~` or `~user` expands. The untyped read returned the literal `~/hooks`, which
+    // path.resolve then joined under the project (<project>/~/hooks) while git ran $HOME/hooks.
+    const r = spawnSync('git', ['config', '--type=path', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
     const configured = r.status === 0 && r.stdout ? r.stdout.trim() : '';
     if (configured) return path.resolve(repoDir, configured);
     if (r.status !== 0 && r.status !== 1) {
