@@ -223,6 +223,11 @@ test('scanExcludePaths: when the touched file cannot be resolved, root and file 
   catch (e) { t.skip(`cannot create a directory link here (${e.code})`); return; }
   const projLink = path.join(link, 'scratchpad', 'sbx', 'proj');
   const fileLink = path.join(projLink, 'src', 'real.js');
+  // CAPABILITY PROBE (R14 red 2): the shape needs a child whose process.cwd() KEEPS the link spelling. On POSIX the kernel's getcwd()
+  // returns the RESOLVED path whatever the spawn cwd was spelled as (measured in WSL: spawned with .../link/proj, the child reported
+  // .../real/proj), so there the lexical-pair shape cannot be built; on Windows a junction cwd keeps its spelling.
+  const cwdProbe = spawnSync(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], { cwd: projLink, encoding: 'utf8', timeout: 30000 });
+  if (cwdProbe.stdout !== projLink) { t.skip(`a child spawned with a link-spelled cwd reports its resolved path here (${cwdProbe.stdout}); the lexical-pair shape cannot be built`); return; }
   fs.writeFileSync(path.join(sandbox, 'coalmine', 'rot-canary-MIX.touched'), fileLink + '\n');
   const pre = path.join(sandbox, 'throw-for-real-js.cjs');
   fs.writeFileSync(pre, [
