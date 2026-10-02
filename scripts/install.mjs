@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { loadShared as loadSharedFrom, listSkills, installSkillDir } from './lib/render.mjs';
 import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
 import { gitEnv } from './lib/git-env.mjs';
-import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
+import { MANIFEST_NAME, hashInstalledTree, hashFile } from './lib/manifest.mjs';
 import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
 import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
 
@@ -475,13 +475,18 @@ function uninstallConfig(arg) {
 }
 
 // ─── Skills Uninstallation ───────────────────────────────────────────────────
-function uninstallSkills(destDir, skillsList) {
+function uninstallSkills(destDir, skillsList, manifest = null) {
   try {
     if (!fs.existsSync(destDir)) return 0;
     let removed = 0;
     for (const s of skillsList) {
       const targetDir = path.join(destDir, s);
       if (fs.existsSync(targetDir)) {
+        if (manifest && manifest.skills.includes(s) && !ownedByManifest(destDir, s, manifest)) {
+          console.warn(`  [kept] ${targetDir}: the manifest names it but its contents are not provably CoalMine's -- left in place`);
+          process.exitCode = 1;
+          continue;
+        }
         fs.rmSync(targetDir, { recursive: true, force: true });
         console.log(`  removed skill: ${s} from ${targetDir}`);
         removed++;
@@ -549,7 +554,33 @@ function isForeignSkillDir(destDir, skillName, manifestSkills) {
 // (rotcanary -> rot-canary, renamed in v3.0.0.)
 const RETIRED_SKILL_NAMES = ['rotcanary'];
 
-function cleanPreviousInstall(destDir, manifest) {
+// R13 / CWK-158 item 7 (CSV-2): a manifest NAMES a dir, it does not PROVE the dir is ours -- a project
+// manifest arrives with a cloned repo, and "victim-dir" listed in it used to be recursively deleted.
+// Ownership is proven by CONTENT: the manifest's own per-file hashes. Every regular file now in the
+// dir must be recorded under <name>/<rel> with the hash it has today; a file the manifest does not
+// know, a changed file, or anything that is not a plain file (a link) makes it unproven. A manifest
+// that predates the hashes proves nothing by content, so only our own skill-meta.json marker does.
+function ownedByManifest(destDir, name, manifest) {
+  const dir = path.join(destDir, name);
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return false;
+    const hashes = manifest && manifest.hashes;
+    if (!hashes || typeof hashes !== 'object') return fs.existsSync(path.join(dir, 'skill-meta.json'));
+    const walk = (abs, relParts) => {
+      for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+        const childAbs = path.join(abs, e.name);
+        const rel = [...relParts, e.name];
+        if (e.isDirectory()) { if (!walk(childAbs, rel)) return false; continue; }
+        if (!e.isFile()) return false;
+        if (hashes[rel.join('/')] !== hashFile(childAbs)) return false;
+      }
+      return true;
+    };
+    return walk(dir, [name]);
+  } catch { return false; }
+}
+
+function cleanPreviousInstall(destDir, manifest, current = []) {
   // Orphan sweep ONLY — remove skill dirs a PREVIOUS CoalMine install left that the
   // current set no longer has (renamed/removed). Ownership is PROVEN, never guessed:
   //   • manifest.skills is our package file-list — every dir it names, we wrote;
@@ -563,8 +594,16 @@ function cleanPreviousInstall(destDir, manifest) {
   const owned = safeSkillNames(manifest ? manifest.skills : []);
   let cleaned = 0;
   for (const s of [...owned, ...RETIRED_SKILL_NAMES]) {
+    // A current-set dir is cleared and rewritten by installSkillDir anyway; only an ORPHAN needs
+    // the ownership proof (item 7). RETIRED names are CoalMine-only coinages, the named exception.
+    if (current.includes(s)) continue;
     const dir = path.join(destDir, s);
     try {
+      if (fs.existsSync(dir) && owned.includes(s) && !ownedByManifest(destDir, s, manifest)) {
+        console.warn(`  [kept] ${dir}: the manifest names it but its contents are not provably CoalMine's -- left in place`);
+        process.exitCode = 1;
+        continue;
+      }
       if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); cleaned++; }
     } catch (e) {
       console.warn(`  [warn] could not remove previous ${s}: ${e.message}`);
@@ -620,7 +659,7 @@ function installSkills(dest, skills, shared, root = dest) {
   }
   // Program-style version transition: remove what the PREVIOUS install owned
   // (manifest orphans + retired tombstone), then write the new set fresh.
-  cleanPreviousInstall(dest, manifest);
+  cleanPreviousInstall(dest, manifest, skills);
   let n = 0;
   const installed = [];
   for (const s of toInstall) {
@@ -798,7 +837,7 @@ if (isUninstall) {
   const ownedNames = previous
     ? previous.skills
     : skills.filter((s) => !isForeignSkillDir(dest, s, null));
-  const removedCount = uninstallSkills(dest, [...safeSkillNames(ownedNames), ...RETIRED_SKILL_NAMES]);
+  const removedCount = uninstallSkills(dest, [...safeSkillNames(ownedNames), ...RETIRED_SKILL_NAMES], previous);
   try { fs.rmSync(path.join(dest, MANIFEST_NAME), { force: true }); } catch {}
   uninstallConfig(targetKey);
   uninstallGitHooks();

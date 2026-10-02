@@ -36,6 +36,7 @@ import { detectPresentAgents } from './targets.mjs';
 import { listSkills } from './render.mjs';
 import { gitEnv } from './git-env.mjs';
 import { spawnSandboxed, writeHomeReporter, withHomeReporter } from './test-sandbox.mjs';
+import { hashFile } from './manifest.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INSTALL = path.join(repo, 'scripts', 'install.mjs');
@@ -149,6 +150,9 @@ test('manifest-driven reinstall removes renamed leftovers, spares foreign skills
     fs.mkdirSync(path.join(target, 'foreign-skill'));
     fs.writeFileSync(path.join(target, 'foreign-skill', 'SKILL.md'), 'not ours', 'utf8');
     manifest1.skills.push('old-renamed-skill');
+    // A genuine leftover of a previous install carries its recorded hashes (CWK-158 item 7: an orphan
+    // is removed only when its contents are provably what the manifest wrote).
+    manifest1.hashes['old-renamed-skill/SKILL.md'] = hashFile(path.join(target, 'old-renamed-skill', 'SKILL.md'));
     fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(manifest1), 'utf8');
 
     // 3. Reinstall → legacy dir cleaned via manifest, foreign dir untouched.
@@ -566,6 +570,87 @@ test('CWK-158 item 3: uninstall never restores the backup over a hook the user w
     assert.match(un.stdout + un.stderr, /\[kept\] pre-commit/, 'the keep is reported');
     assert.equal(fs.readFileSync(hookPath, 'utf8'), NEWER, 'the user\'s newer hook is untouched');
     assert.equal(fs.readFileSync(hookPath + '.pre-coalmine', 'utf8'), FOREIGN_HOOK, 'and the older backup stays for them to merge');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('CWK-158 item 4: core.hooksPath "~/..." expands the way git does -- the hook lands in the home dir, never in <project>/~/', (t) => {
+  if (!gitAvailable()) { t.skip('git binary not available'); return; }
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-tilde-proj-'));
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-tilde-home-'));
+
+  try {
+    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '~/coalhooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    // The fixture HOME is a SEPARATE dir (runInstall's 4th argument), so "~" resolves outside the project.
+    // The dir exists, as a user's hooks dir does: a hooks dir OUTSIDE the worktree is its own root, and
+    // an absent root is refused (unchanged, CWK-137).
+    fs.mkdirSync(path.join(sandbox, 'coalhooks'));
+    const res = runInstall(path.join(proj, 'skills'), proj, [], sandbox);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    assert.ok(!fs.existsSync(path.join(proj, '~')), 'no literal <project>/~ directory is created');
+    assert.ok(fs.existsSync(path.join(sandbox, 'coalhooks', 'pre-commit')), 'the hook lands where git reads it: $HOME/coalhooks');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+});
+
+// R13 / CWK-158 item 7 (CSV-2, probe H): a manifest NAMES a dir, it does not prove ownership. A project
+// manifest arrives with a cloned repo; a dir it lists whose contents the manifest never hashed is the
+// user's, and neither install nor uninstall may recursively delete it.
+function plantManifestNaming(target, names, hashes = {}) {
+  fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify({ version: '0.0.1', skills: names, hashes }), 'utf8');
+}
+
+test('CWK-158 item 7: install keeps a dir a PLANTED manifest names but never hashed (probe H)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-victim-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, 'victim-dir'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'victim-dir', 'notes.txt'), 'the users own data', 'utf8');
+    plantManifestNaming(target, ['victim-dir']);
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the install');
+    assert.match(res.stdout + res.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('CWK-158 item 7: install keeps a manifest-named dir whose recorded file was CHANGED or whose dir holds an extra file', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-victim2-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, 'edited'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'edited', 'SKILL.md'), 'edited by the user', 'utf8');
+    fs.mkdirSync(path.join(target, 'extra'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'extra', 'SKILL.md'), 'ours', 'utf8');
+    fs.writeFileSync(path.join(target, 'extra', 'mine.txt'), 'user file', 'utf8');
+    plantManifestNaming(target, ['edited', 'extra'], {
+      'edited/SKILL.md': 'deadbeef',
+      'extra/SKILL.md': hashFile(path.join(target, 'extra', 'SKILL.md')),
+    });
+    runInstall(target, proj);
+    assert.ok(fs.existsSync(path.join(target, 'edited', 'SKILL.md')), 'a changed file makes the dir unproven');
+    assert.ok(fs.existsSync(path.join(target, 'extra', 'mine.txt')), 'an unrecorded extra file makes the dir unproven');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('CWK-158 item 7: uninstall keeps a manifest-named dir that is not provably ours', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-victim3-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, 'victim-dir'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'victim-dir', 'notes.txt'), 'the users own data', 'utf8');
+    plantManifestNaming(target, ['victim-dir']);
+    const un = runInstall(target, proj, ['--uninstall']);
+    assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the uninstall');
+    assert.match(un.stdout + un.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
   } finally {
     fs.rmSync(proj, { recursive: true, force: true });
   }
