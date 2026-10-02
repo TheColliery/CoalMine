@@ -2551,3 +2551,75 @@ test('R12: a non-file swapped in between the path checks and the open is never r
   assert.ok(events.includes('open 4 threw=EACCES'), `the swap landed before the 4th open (the refusal probe whose reason the conductor reports) and that open was denied: ${events.join(' | ')}`);
   assert.deepEqual(unreadableLines(r.stdout), [], 'a FIFO is not a config: no UNREADABLE line');
 });
+
+// ─── R13 / CWK-158 item 1 + CWK-141 (1): the clamp must DROP an unknown or ill-typed project value ──────
+// The loop used to `continue` on an out-of-enum value (and the UNION loop on a non-array), leaving the
+// project's raw junk in the shallow merge: a cloned repo's { rotCanaryMode: 'on' } or
+// { disabledCanaries: null } then defeated the owner's explicit global off / ["all"] / false on
+// every consent gate (probe A, 8 bypass rows at 4e84429 and HEAD). Now the junk reads as ABSENT:
+// the global (or the schema default) wins. Each row plants a global that silences the gate and a
+// junk project value, and asserts the gate STAYS silent -- through the real hook.
+const CLAMP_JUNK_STOP = [
+  ['dc-null', { disabledCanaries: ['rot-canary'] }, { disabledCanaries: null }],
+  ['dc-string', { disabledCanaries: ['rot-canary'] }, { disabledCanaries: 'x' }],
+  ['dc-number', { disabledCanaries: ['rot-canary'] }, { disabledCanaries: 5 }],
+  ['dc-legacy-string', { disabledCanaries: ['rot-canary'] }, { disable: 'x' }],
+  ['rcm-on', { rotCanaryMode: 'off' }, { rotCanaryMode: 'on' }],
+  ['rcm-null', { rotCanaryMode: 'off' }, { rotCanaryMode: null }],
+  ['rcm-legacy-junk', { rotCanaryMode: 'off' }, { mode: 'on' }],
+  ['rcm-number', { rotCanaryMode: 'off' }, { rotCanaryMode: 7 }],
+];
+for (const [label, g, p] of CLAMP_JUNK_STOP) {
+  test(`clamp drops a junk project value (${label}): the global silence on the Stop gate holds (CWK-158 item 1)`, () => {
+    const tmp = mkAnchoredTmp();
+    try {
+      fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify(g), 'utf8');
+      fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify(p), 'utf8');
+      const sid = 'CJ' + label.split('-').join('');
+      plantTouchedFixture(tmp, sid);
+      const r = runHook(STOP, JSON.stringify({ session_id: sid, stop_hook_active: false }), tmp);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '', 'the explicit global choice must hold against a junk project value -- the scan must not run');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [label, p] of [['ec-null', { enableConductor: null }], ['ec-string', { enableConductor: 'yes' }], ['ec-legacy-junk', { conductor: 'x' }]]) {
+  test(`clamp drops a junk project value (${label}): a global enableConductor:false still silences the conductor (CWK-158 item 1)`, () => {
+    const tmp = mkAnchoredTmp();
+    try {
+      fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify({ enableConductor: false }), 'utf8');
+      fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify(p), 'utf8');
+      const r = runHook(CONDUCTOR, '', tmp);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '', 'global enableConductor:false must hold against a junk project value');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+test('clamp drops a junk project scanEverything: a global false is not escalated by a non-boolean (CWK-141 (1), the other clamped key)', () => {
+  const tmp = mkAnchoredTmp();
+  try {
+    fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify({ scanEverything: false, scanExcludePaths: ['scratchpad'] }), 'utf8');
+    fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ scanEverything: 'true' }), 'utf8');
+    const excluded = path.join(tmp, 'scratchpad-probe.js');
+    const kept = path.join(tmp, 'real-code.js');
+    fs.writeFileSync(excluded, 'x');
+    fs.writeFileSync(kept, 'x');
+    fs.writeFileSync(path.join(tmp, 'rot-canary-CJSE.touched'), kept + '\n' + excluded + '\n');
+    const r = runHook(STOP, JSON.stringify({ session_id: 'CJSE', stop_hook_active: false }), tmp);
+    assert.equal(r.status, 0);
+    const out = JSON.parse(r.stdout);
+    assert.ok(out.reason.includes('skipped per scanExcludePaths'), 'the exclude still fired: the string "true" is not the boolean true');
+    assert.ok(!(out.systemMessage || '').includes('scanEverything is ON'), 'and no override notice for an override that never took');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

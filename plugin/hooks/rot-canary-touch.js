@@ -385,6 +385,14 @@ function viaArr(obj, key, legacyKey) { // same preference, array-shaped (for UNI
   if (legacyKey && Array.isArray(obj[legacyKey])) return obj[legacyKey];
   return undefined;
 }
+// The project's value for `key` (and its legacy alias) is unusable: restore what the GLOBAL layer
+// said under each name, or remove the name so every read site falls to its own default.
+function dropProject(merged, globalCfg, key, legacy) {
+  for (const name of legacy ? [key, legacy] : [key]) {
+    if (globalCfg && globalCfg[name] !== undefined) merged[name] = globalCfg[name];
+    else delete merged[name];
+  }
+}
 const SAFER_ENUM = {
   updateMode: { order: ['off', 'remind', 'ask', 'auto'], default: 'ask' },
   enableConductor: { order: [false, true], default: true, legacy: 'conductor' }, // index 0 = safest; default = config-schema.mjs's declared factory default (README Configure table)
@@ -456,9 +464,17 @@ function loadCfg(base) {
         if (projectVal === undefined) continue; // project expressed no opinion via either name
         const globalVal = via(globalCfg, key, legacy);
         const globalValue = globalVal !== undefined ? globalVal : def;
-        const gi = order.indexOf(fold(globalValue));
+        const gi0 = order.indexOf(fold(globalValue));
+        const gi = gi0 === -1 ? order.indexOf(def) : gi0; // an unknown GLOBAL value reads as the schema default
         const pi = order.indexOf(fold(projectVal));
-        if (gi === -1 || pi === -1) continue; // unknown value: leave the shallow-merge result
+        if (pi === -1) {
+          // R13 / CWK-158 item 1 + CWK-141 (1): an unknown or ill-typed PROJECT value (null, a
+          // string outside the enum, a number) is DROPPED -- it reads as ABSENT, so the global
+          // (or the schema default) decides. It used to `continue` and leave the raw junk in the
+          // shallow merge, which defeated an explicit global off/false on every consent gate.
+          dropProject(merged, globalCfg, key, legacy);
+          continue;
+        }
         // Store the CANONICAL member (order[i]), never the raw-cased winner: a
         // consumer that trusts the merge output and compares with strict === --
         // rotCanaryMode's `mode === 'off' || mode === 'manual'` in rot-canary-stop.js/
@@ -476,7 +492,13 @@ function loadCfg(base) {
       // UNION (dedup), not "pick one side" — either side may add.
       for (const [key, { default: def, lower, legacy }] of Object.entries(UNION_ARRAY_KEYS)) {
         const projectArr = viaArr(projectCfg, key, legacy);
-        if (projectArr === undefined) continue; // project expressed no opinion via either name
+        if (projectArr === undefined) {
+          // R13 / CWK-158 item 1: a project value that is PRESENT but not an array (null, a string,
+          // a number) used to survive the merge raw and replace the owner's global list; it is
+          // dropped now -- the global list (or the default) stands.
+          if (projectCfg && (projectCfg[key] !== undefined || (legacy && projectCfg[legacy] !== undefined))) dropProject(merged, globalCfg, key, legacy);
+          continue; // otherwise the project expressed no opinion via either name
+        }
         const globalArr = viaArr(globalCfg, key, legacy) ?? def; // absent global = its schema default ([]), never "nothing to union"
         const foldFn = lower ? fold : (v) => v;
         const result = [...new Set([...globalArr, ...projectArr].map(foldFn))];

@@ -111,6 +111,24 @@ function Resolve-Aliased {
   if ($LegacyKey) { return $Obj.$LegacyKey }
   return $null
 }
+function Test-HasKey {
+  # True when $Obj carries the property under either name, whatever its value (a JSON null included).
+  param($Obj, [string]$Key, [string]$LegacyKey)
+  if ($null -eq $Obj) { return $false }
+  if ($Obj.PSObject.Properties[$Key]) { return $true }
+  if ($LegacyKey -and $Obj.PSObject.Properties[$LegacyKey]) { return $true }
+  return $false
+}
+function Restore-GlobalKey {
+  # The project's value for $Key (and its legacy alias) is unusable: put back what the GLOBAL layer said
+  # under each name, or remove the name so every read site falls to its own default.
+  param($Merged, $GlobalCfg, [string]$Key, [string]$LegacyKey)
+  foreach ($name in @($Key, $LegacyKey)) {
+    if (-not $name) { continue }
+    $gp = if ($null -ne $GlobalCfg) { $GlobalCfg.PSObject.Properties[$name] } else { $null }
+    if ($gp -and $null -ne $gp.Value) { $Merged[$name] = $gp.Value } else { $Merged.Remove($name) }
+  }
+}
 function Resolve-AliasedArray {
   # Same preference as Resolve-Aliased, array-shaped. @()-wraps the result: a
   # single-element JSON array survives ConvertFrom-Json as an array, but an
@@ -209,14 +227,27 @@ function Load-CoalmineConfig {
   foreach ($key in $saferEnum.Keys) {
     $spec = $saferEnum[$key]
     $projectVal = Resolve-Aliased $projectCfg $key $spec.legacy
-    if ($null -eq $projectVal) { continue } # project expressed no opinion via either name
+    if ($null -eq $projectVal) {
+      # A JSON null is a PRESENT value that overwrote the global in the shallow merge above (R13 / CWK-158
+      # item 1): drop it. A key the project never mentions is genuinely "no opinion".
+      if (Test-HasKey $projectCfg $key $spec.legacy) { Restore-GlobalKey $merged $globalCfg $key $spec.legacy }
+      continue
+    }
     $globalVal = Resolve-Aliased $globalCfg $key $spec.legacy
     $globalValue = if ($null -ne $globalVal) { $globalVal } else { $spec.default }
     $order = $spec.order
     $isBoolOrder = $order[0] -is [bool]
     $gi = if ($isBoolOrder) { [array]::IndexOf($order, [bool]$globalValue) } else { [array]::IndexOf($order, ([string]$globalValue).ToLower()) }
     $pi = if ($isBoolOrder) { [array]::IndexOf($order, [bool]$projectVal) } else { [array]::IndexOf($order, ([string]$projectVal).ToLower()) }
-    if ($gi -eq -1 -or $pi -eq -1) { continue } # unknown value: leave the shallow-merge result
+    if ($isBoolOrder -and $projectVal -isnot [bool]) { $pi = -1 } # a string/number is not a boolean: never coerced into one
+    if ($isBoolOrder -and $null -ne $globalVal -and $globalVal -isnot [bool]) { $gi = [array]::IndexOf($order, [bool]$spec.default) }
+    if ($gi -eq -1) { $gi = [array]::IndexOf($order, $spec.default) } # an unknown GLOBAL value reads as the schema default
+    if ($pi -eq -1) {
+      # R13 / CWK-158 item 1 + CWK-141 (1): an unknown or ill-typed PROJECT value is DROPPED -- the global
+      # (or the schema default) decides. It used to `continue` and leave the raw junk in the merge.
+      Restore-GlobalKey $merged $globalCfg $key $spec.legacy
+      continue
+    }
     $result = if ($pi -le $gi) { $projectVal } else { $globalValue } # project may not be LOUDER than the (explicit-or-default) global
     $merged[$key] = $result
     if ($spec.legacy) { $merged[$spec.legacy] = $result } # a same-key-both-legacy scenario needs the legacy field itself clamped too, not just the canonical mirror
@@ -231,7 +262,10 @@ function Load-CoalmineConfig {
   foreach ($key in $unionArrayKeys.Keys) {
     $spec = $unionArrayKeys[$key]
     $projectArr = Resolve-AliasedArray $projectCfg $key $spec.legacy
-    if ($null -eq $projectArr) { continue } # project expressed no opinion via either name
+    if ($null -eq $projectArr) {
+      if (Test-HasKey $projectCfg $key $spec.legacy) { Restore-GlobalKey $merged $globalCfg $key $spec.legacy } # a present null (R13 / CWK-158 item 1)
+      continue # otherwise the project expressed no opinion via either name
+    }
     $globalArrRaw = Resolve-AliasedArray $globalCfg $key $spec.legacy
     $globalArr = if ($null -ne $globalArrRaw) { $globalArrRaw } else { $spec.default } # absent global = its schema default ([]), never "nothing to union"
     $merged[$key] = @(@($globalArr) + @($projectArr) | Select-Object -Unique)

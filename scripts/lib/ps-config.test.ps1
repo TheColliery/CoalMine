@@ -122,6 +122,30 @@ Check 'safer-merge: rotCanaryMode legacy-cross-key escalation (global rotCanaryM
 $sm9 = Test-SaferMerge -GlobalCfg @{ disabledCanaries = @('rot-canary') } -ProjectCfg @{ disabledCanaries = @() }
 Check 'safer-merge: disabledCanaries UNION -- project cannot clear an explicit global disable list' ($sm9.disabledCanaries -contains 'rot-canary')
 
+# ---- R13 / CWK-158 item 1: an unknown or ill-typed PROJECT value is DROPPED (global/default wins) ----
+# Node twin: hooks.test.mjs "clamp drops a junk project value" + conductor-update.test.mjs. The loop
+# used to `continue` on an out-of-enum value and a JSON null overwrote the global in the shallow merge.
+$sm11 = Test-SaferMerge -GlobalCfg @{ updateMode = 'off' } -ProjectCfg @{ updateMode = 'x' }
+Check 'junk-project: updateMode "x" cannot defeat an explicit global off' ($sm11.updateMode -eq 'off')
+
+$sm12 = Test-SaferMerge -GlobalCfg @{ updateMode = 'off' } -ProjectCfg @{ updateMode = $null }
+Check 'junk-project: updateMode null cannot defeat an explicit global off' ($sm12.updateMode -eq 'off')
+
+$sm13 = Test-SaferMerge -GlobalCfg @{ rotCanaryMode = 'off' } -ProjectCfg @{ rotCanaryMode = 'on' }
+Check 'junk-project: rotCanaryMode "on" (outside the enum) cannot defeat an explicit global off' ($sm13.rotCanaryMode -eq 'off')
+
+$sm14 = Test-SaferMerge -GlobalCfg @{ enableConductor = $false } -ProjectCfg @{ enableConductor = 'yes' }
+Check 'junk-project: enableConductor "yes" (not a boolean) cannot defeat an explicit global false' ($sm14.enableConductor -eq $false)
+
+$sm15 = Test-SaferMerge -GlobalCfg @{ enableConductor = $false } -ProjectCfg @{ enableConductor = $null }
+Check 'junk-project: enableConductor null cannot defeat an explicit global false' ($sm15.enableConductor -eq $false)
+
+$sm16 = Test-SaferMerge -GlobalCfg @{ disabledCanaries = @('rot-canary') } -ProjectCfg @{ disabledCanaries = $null }
+Check 'junk-project: disabledCanaries null cannot erase an explicit global disable list' ($sm16.disabledCanaries -contains 'rot-canary')
+
+$sm17 = Test-SaferMerge -GlobalCfg $null -ProjectCfg @{ updateMode = 'x' }
+Check 'junk-project: with no global, an unknown updateMode is absent (no raw junk survives the merge)' ($null -eq $sm17.updateMode -or $sm17.updateMode -eq 'ask')
+
 # Deliberate platform divergence, proven live rather than left as a comment-only claim
 # (hooks/_shared/ps-config.ps1's own header note): PowerShell's -contains is
 # case-insensitive, so a hand-edited uppercase entry needs no merge-layer case-fold here,
