@@ -2,7 +2,7 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.22.1] - 2026-10-02
 
 On macOS, the session-end scan no longer skips every edited file when the project's folder has two spellings.
 
