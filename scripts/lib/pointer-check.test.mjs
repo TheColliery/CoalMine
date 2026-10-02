@@ -434,6 +434,9 @@ function mkGitRepoForIgnoreProbe() {
   g(['config', 'user.email', 'test@test.invalid']);
   g(['config', 'user.name', 'Test']);
   g(['config', 'commit.gpgsign', 'false']);
+  // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+  g(['config', 'maintenance.auto', 'false']);
+  g(['config', 'gc.auto', '0']);
   fs.writeFileSync(path.join(tmp, 'x.txt'), 'x');
   fs.writeFileSync(path.join(tmp, '.gitignore'), 'ignored-dir/' + NL);
   g(['add', '-A']);

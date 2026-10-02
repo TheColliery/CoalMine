@@ -291,6 +291,9 @@ test('verify.mjs 2.8 dist-changelog: a dist change with no CHANGELOG entry fails
     git(['config', 'user.email', 'test@test.invalid']);
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     // A machine-global tag.gpgSign/tag.forceSignAnnotated would force a bare `git tag
     // <name>` into an annotated, signed tag needing a message, failing non-interactively
     // with "fatal: no tag message?" — the exact fixture defect INSPECT's own RED-first
@@ -379,6 +382,9 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
     git(['config', 'user.email', 'test@test.invalid']);
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
 
@@ -468,6 +474,9 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
     git(['config', 'user.email', 'test@test.invalid']);
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgsign', 'false']);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
 

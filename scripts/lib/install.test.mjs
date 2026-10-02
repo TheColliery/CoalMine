@@ -718,6 +718,9 @@ test('CWK-096: a tracked hook (core.hooksPath at a VERSIONED directory) SURVIVES
     assert.equal(spawnSync('git', ['config', 'user.email', 'test@test.invalid'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
     assert.equal(spawnSync('git', ['config', 'user.name', 'Test'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
     assert.equal(spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    assert.equal(spawnSync('git', ['config', 'maintenance.auto', 'false'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'gc.auto', '0'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
     assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
 
     const install = runInstall(path.join(proj, 'skills'), proj);

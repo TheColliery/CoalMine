@@ -31,6 +31,9 @@ function initFixtureRepo(dir) {
   git(['config', 'user.email', 'test@test.invalid'], dir);
   git(['config', 'user.name', 'Test'], dir);
   git(['config', 'commit.gpgsign', 'false'], dir);
+  // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+  git(['config', 'maintenance.auto', 'false'], dir);
+  git(['config', 'gc.auto', '0'], dir);
   // A machine-global tag.gpgSign / tag.forceSignAnnotated would force `git tag <name>` (no
   // -a/-m) into an ANNOTATED, signed tag needing a message — non-interactive spawnSync then
   // fails with "fatal: no tag message?". Local overrides make the fixture's tags lightweight
