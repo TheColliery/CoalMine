@@ -203,3 +203,40 @@ test('scanExcludePaths: the project-relative match survives two spellings of the
   assert.ok(out.reason && out.reason.includes('real.js'), 'a real file still surfaces when the touched path uses the other spelling');
   assert.ok(!out.reason.includes('lab.js'), 'the project\'s own scratchpad folder is still excluded');
 });
+
+// R14 RE-INSPECT 3 LOW-1: projectRelative must not build a MIXED pair. With the root resolved and the file left lexical (because
+// realpath of the file failed), a link-spelled file climbs out of the resolved root and falls back to its absolute path, which holds the
+// ancestor folder named like the fragment: everything is excluded. The pair is resolved or lexical, never half of each. Here the hook runs
+// with a LINK-spelled cwd (so the lexical root matches the lexical file) and a preload makes realpath throw for the touched file only.
+test('scanExcludePaths: when the touched file cannot be resolved, root and file stay a lexical pair (no mixed pair)', (t) => {
+  const real = mkDir(t, 'cm-r14-mix-');
+  const sandbox = path.join(real, 'scratchpad', 'sbx');
+  const projReal = path.join(sandbox, 'proj');
+  fs.mkdirSync(path.join(projReal, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(projReal, 'src'));
+  fs.mkdirSync(path.join(sandbox, 'coalmine'), { mode: 0o700 });
+  fs.writeFileSync(path.join(projReal, '.coalmine.json'), JSON.stringify({ scanExcludePaths: ['scratchpad'] }));
+  fs.writeFileSync(path.join(projReal, 'src', 'real.js'), 'x');
+  const linkHome = mkDir(t, 'cm-r14-mix-link-');
+  const link = path.join(linkHome, 'link');
+  try { fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (e) { t.skip(`cannot create a directory link here (${e.code})`); return; }
+  const projLink = path.join(link, 'scratchpad', 'sbx', 'proj');
+  const fileLink = path.join(projLink, 'src', 'real.js');
+  fs.writeFileSync(path.join(sandbox, 'coalmine', 'rot-canary-MIX.touched'), fileLink + '\n');
+  const pre = path.join(sandbox, 'throw-for-real-js.cjs');
+  fs.writeFileSync(pre, [
+    "const fs = require('fs'); const o = fs.realpathSync.native;",
+    "fs.realpathSync.native = function (p, ...a) { if (String(p).endsWith('real.js')) { const e = new Error('EACCES (injected)'); e.code = 'EACCES'; throw e; } return o.call(this, p, ...a); };",
+    '',
+  ].join(String.fromCharCode(10)));
+  const r = spawnSync(process.execPath, [STOP], {
+    cwd: projLink, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL',
+    input: JSON.stringify({ session_id: 'MIX', stop_hook_active: false }),
+    env: { ...process.env, TEMP: sandbox, TMP: sandbox, TMPDIR: sandbox, USERPROFILE: sandbox, HOME: sandbox,
+      NODE_OPTIONS: `--max-old-space-size=2048 --require "${pre.split(path.sep).join('/')}"` },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.ok(out.reason && out.reason.includes('real.js'), 'the file still surfaces: root and file are the same (lexical) spelling');
+});

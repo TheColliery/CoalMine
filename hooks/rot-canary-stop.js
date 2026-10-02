@@ -976,12 +976,16 @@ function matchesFragment(path, frag) {
 // Both sides go through realpathSync.native first (node/runtime.md section 4, an IDENTITY question): process.cwd() is the
 // kernel-resolved spelling (macOS /private/var/...) while the touched list keeps the spelling the edit tool used
 // (/var/...), and two spellings of one directory made the relative path climb out of the root (CI red at f460982).
-// Unresolvable = the lexical pair, which falls back to the absolute path below.
+// Unresolvable = the lexical pair (never half of each); with two spellings that pair can still climb out and fall back to the absolute path below (reach: an existing file whose realpath fails; the all-skipped notice still prints).
 function projectRelative(filePath) {
   try {
     let root = findGitRoot(process.cwd());
     let file = filePath;
-    try { root = fs.realpathSync.native(root); file = fs.realpathSync.native(filePath); } catch { /* lexical pair */ }
+    try {
+      const realRoot = fs.realpathSync.native(root);
+      const realFile = fs.realpathSync.native(filePath);
+      root = realRoot; file = realFile; // assigned only after BOTH resolve
+    } catch { /* the full lexical pair */ }
     const rel = path.relative(root, file);
     if (rel && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) return '/' + rel;
   } catch {}
