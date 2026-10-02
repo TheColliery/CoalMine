@@ -183,6 +183,8 @@ export const DEFAULT_SURFACE_PLAN = [
     why: 'the fan-out worker doc is ship-text a user reads' },
   { kind: 'raw', root: 'README.md',
     why: 'the front door -- every install/config claim starts here' },
+  { kind: 'raw', root: 'plugin-src/README.md',
+    why: 'the plugin folder README is the directory listing text a user reads' },
   { kind: 'raw', root: 'CONTRIBUTING.md',
     why: 'the dev-facing surface, and it cites internal paths' },
   { kind: 'raw', root: 'SECURITY.md',

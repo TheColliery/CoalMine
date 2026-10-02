@@ -47,6 +47,7 @@ const TESTS = [
   'scripts/lib/r14-fixes.test.mjs',
   'scripts/lib/r14-low.test.mjs',
   'scripts/lib/r14-install.test.mjs',
+  'scripts/lib/plugin-readme.test.mjs',
   // CWK-174 (THE HOUSE SECRET SCAN, SERIES-CANON 'Secret scan'): byte-equal copies of the published-code template's scanner and caller tests.
   'scripts/secret-scan.test.mjs',
   'scripts/secret-gate.test.mjs',

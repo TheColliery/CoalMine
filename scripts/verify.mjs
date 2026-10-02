@@ -713,7 +713,7 @@ if (!fs.existsSync(pluginDir)) {
         if (!['skills', 'hooks', '.claude-plugin', 'agents', 'commands'].includes(e.name)) {
           fail(`plugin/${e.name} is an orphan directory — run: node scripts/build-plugin.mjs`);
         }
-      } else {
+      } else if (e.name !== 'README.md') {
         fail(`plugin/${e.name} is an orphan file — run: node scripts/build-plugin.mjs`);
       }
     }
@@ -773,6 +773,16 @@ if (!fs.existsSync(pluginDir)) {
       fail(`plugin/${extra} has no source — run: node scripts/build-plugin.mjs`);
     }
   }
+  // R14 / CWK-180: plugin/README.md ships from plugin-src/README.md (the directory refuses a plugin folder without a 40-word README).
+  try {
+    const readmeSrc = path.join(repo, 'plugin-src', 'README.md');
+    const readmeDist = path.join(pluginDir, 'README.md');
+    if (!fs.existsSync(readmeSrc)) fail('plugin-src/README.md missing — the plugin folder ships a README');
+    else if (!fs.existsSync(readmeDist)) fail('plugin/README.md missing — run: node scripts/build-plugin.mjs');
+    else if (fs.readFileSync(readmeSrc, 'utf8').replace(/\r\n/g, '\n') !== fs.readFileSync(readmeDist, 'utf8').replace(/\r\n/g, '\n')) fail('plugin/README.md STALE vs plugin-src/README.md — run: node scripts/build-plugin.mjs');
+    else if (fs.readFileSync(readmeDist, 'utf8').split(/\s+/).filter(Boolean).length < 40) fail('plugin/README.md is under 40 words (the directory minimum)');
+    else pass('plugin/README.md in sync (>= 40 words)');
+  } catch (e) { fail(`plugin/README.md check failed: ${e.message}`); }
   for (const f of ['hooks/hooks.json', 'hooks/rot-canary-touch.js', 'hooks/rot-canary-stop.js', 'hooks/coalmine-conductor.js', '.claude-plugin/plugin.json']) {
     const distFile = path.join(pluginDir, f);
     if (!fs.existsSync(distFile)) { fail(`plugin/${f} missing — run: node scripts/build-plugin.mjs`); continue; }
