@@ -463,6 +463,10 @@ test('a genuinely foreign hook is still backed up and restored (the ownership ch
     assert.match(again.stdout + again.stderr, /refused to overwrite pre-commit/, 'the refusal is reported');
     assert.match(fs.readFileSync(hookPath, 'utf8'), /a second gate/, 'the second foreign hook survives');
 
+    // CWK-158 item 3: the round trip is install over a foreign hook, then uninstall. (This leg used to plant
+    // the foreign hook over whatever sat there and expect the restore to overwrite it -- the data-loss path.)
+    fs.rmSync(hookPath, { force: true });
+    fs.rmSync(hookPath + '.pre-coalmine', { force: true });
     fs.writeFileSync(hookPath, FOREIGN_HOOK, 'utf8');
     const second = runInstall(path.join(proj, 'skills'), proj);
     assert.equal(second.status, 0, `install must pass:\n${second.stdout}${second.stderr}`);
@@ -542,6 +546,26 @@ test('CWK-158 item 2: a hook the repo TRACKS (core.hooksPath at a versioned dir)
     assert.match(res.stdout + res.stderr, /\[refused\] pre-commit/, 'the refusal is reported');
     assert.equal(fs.readFileSync(path.join(proj, '.githooks', 'pre-commit'), 'utf8'), FOREIGN_HOOK, 'the tracked hook keeps its bytes');
     assert.ok(!fs.existsSync(path.join(proj, '.githooks', 'pre-commit.pre-coalmine')), 'and no backup is made of it');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('CWK-158 item 3: uninstall never restores the backup over a hook the user wrote AFTER install', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-newer-'));
+  const hookPath = path.join(proj, '.git', 'hooks', 'pre-commit');
+  const NEWER = '#!/bin/sh\n# user-v2 written after install\nexit 0\n';
+  try {
+    fs.mkdirSync(path.join(proj, '.git', 'hooks'), { recursive: true });
+    fs.writeFileSync(hookPath, FOREIGN_HOOK, 'utf8');
+    const res = runInstall(path.join(proj, 'skills'), proj);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    fs.writeFileSync(hookPath, NEWER, 'utf8'); // the user replaces CoalMine's hook with their own newer one
+    const un = runInstall(path.join(proj, 'skills'), proj, ['--uninstall']);
+    assert.notEqual(un.status, 0, 'keeping both files is reported loudly');
+    assert.match(un.stdout + un.stderr, /\[kept\] pre-commit/, 'the keep is reported');
+    assert.equal(fs.readFileSync(hookPath, 'utf8'), NEWER, 'the user\'s newer hook is untouched');
+    assert.equal(fs.readFileSync(hookPath + '.pre-coalmine', 'utf8'), FOREIGN_HOOK, 'and the older backup stays for them to merge');
   } finally {
     fs.rmSync(proj, { recursive: true, force: true });
   }

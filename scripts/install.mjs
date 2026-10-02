@@ -359,6 +359,17 @@ function uninstallGitHooks() {
         console.log(`  discarded stale CoalMine backup: ${hookName}.pre-coalmine`);
       }
 
+      if (lexists(backupPath) && lexists(hookPath)) {
+        // R13 / CWK-158 item 3 (B-u2-4, data loss): the backup goes back only over a hook that is
+        // OURS. A hook the user wrote AFTER install (or one we cannot read) is theirs: restoring over it
+        // destroyed it. Both files stay; the user merges them.
+        const cur = readHook(hookPath);
+        if (cur === null || !isOwnHook(cur)) {
+          console.warn(`  [kept] ${hookName}: the hook there now is not CoalMine's -- left untouched, and your backed-up hook stays at ${backupPath}. Merge them yourself, then delete the backup.`);
+          process.exitCode = 1;
+          continue;
+        }
+      }
       if (lexists(backupPath)) {
         // CWK-137: restore by content, through the contained writer -- never a copy that
         // follows a link at either end. An unreadable/linked backup is left in place.
