@@ -26,16 +26,31 @@ before the first run:
    only its paid (`llm`/`baseline`) graders are skipped. So set the ceiling
    below what you are willing to lose, never at it.
 
-**Second blocker: `claude plugin eval` is gated behind EARLY ACCESS on this
-machine.** `--help` renders in full, but any real subcommand refuses:
+**Second blocker, re-measured 2026-10-02: the early-access gate is gone, and a
+run still waits for the owner.** `claude plugin eval` is public (Claude Code
+2.1.269 and later; this machine runs 2.1.286), and `claude plugin eval --help`
+prints in full. The probe that used to be refused now answers:
 
 ```
 $ claude plugin eval init --bare probecase
-`plugin eval` is currently in early access
+Error: <scratch dir> is not a plugin or skill folder — run `claude plugin eval init` from the plugin's root folder, or pass --eval-dir to scaffold here on purpose.
+$ claude plugin eval init --bare probecase --eval-dir probe-evals
+Created probe-evals\probecase\prompt.md and probe-evals\probecase\graders\criteria.md
 ```
 
-The suite is written against the schema extracted from the shipped CLI binary,
-not against a successful run. Until the gate opens, nothing here can execute.
+`init --bare` writes a blank single-case template (`prompt.md` with
+`max_turns: 10` and `allowed_tools: [Read, Glob, Grep, Skill]`, and
+`graders/criteria.md` with `type: llm`); it contacts no model and spends
+nothing. The interview form of `init` (without `--bare`) authors cases through
+an agent interview, so it does spend, and it was not run. The probe ran in a
+scratch directory outside this repository, and that directory was removed
+afterwards.
+
+What this changes: the suite is no longer unrunnable. What it does not change:
+**no eval run has happened** (a run spends real money and waits for the owner's
+yes, with `--max-cost-usd` and `--runs 1` as above), and the suite is still
+written against the schema extracted from the shipped CLI binary, not against a
+successful run.
 
 ---
 
