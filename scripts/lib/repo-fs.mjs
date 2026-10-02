@@ -26,7 +26,8 @@ import path from 'node:path';
 // repo under source/repos, 27,451 files): the largest real `.coalmine.json` is 9,114 B
 // (the shipped, fully commented template); the largest governance markdown the hooks read
 // is a room's own MEMORY.md (the umbrella AGENTS.md runs close behind it). Re-measure it
-// at any edit with, from the repos root:
+// at any edit with, from the TheColliery root (the umbrella folder, NOT source/repos, where the glob
+// matches nothing and Math.max prints -Infinity):
 //   node -e "const fs=require('fs');console.log(Math.max(...fs.globSync('*/*/MEMORY.md').map((f)=>fs.statSync(f).size)))"
 // and keep MAX_DOC_BYTES a large multiple of that figure: governance files grow fast (AGENTS.md
 // grew ~70% in six weeks), and a bound a real file crosses silently skips that file.

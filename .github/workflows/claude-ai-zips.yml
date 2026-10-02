@@ -7,6 +7,8 @@ name: claude-ai-zips
 # never edited), zip each staged directory, and attach the ZIPs to the GitHub Release
 # as assets. The user downloads a ZIP from the Release and uploads it to claude.ai
 # directly. Canonical exemplar: CoalMine (board #40 / C2-v2 design).
+# NAMED DIVERGENCE from the org overlay (R13 LOW-4): this file carries the room's own `timeout-minutes` and
+# `persist-credentials: false` (CWK-154, measured 2026-10-02); adopting the newer overlay is main's UMB-182.
 #
 # The combined ref-type+stability gate step below is ported from CoalFace's own fork
 # (commit 6f1f3458009c039de44fa2c3fcd548222b0ebc2b, 2026-08-22) — UMB-045 letter (B),

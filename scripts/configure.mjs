@@ -38,8 +38,12 @@ function findGitRoot(startDir) {
     // never on an ancestor. isGlobalCfgFile compares against os.homedir(), which a sandboxed HOME
     // (the CONTRIBUTING prescription) moves away from the real profile -- so a walk from a fixture under
     // the real home found the REAL ~/.claude/.coalmine.json as a "legacy project config" and migrated
-    // (moved + deleted) it. A config above the cwd is somebody else's project (or the user's profile),
-    // never one configure may rewrite. The hooks' READ walk is unchanged.
+    // (moved + deleted) it. What the code does: the nested legacy file anchors the walk ONLY in the folder
+    // configure ran from. A `.git` above that folder still anchors it (the git-root branch below), so a
+    // legacy config at that git root is still read and migrated even when run from a subfolder (witness:
+    // run from src/deep, the project root's legacy file migrated). That case is guarded by the CONTRIBUTING
+    // sandbox rule, not by this code; closing it is queued with CWK-158's remainder. The hooks' READ walk is
+    // unchanged.
     const nested = path.join(dir, LEGACY_CONFIGS[0]);
     if (fs.existsSync(nested) && !isGlobalCfgFile(nested) && dir === path.resolve(startDir)) {
       return dir;
