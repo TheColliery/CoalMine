@@ -120,9 +120,10 @@ Two cases go further and reconstruct defects **this repo shipped and fixed in
 its own code**: case 01 is `consistency.mjs`'s fail-open `isDir`/`walkMd`
 (commits `d65ae5c`, `0989082`), and case 04's two halves are the `manifest.mjs`
 path-traversal bypass (v3.5.1) and the `>maxLines` off-by-one (v3.7.11). The
-other three have no such history and must not be described as if they do — this
-repo's scripts have never held an `async` function, a `spawnSync` outside tests,
-or a write stream.
+other three have no such history and must not be described as if they do: their
+defect shapes (an unawaited async flush, an ignored `spawnSync` status, an
+unclosed write stream) are planted from the corpus taxonomy, not reconstructed
+from this repo.
 
 | # | Case | Planted | What it measures |
 |---|------|---------|------------------|

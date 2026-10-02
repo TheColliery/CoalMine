@@ -12,7 +12,7 @@ CoalMine keeps itself current through the conductor (session start), gated by `.
 - **off** — no reminders.
 
 Save the pick (no forced check — the chosen mode drives future sessions):
-`node scripts/configure.mjs --updateMode <auto|remind|off>` (run from the CoalMine repo, or wherever `.coalmine.json` lives).
+Set `"updateMode"` to the picked value (`auto`, `remind` or `off`) in `~/.claude/.coalmine.json` (the plugin ships no `scripts/`, so there is no `configure.mjs` to run from a plugin install).
 
 **auto** (the version CHECK — the only token spend, standing-consented):
 1. Get the latest published tag (graceful — never assume git/network is present):
@@ -26,4 +26,4 @@ Save the pick (no forced check — the chosen mode drives future sessions):
 
 **off** — no update activity.
 
-Rule freshness (a separate, free, local nudge the conductor also raises): if gold-standard `coalmine: verified` stamps in `.claude/rules/`, `.agents/rules/`, or `AGENTS.md` are past their `revalidate Nd` date, offer `/gold-standard` RE-VALIDATE — see `/coalmine:stats` for the per-rule table. This is local-only and never spends tokens.
+Rule freshness (a separate, free, local nudge the conductor also raises, unless `updateMode` is `off`, which silences it too): if gold-standard `coalmine: verified` stamps in `.claude/rules/`, `.agents/rules/`, or `AGENTS.md` are past their `revalidate Nd` date, offer `/gold-standard` RE-VALIDATE — see `/coalmine:stats` for the per-rule table. This is local-only and never spends tokens.

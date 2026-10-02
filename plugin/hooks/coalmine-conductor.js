@@ -21,7 +21,7 @@ const CONDUCTOR_HEAD = [
 ];
 const CONDUCTOR_TAIL = [
   '- Specialists — offer on domain entry (never auto-run): deps/packages → supply-chain-audit · schema/contract/serialization → drift-canary · async/retry/failure paths → resilience-audit · hot loops/queries/caches → scale-canary · tests/coupling/DI → testability-canary · logging/metrics/tracing → telemetry-canary · version-sensitive facts → source-grounding.',
-  '- Honor every .coalmine.json override if present (the installed commented file documents all keys).',
+  '- Honor every .coalmine.json override if present (the Configure section of the README documents all keys).',
   '- Self error-report: if a CoalMine component misbehaves, OFFER to file it at https://github.com/TheColliery/CoalMine/issues/new/choose with a user-reviewed summary — never auto-submit.',
 ];
 
