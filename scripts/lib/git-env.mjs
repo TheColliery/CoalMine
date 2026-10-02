@@ -25,7 +25,9 @@
 // git config the user's own git sees, and those can be chosen by GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM and
 // GIT_CONFIG_NOSYSTEM. Stripped, git reports no hooksPath and the installer writes inert hooks into .git/hooks under a
 // success message. Only those three names pass, only when the caller asks, and only for that read; every fixture
-// spawn and every other production spawn keeps the full strip (the census still requires `env: gitEnv(...)` on each).
+// spawn and every other production spawn keeps the full strip. The census enforces both halves: each git spawn must carry
+// `env: gitEnv(...)`, and a spawn that passes `keepUserConfig` is a finding unless it is scripts/install.mjs's core.hooksPath read
+// (a spawn whose env is built into a variable elsewhere is the census's named blind spot).
 const USER_CONFIG_SELECTION = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'];
 export function gitEnv(ceilingDir, { keepUserConfig = false } = {}) {
   const env = { ...process.env };

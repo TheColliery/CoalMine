@@ -21,6 +21,8 @@
 //   - a git command held in a VARIABLE (`const G = 'git'; spawnSync(G, ...)`) or passed
 //     through a wrapper (`spawnSandboxed(cmd, ...)` in test-sandbox.mjs spreads process.env
 //     for whatever `cmd` it is given -- every caller passes process.execPath today);
+//   - keepUserConfig (R14 bounce LOW-1) is judged on the spawn call's own text, so an `env` built into a variable
+//     elsewhere escapes it, the same blind spot as the first bullet;
 //   - scope: scripts/**/*.mjs only -- .js/.cjs/.ps1 are not read (hooks/ spawns nothing,
 //     Phoenix #5; the .ps1 tests' `.git` is a New-Item marker, no git process).
 // The helper's own correctness is git-env.test.mjs's job.
@@ -93,6 +95,11 @@ export function censusGitSpawns(files, exempt = EXEMPT_CARRIERS) {
         continue;
       }
       const callText = text.slice(openIdx, closeIdx + 1);
+      // R14 bounce LOW-1: `keepUserConfig` lets GIT_CONFIG_GLOBAL/SYSTEM/NOSYSTEM through, which is right for ONE spawn:
+      // the installer's read of the user's core.hooksPath. Any other spawn that asks for it is a finding.
+      if (/\bkeepUserConfig\b/.test(callText) && !(rel === 'scripts/install.mjs' && /core\.hooksPath/.test(callText))) {
+        findings.push(`${rel}:${line} ${m[1]}('git', ...) passes keepUserConfig -- only the installer's core.hooksPath read in scripts/install.mjs may (R14-N1)`);
+      }
       if (!/\benv\s*:/.test(callText)) {
         findings.push(`${rel}:${line} ${m[1]}('git', ...) carries no 'env:' -- route it through gitEnv() (CWK-133)`);
       } else if (/\bprocess\.env\b/.test(callText) && !/\bgitEnv\s*\(/.test(callText)) {

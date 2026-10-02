@@ -99,3 +99,21 @@ test('census exemption (CWK-174): blobId equals `git hash-object` for the same b
   assert.equal(live.length, Object.keys(EXEMPT_CARRIERS).length, 'every pinned path exists in the tree (a stale pin is a finding, not silence)');
   assert.deepEqual(censusGitSpawns(live), [], 'and each is byte-equal to its pin');
 });
+
+// R14 bounce LOW-1: keepUserConfig (GIT_CONFIG_* pass-through) is allowed for ONE spawn, the installer's core.hooksPath read.
+const KEEP = "{ keepUserConfig: " + "true }";
+test('census (R14 LOW-1): a spawn that passes keepUserConfig is a finding anywhere but the installer\'s core.hooksPath read', () => {
+  const planted = SG + ", ['init', '-q'], { cwd: dir, env: gitEnv('/', " + KEEP + ") });\n";
+  const f = censusGitSpawns([{ rel: 'scripts/lib/some.test.mjs', text: planted }]);
+  assert.equal(f.length, 1, 'a fixture spawn asking for the user git config is refused');
+  assert.match(f[0], /keepUserConfig/);
+  const inInstaller = censusGitSpawns([{ rel: 'scripts/install.mjs', text: planted }]);
+  assert.equal(inInstaller.length, 1, 'inside install.mjs too, unless it is the core.hooksPath read');
+});
+
+test('census (R14 LOW-1): the installer\'s core.hooksPath read with keepUserConfig passes, and the live tree is clean', () => {
+  const read = SG + ", ['config', '--type=path', '--get', 'core.hooksPath'], { cwd: d, env: gitEnv(p, " + KEEP + ") });\n";
+  assert.deepEqual(censusGitSpawns([{ rel: 'scripts/install.mjs', text: read }]), []);
+  assert.equal(censusGitSpawns([{ rel: 'scripts/other.mjs', text: read }]).length, 1, 'the same read elsewhere is refused');
+  assert.deepEqual(censusGitSpawns(collectScriptsMjs(repo)), []);
+});
