@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractChangelogEntry, buildReleaseTitle, buildReleaseBody, ChangelogShapeError } from './release-shape.mjs';
+import { extractChangelogEntry, buildReleaseTitle, buildReleaseBody, ChangelogShapeError, makeLatestFlag, ReleaseRefError } from './release-shape.mjs';
 
 const CL = `# Changelog
 
@@ -84,4 +84,58 @@ test('buildReleaseBody: Lead + Keep-a-Changelog sections verbatim, blank line be
 
 test('buildReleaseBody: no sections -- the Lead alone, still newline-terminated', () => {
   assert.equal(buildReleaseBody('Just a summary, nothing else.', ''), 'Just a summary, nothing else.\n');
+});
+
+// UMB-182 / courier C-2: the byte re-read proves GitHub stored what was derived, never that what was derived was
+// right. CoalFace's live exhibit: the doc-writer REPLACED the [0.11.0] heading instead of inserting above it, so
+// [0.12.0] swallowed v0.11.0's sections. The derive path now checks the entry is followed by the previous stable tag.
+const REPLACED = `## [0.12.0] - 2026-09-23
+
+The sole-creator workflow.
+
+### Added
+- 0.11.0's own line, now published twice.
+
+## [0.10.0] - 2026-09-10
+
+older.
+`;
+
+test('extractChangelogEntry (C-2): the released entry followed by the previous stable tag heading passes', () => {
+  const e = extractChangelogEntry(CL, '3.20.0', { previousStable: '3.19.0' });
+  assert.equal(e.version, '3.20.0');
+});
+
+test('extractChangelogEntry (C-2): a replaced heading (next stable heading is NOT the previous stable tag) throws -- RED before the check', () => {
+  assert.throws(() => extractChangelogEntry(REPLACED, '0.12.0', { previousStable: '0.11.0' }), (err) => err instanceof ChangelogShapeError && /\[0\.10\.0\].*v0\.11\.0|v0\.11\.0.*\[0\.10\.0\]/.test(err.message));
+});
+
+test('extractChangelogEntry (C-2): pre-release headings between the entry and the previous stable one are skipped, not compared', () => {
+  const text = '## [1.0.0] - 2026-09-25\n\nFirst stable.\n\n## [1.0.0-rc.1] - 2026-09-20\n\nrc.\n\n## [0.9.0] - 2026-09-01\n\nold.\n';
+  assert.equal(extractChangelogEntry(text, '1.0.0', { previousStable: '0.9.0' }).version, '1.0.0');
+});
+
+test('extractChangelogEntry (C-2): a previous stable tag with no heading after the entry throws', () => {
+  const text = '## [1.1.0] - 2026-09-25\n\nOnly entry.\n';
+  assert.throws(() => extractChangelogEntry(text, '1.1.0', { previousStable: '1.0.0' }), ChangelogShapeError);
+});
+
+test('extractChangelogEntry (C-2): no previous stable tag (a first stable release) skips the check', () => {
+  assert.equal(extractChangelogEntry(REPLACED, '0.12.0').version, '0.12.0');
+  assert.equal(extractChangelogEntry(REPLACED, '0.12.0', { previousStable: '' }).version, '0.12.0');
+});
+
+// UMB-182 default-Latest: a Release created with no --latest takes Latest (measured on CoalFace's rehearsal,
+// v0.0.2 over v0.11.0). A backfill for an OLD tag must pass make_latest false (UMB-189).
+test('makeLatestFlag: no current Latest, or a tag newer than or equal to it, is "true"; an older tag is "false" -- RED before the rule', () => {
+  assert.equal(makeLatestFlag('1.0.0', ''), 'true');
+  assert.equal(makeLatestFlag('1.2.0', 'v1.1.9'), 'true');
+  assert.equal(makeLatestFlag('1.1.9', 'v1.1.9'), 'true');
+  assert.equal(makeLatestFlag('1.1.8', 'v1.1.9'), 'false');
+  assert.equal(makeLatestFlag('1.10.0', 'v1.9.0'), 'true', 'numeric compare, never string order');
+  assert.equal(makeLatestFlag('0.9.9', 'v1.0.0'), 'false');
+});
+
+test('makeLatestFlag: a Latest tag that is not a bare vX.Y.Z throws a named error -- never a guessed flag', () => {
+  assert.throws(() => makeLatestFlag('1.0.0', 'nightly'), ReleaseRefError);
 });

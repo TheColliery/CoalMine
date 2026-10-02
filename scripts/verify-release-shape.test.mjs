@@ -13,7 +13,7 @@ function scratch() {
 }
 
 function run(cwd, stdin) {
-  return spawnSync(process.execPath, [SCRIPT], { cwd, encoding: 'utf8', input: stdin });
+  return spawnSync(process.execPath, [SCRIPT], { cwd, encoding: 'utf8', timeout: 30000, input: stdin });
 }
 
 test('verify-release-shape.mjs: matching title + body -> exit 0', () => {

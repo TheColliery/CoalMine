@@ -1,28 +1,42 @@
 name: claude-ai-zips
 
 # claude.ai installs skills as a ZIP only, and its skill-listing description cap is 200
-# chars vs our own cross-platform 1024 (desc-cap.mjs). On a version tag: stage every
+# chars vs our own cross-platform 1024 (desc-cap.mjs). For one tag: stage every
 # skill with its description deterministically trimmed to the platform cap
 # (scripts/build-claude-ai-zips.mjs — a DERIVED artifact, source skills/*/SKILL.md is
 # never edited), zip each staged directory, and attach the ZIPs to the GitHub Release
 # as assets. The user downloads a ZIP from the Release and uploads it to claude.ai
 # directly. Canonical exemplar: CoalMine (board #40 / C2-v2 design).
-# NAMED DIVERGENCE from the org overlay (R13 LOW-4): this file carries the room's own `timeout-minutes` and
-# `persist-credentials: false` (CWK-154, measured 2026-10-02); adopting the newer overlay is main's UMB-182.
 #
-# The combined ref-type+stability gate step below is ported from CoalFace's own fork
-# (commit 6f1f3458009c039de44fa2c3fcd548222b0ebc2b, 2026-08-22) — UMB-045 letter (B),
-# 2026-09-03. CoalFace merged two checks CoalMine ran as a job-level `if:` plus a
-# separate step into one step with an env-driven if/elif chain, closing a real gap: a
-# `workflow_dispatch` run against the default branch has GITHUB_REF_NAME == the branch
-# name (e.g. "main") — no hyphen — so a shape-only pre-release check alone would read
-# "stable" and attempt a Release literally named after the branch. Both conditions must
-# hold for is_stable=true.
+# TWO WAYS IN, ONE WRITER (UMB-182 posting path; RELEASE-PATTERN.md, "The posting path for a tag that already exists"):
+#   1. A stable tag push. The run is the tag's own: its CHANGELOG, its commit, its packaging scripts.
+#   2. A workflow_dispatch run FROM THE DEFAULT BRANCH with a `tag` input naming a tag that already exists. A
+#      dispatch run uses the workflow file as it stands on the branch it is run from, so this is the path for a
+#      tag cut before its room carried this file. The Release is derived from the TAG's own CHANGELOG entry. WHAT
+#      A BACK-FILLED RELEASE CARRIES: ZIP assets built from the tag's own tree by the tag's OWN packaging scripts
+#      when the tag has them; none when the tag predates them, said out loud in the run. The bytes of a published
+#      version come from that version, never from a newer script run over an older tree. `launch_form` posts ONE
+#      pre-release tag as the repository's launch-form Release (prerelease: true, never Latest), and only while the
+#      repository has no Release of another tag.
+# A person never POSTs a Release by hand: a Release that is missing for an existing tag is posted by this machine.
+#
+# PUBLISH ORDER (common/git-workflow.md "Tags and Releases"; CWK-119; GitHub's immutable-releases rule): the Release is
+# created as a DRAFT, every asset including SHA256SUMS.txt is attached, and only then is it published.
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: {} # manual re-run against a tag ref whose push-triggered run already failed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An EXISTING tag (vX.Y.Z) to post the Release for, from that tag's own CHANGELOG entry. Run this workflow from the default branch."
+        required: true
+        type: string
+      launch_form:
+        description: "Post ONE pre-release tag (vX.Y.Z-label) as the launch-form Release (prerelease: true). Refused for a stable tag, and when the repository already has a Release of another tag."
+        required: false
+        type: boolean
+        default: false
 
 # Minimal top-level token (Scorecard Token-Permissions best practice); only the
 # build-zips job escalates to the write scope it needs to create the Release and
@@ -35,68 +49,97 @@ permissions:
 # overlapping claude-ai-zips runs uploading to the same tag). Serialising is the fix;
 # CANCELLING is not, because a run killed mid-upload can leave the Release carrying a
 # partial or missing ZIP with nothing to signal it -- a broken install path for a user,
-# which is strictly worse than a slow one. The group is keyed on the TAG (ref_name),
-# not the branch, because the asset collision is per-Release.
+# which is strictly worse than a slow one. The group is keyed on the TAG the run posts (the
+# dispatch input, else the pushed tag), not the branch, because the asset collision is per-Release.
 concurrency:
-  group: claude-ai-zips-${{ github.ref_name }}
+  group: claude-ai-zips-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   build-zips:
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # measured 2026-10-02: build-zips max 15 s over 7 runs, successful runs only; a finite clock (testing.md), ~10x the max
+    timeout-minutes: 20 # testing.md: every run has a finite clock; a room re-sizes this from its own measured suite time
     permissions:
       contents: write # only this job creates the Release and uploads assets
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false # pushes nothing; no stored token needed (CWK-154)
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-
-      - name: "Check the ref is a STABLE tag, not a branch or a pre-release tag (tags = beta + stable, Releases = stable-only; this job creates a Release, implicitly \"Latest\", for any ref this workflow runs against. A hyphen check alone answers \"is this tag stable\" but never \"is this even a tag\" — workflow_dispatch is enabled and its UI defaults the ref picker to the default branch, so a manual re-run against a branch (GITHUB_REF_NAME=\"main\", no hyphen) would pass a shape-only check and create a Release literally named \"main\". Both conditions must hold for is_stable=true; the hyphen check alone is still correct for its own question.)"
+      # The `tag` input is untrusted text: it reaches this script ONLY through env, is matched against a strict
+      # tag pattern, and is checked against the repository's real tags before anything is checked out or written.
+      - name: "Resolve the tag this run posts: a stable tag push, or a dispatch from the default branch for an existing tag (a pre-release tag only as the launch form)"
         id: gate
         env:
+          EVENT: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_LAUNCH: ${{ inputs.launch_form }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${REF_TYPE}" != "tag" ]]; then
-            echo "is_stable=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::ref_type is '${REF_TYPE}', not a tag -- skipping claude.ai ZIP packaging (a workflow_dispatch run against a branch has no tag to package)"
-          elif [[ "${GITHUB_REF_NAME}" == *-* ]]; then
-            echo "is_stable=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::${GITHUB_REF_NAME} is a pre-release tag -- ZIP packaging is stable-only (a repo's one launch-form pre-release Release is cut by hand, RELEASE-PATTERN.md), skipping claude.ai ZIP packaging"
+          set -uo pipefail
+          out() { echo "$1" >> "$GITHUB_OUTPUT"; }
+          launch=false
+          if [[ "${EVENT}" == "push" ]]; then
+            tag="${REF_NAME}"
+            if [[ "${REF_TYPE}" != "tag" ]]; then
+              out "post=false"; echo "::notice::ref_type is '${REF_TYPE}', not a tag -- no Release to post"; exit 0
+            elif [[ "${tag}" == *-* ]]; then
+              out "post=false"; echo "::notice::${tag} is a pre-release tag -- Releases are stable-only; the repository's one launch-form Release is posted by a workflow_dispatch run with launch_form"; exit 0
+            fi
           else
-            echo "is_stable=true" >> "$GITHUB_OUTPUT"
+            tag="${INPUT_TAG}"; launch="${INPUT_LAUNCH}"
+            if [[ "${REF_TYPE}" != "branch" || "${REF_NAME}" != "${DEFAULT_BRANCH}" ]]; then
+              echo "::error::run this workflow from the default branch (${DEFAULT_BRANCH}), not from '${REF_NAME}': the tag to post is the input, never the ref"; exit 1
+            fi
+            if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "::error::the tag input is not a vX.Y.Z or vX.Y.Z-label tag"; exit 1
+            fi
+            # GitHub's "get a reference" call for a tag name answers 200 with a LIST when no ref is exactly <name> but some
+            # START with it (v1.2.3 against v1.2.30), so this lists by prefix and compares the ref name exactly.
+            if ! refs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" --jq '.[].ref' 2>/dev/null); then
+              echo "::error::could not read this repository's tags from the GitHub API, so whether ${tag} exists is unknown; nothing was posted -- run it again"; exit 1
+            fi
+            if ! grep -Fxq -- "refs/tags/${tag}" <<< "${refs}"; then
+              echo "::error::${tag} is not a tag of this repository -- this path posts a Release for a tag that already exists, it never creates a tag"; exit 1
+            fi
+            if [[ "${tag}" == *-* ]]; then
+              if [[ "${launch}" != "true" ]]; then
+                echo "::error::${tag} is a pre-release tag -- Releases are stable-only, except the ONE launch form: run again with launch_form"; exit 1
+              fi
+              others=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq "[.[] | select(.tag_name != \"${tag}\")] | length") || { echo "::error::could not list the repository's Releases"; exit 1; }
+              if [[ "${others}" != "0" ]]; then
+                echo "::error::the launch form is the repository's ONE pre-release Release, posted only while it has no Release of another tag (found ${others})"; exit 1
+              fi
+            elif [[ "${launch}" == "true" ]]; then
+              echo "::error::launch_form is for a pre-release tag; ${tag} is stable"; exit 1
+            fi
           fi
+          out "post=true"; out "tag=${tag}"; out "launch=${launch}"
+          echo "posting the Release for ${tag} (launch form: ${launch})"
 
-      - name: Verify plugin/ dist is current (fail loud, never zip a stale dist)
-        if: steps.gate.outputs.is_stable == 'true'
-        run: node scripts/verify.mjs
+      # `canon` = the workflow's own commit: the default branch on a dispatch, the tag on a push. Its scripts
+      # derive and verify. `tag-src` = the tag's own tree: its CHANGELOG, its skills, its packaging scripts.
+      - name: Check out the canon scripts (this workflow's own commit)
+        if: steps.gate.outputs.post == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job pushes nothing, so the workflow token has no business staying in .git/config for the
+          # rest of the job, readable by every later step (SKILL-REPO-PATTERN.md, Layer 5).
+          persist-credentials: false
+          path: canon
 
-      - name: Stage trimmed-description skill directories
-        if: steps.gate.outputs.is_stable == 'true'
-        run: node scripts/build-claude-ai-zips.mjs
+      - name: Check out the tag being posted (its own CHANGELOG and tree)
+        if: steps.gate.outputs.post == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ steps.gate.outputs.tag }}
+          path: tag-src
+          fetch-depth: 0 # the heading-continuity check needs the previous stable tag (git describe)
 
-      - name: Zip each staged skill directory
-        if: steps.gate.outputs.is_stable == 'true'
-        run: |
-          set -euo pipefail
-          cd dist-claude-ai
-          for d in */; do
-            name="${d%/}"
-            (cd "$name" && zip -r "../${name}.zip" . -x '.*')
-          done
-          ls -la *.zip
-
-      - name: Generate SHA256SUMS.txt for the ZIPs
-        if: steps.gate.outputs.is_stable == 'true'
-        run: |
-          set -euo pipefail
-          cd dist-claude-ai
-          sha256sum *.zip > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.gate.outputs.post == 'true'
+        with:
+          node-version: 24
 
       # UMB-162 (a), "WRITE ONCE, DERIVE EVERYTHING" (owner-proposed, main-confirmed
       # 2026-09-21): the CHANGELOG entry -- heading + a required one-line summary -- is the
@@ -105,26 +148,132 @@ jobs:
       # rule. scripts/release-notes.mjs fails loud (non-zero exit) on a missing/mismatched/
       # summary-less entry -- a malformed CHANGELOG must stop the release, never fall back to
       # a bare-titled one (UMB-162's own root cause).
+      # UMB-182: the previous stable tag feeds the CHANGELOG heading-continuity check (courier C-2);
+      # the current Latest decides make_latest, so a Release for an older tag never takes Latest.
+      # A 404 on releases/latest means the repo has no Latest yet; any other failure stops the run,
+      # never a guess that could move Latest. The launch form has no previous stable tag.
+      - name: Read the previous stable tag and the current Latest release
+        if: steps.gate.outputs.post == 'true'
+        working-directory: tag-src
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POST_TAG: ${{ steps.gate.outputs.tag }}
+          POST_LAUNCH: ${{ steps.gate.outputs.launch }}
+        run: |
+          set -uo pipefail
+          prev=''
+          if [[ "${POST_LAUNCH}" != "true" ]]; then
+            prev=$(git describe --tags --abbrev=0 --exclude='*-*' "${POST_TAG}^" 2>/dev/null || true)
+          fi
+          if latest=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>latest-err.txt); then :
+          elif grep -q 'HTTP 404' latest-err.txt; then latest=''
+          else cat latest-err.txt >&2; echo "::error::could not read the current Latest release"; exit 1; fi
+          echo "RELEASE_TAG=${POST_TAG}" >> "$GITHUB_ENV"
+          echo "LAUNCH_FORM=${POST_LAUNCH}" >> "$GITHUB_ENV"
+          echo "PREVIOUS_STABLE_TAG=${prev}" >> "$GITHUB_ENV"
+          echo "LATEST_TAG=${latest}" >> "$GITHUB_ENV"
+          echo "previous stable tag: ${prev:-none} · current Latest: ${latest:-none}"
+
       - name: Derive the canon Release title + body from CHANGELOG.md
-        if: steps.gate.outputs.is_stable == 'true'
-        run: node scripts/release-notes.mjs
+        if: steps.gate.outputs.post == 'true'
+        working-directory: tag-src
+        run: node ../canon/scripts/release-notes.mjs
+
+      # A tag that predates the packaging scripts (a back-fill through the dispatch path) gets a Release
+      # without ZIPs, said out loud; a pushed tag that lacks them is a defect and stops the run.
+      - name: Check the tag carries its own packaging scripts
+        id: pkg
+        if: steps.gate.outputs.post == 'true'
+        working-directory: tag-src
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [[ -f scripts/verify.mjs && -f scripts/build-claude-ai-zips.mjs ]]; then
+            echo "package=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${EVENT}" == "push" ]]; then
+            echo "::error::this tag has no scripts/verify.mjs or scripts/build-claude-ai-zips.mjs -- a pushed tag must carry its own packaging scripts"; exit 1
+          else
+            echo "package=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${RELEASE_TAG} predates the packaging scripts: its Release is posted WITHOUT ZIP assets (a published version's bytes come from that version, never from a newer script run over an older tree)"
+          fi
+
+      - name: Verify plugin/ dist is current (fail loud, never zip a stale dist)
+        if: steps.pkg.outputs.package == 'true'
+        working-directory: tag-src
+        run: node scripts/verify.mjs
+
+      - name: Stage trimmed-description skill directories
+        if: steps.pkg.outputs.package == 'true'
+        working-directory: tag-src
+        run: node scripts/build-claude-ai-zips.mjs
+
+      - name: Zip each staged skill directory
+        if: steps.pkg.outputs.package == 'true'
+        working-directory: tag-src
+        run: |
+          set -euo pipefail
+          cd -- dist-claude-ai
+          for d in */; do
+            name="${d%/}"
+            # zip refuses "--" before the archive name, so a name that could read as an option is refused here instead.
+            [[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "::error::skill directory name '${name}' is not a plain name"; exit 1; }
+            zip -r "${name}.zip" "${name}" -x "${name}/.*"
+          done
+          ls -la -- *.zip
+
+      # claude.ai's own page (read 2026-10-02): the ZIP must contain the skill FOLDER as its top level, because Claude
+      # looks for <skill-name>/SKILL.md inside the archive, and a SKILL.md at the root "isn't recognized as a skill".
+      # This is the vendor's own check (unzip -l: SKILL.md must carry the <name>/ prefix), run on every archive
+      # before the Release is created or any asset is attached.
+      - name: Check each ZIP holds its skill folder as the top level (the vendor's own unzip -l check)
+        if: steps.pkg.outputs.package == 'true'
+        working-directory: tag-src
+        run: |
+          set -euo pipefail
+          cd -- dist-claude-ai
+          shopt -s nullglob
+          zips=(*.zip)
+          [[ ${#zips[@]} -gt 0 ]] || { echo "::error::no ZIP was built"; exit 1; }
+          for z in "${zips[@]}"; do
+            name="${z%.zip}"
+            entries=$(unzip -Z1 -- "$z")
+            outside=$(printf '%s\n' "$entries" | awk -v p="${name}/" 'index($0, p) != 1' | head -n 1)
+            if [[ -n "$outside" ]]; then
+              echo "::error::$z has an entry outside ${name}/ ('$outside'): the ZIP must hold the skill folder itself as its top level (zip the folder, not its contents)"; exit 1
+            fi
+            printf '%s\n' "$entries" | grep -Fxq -- "${name}/SKILL.md" || { echo "::error::$z has no ${name}/SKILL.md"; exit 1; }
+          done
+          echo "every ZIP holds <name>/SKILL.md as its top level"
+
+      - name: Generate SHA256SUMS.txt for the ZIPs
+        if: steps.pkg.outputs.package == 'true'
+        working-directory: tag-src
+        run: |
+          set -euo pipefail
+          cd -- dist-claude-ai
+          sha256sum -- *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       # This workflow is now the SOLE Release creator (UMB-162 (a)) -- a head no longer POSTs
       # a Release by hand, so the race this step used to guard against (a separate REST call
       # racing this trigger) is retired by construction. The one race that remains is a
-      # workflow_dispatch re-run of THIS SAME workflow for a tag it already created a Release
-      # for -- `concurrency: cancel-in-progress: false` above serializes a genuinely
+      # re-run of THIS SAME workflow for a tag it already created a Release for
+      # -- `concurrency: cancel-in-progress: false` above serializes a genuinely
       # concurrent run, so this is a re-run AFTER an earlier one already finished (or partly
       # finished). `edit`, not a bare `view`, so a re-run always converges the title/body back
       # to the derived canon shape, idempotently, rather than merely confirming something
-      # exists.
+      # exists. A NEW Release is created as a DRAFT and published only after its assets are attached
+      # (the publish step below); a re-run's edit leaves a published Release published. gh finds a draft by its
+      # tag name. `--latest` is NOT passed on the draft create (GitHub: a draft cannot be Latest); the publish step
+      # applies it.
       - name: Ensure the GitHub Release exists, with the derived canon title + body
-        if: steps.gate.outputs.is_stable == 'true'
+        if: steps.gate.outputs.post == 'true'
+        working-directory: tag-src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" --title "$(cat release-title.txt)" --notes-file release-body.md || \
-            gh release edit "${GITHUB_REF_NAME}" --title "$(cat release-title.txt)" --notes-file release-body.md || \
+          gh release create "${RELEASE_TAG}" --verify-tag --draft --title "$(cat release-title.txt)" --notes-file release-body.md --prerelease="$(cat release-prerelease.txt)" || \
+            gh release edit "${RELEASE_TAG}" --title "$(cat release-title.txt)" --notes-file release-body.md --latest="$(cat release-latest.txt)" --prerelease="$(cat release-prerelease.txt)" || \
             { echo "::error::release create failed AND release edit failed -- this is not the expected already-exists race" >&2; exit 1; }
 
       # RELEASE-PATTERN.md "A Release body is re-read after every write", MUST -- a 200 on the
@@ -133,10 +282,11 @@ jobs:
       # compare (the exact rail that caught the PS 5.1 ETS-decoration and em-dash-mangling
       # incidents this file's own canon cites).
       - name: Verify the published Release matches the derived title + body (byte-exact re-read)
-        if: steps.gate.outputs.is_stable == 'true'
+        if: steps.gate.outputs.post == 'true'
+        working-directory: tag-src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release view "${GITHUB_REF_NAME}" --json name,body | node scripts/verify-release-shape.mjs
+        run: gh release view "${RELEASE_TAG}" --json name,body | node ../canon/scripts/verify-release-shape.mjs
 
       # UMB-163's named divergence, closed here: `--clobber` used to run unconditionally on
       # every invocation of this workflow, silently overwriting whatever a prior run had
@@ -146,23 +296,43 @@ jobs:
       # a transient download failure surfaces as "no existing file" and is treated the same as
       # first-run, the safe direction).
       - name: Check for an already-published SHA256SUMS.txt on this tag's Release
-        if: steps.gate.outputs.is_stable == 'true'
+        if: steps.pkg.outputs.package == 'true'
+        working-directory: tag-src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "${GITHUB_REF_NAME}" -p 'SHA256SUMS.txt' -O existing-SHA256SUMS.txt --clobber 2>/dev/null || true
+        run: gh release download "${RELEASE_TAG}" -p 'SHA256SUMS.txt' -O existing-SHA256SUMS.txt --clobber 2>/dev/null || true
 
+      # UMB-182 M1, measured: zip stores mtimes, so a re-run of a tag whose assets are already
+      # published ends RED here, and that red is the safe outcome (nothing is overwritten; a fully
+      # published tag has nothing left to do). A run that died before SHA256SUMS.txt was uploaded
+      # finds no prior file and uploads normally. scripts/lib/asset-upload-mode.mjs has the detail.
       - name: Decide whether to upload, skip, or fail (a published version must never silently change)
         id: decide
-        if: steps.gate.outputs.is_stable == 'true'
+        if: steps.pkg.outputs.package == 'true'
+        working-directory: tag-src
         run: |
-          ACTION=$(node scripts/decide-upload.mjs dist-claude-ai/SHA256SUMS.txt existing-SHA256SUMS.txt)
+          ACTION=$(node ../canon/scripts/decide-upload.mjs dist-claude-ai/SHA256SUMS.txt existing-SHA256SUMS.txt)
           echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
 
       - name: Attach ZIPs + SHA256SUMS.txt to the GitHub Release for this tag
-        if: steps.gate.outputs.is_stable == 'true' && steps.decide.outputs.action == 'upload-clobber'
+        if: steps.pkg.outputs.package == 'true' && steps.decide.outputs.action == 'upload-clobber'
+        working-directory: tag-src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" dist-claude-ai/*.zip dist-claude-ai/SHA256SUMS.txt --clobber
+        run: gh release upload "${RELEASE_TAG}" dist-claude-ai/*.zip dist-claude-ai/SHA256SUMS.txt --clobber
+
+      # Last: the Release goes public only now that every asset is attached (a draft that stays a draft is
+      # the loud failure; a published Release with a missing asset is the silent one). `--latest` and
+      # `--prerelease` are applied here as well, because a draft carries neither until it is published.
+      - name: Publish the Release last (after its re-read and any assets), and re-read that it is no longer a draft
+        if: steps.gate.outputs.post == 'true'
+        working-directory: tag-src
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${RELEASE_TAG}" --draft=false --latest="$(cat release-latest.txt)" --prerelease="$(cat release-prerelease.txt)"
+          state=$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)
+          [[ "${state}" == "false" ]] || { echo "::error::${RELEASE_TAG} is still a draft after the publish step" >&2; exit 1; }
 
       # UMB-163 step 2 (design), step 3 signed 2026-09-21 ("ใช่ เก็บ 2 ล็อกเลย", N=2): keeps
       # the ZIP assets of the newest stable Release plus ONE previous, prunes the ZIPs (never
@@ -172,8 +342,9 @@ jobs:
       # that variable reads exactly "true", checked twice (the `if:` below, and again inside
       # the script itself -- never trust one gate alone for a destructive action).
       - name: Prune older stable release ZIP assets (kept latest + 1 previous; flag-gated, default OFF)
-        if: steps.gate.outputs.is_stable == 'true' && vars.PRUNE_OLD_RELEASE_ZIPS == 'true'
+        if: steps.gate.outputs.post == 'true' && vars.PRUNE_OLD_RELEASE_ZIPS == 'true'
+        working-directory: tag-src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRUNE_OLD_RELEASE_ZIPS: ${{ vars.PRUNE_OLD_RELEASE_ZIPS }}
-        run: node scripts/prune-release-zips.mjs
+        run: node ../canon/scripts/prune-release-zips.mjs

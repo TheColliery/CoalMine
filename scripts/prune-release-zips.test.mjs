@@ -18,7 +18,7 @@ function run(env) {
   delete clean.PRUNE_OLD_RELEASE_ZIPS;
   delete clean.GITHUB_TOKEN;
   delete clean.GITHUB_REPOSITORY;
-  return spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', env: { ...clean, ...env } });
+  return spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', timeout: 30000, env: { ...clean, ...env } });
 }
 
 test('prune-release-zips.mjs: flag unset -- exit 0, "flag off" message, no attempt to reach the network', () => {

@@ -16,11 +16,41 @@
 
 export class ChangelogShapeError extends Error {}
 
+// A ref handed in by the workflow (the previous stable tag, the repo's current Latest) that is not
+// a bare vX.Y.Z -- a derivation never guesses around it.
+export class ReleaseRefError extends Error {}
+
+const BARE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+// UMB-182 default-Latest. GitHub marks a new Release "Latest" unless the create call says otherwise
+// (measured on CoalFace's rehearsal: a throw-away v0.0.2 took Latest from v0.11.0). A Release for a
+// version OLDER than the current Latest -- a patch on an older line, or a back-fill (UMB-189) -- must be created with
+// make_latest "false". Returns the string the workflow hands to `gh release create/edit --latest=`.
+// `latestTag` is '' when the repo has no Latest yet.
+export function makeLatestFlag(tagVersion, latestTag) {
+  if (!latestTag) return 'true';
+  const l = latestTag.match(BARE_TAG);
+  if (!l) throw new ReleaseRefError(`the current Latest release is tagged "${latestTag}", not a bare vX.Y.Z -- refusing to guess whether v${tagVersion} should take Latest`);
+  const t = `v${tagVersion}`.match(BARE_TAG);
+  if (!t) throw new ReleaseRefError(`v${tagVersion} is not a bare vX.Y.Z`);
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(t[i]) - Number(l[i]);
+    if (d !== 0) return d > 0 ? 'true' : 'false';
+  }
+  return 'true'; // the same tag as Latest (a re-run): keep it Latest
+}
+
 // Returns { version, date, summary, sectionsBody } for the tag's own entry. Throws
 // ChangelogShapeError with a human-readable reason on any shape violation -- never guesses,
 // per the fail-loud CLI discipline (scripts-quality.md sec 1): a malformed or stale CHANGELOG
 // must stop the release, not ship a Release titled from a fallback.
-export function extractChangelogEntry(changelogText, tagVersion) {
+//
+// UMB-182 / courier C-2: `previousStable` ('X.Y.Z', or '' for a first stable release) is the version
+// of the previous stable tag (`git describe --exclude='*-*'`). When given, the first STABLE
+// `## [X.Y.Z]` heading after the released entry must be that version -- pre-release headings in
+// between are skipped. This catches the class the byte re-read cannot see: a heading REPLACED instead
+// of inserted above, which silently publishes the older entry's sections as the new release's notes.
+export function extractChangelogEntry(changelogText, tagVersion, { previousStable = '' } = {}) {
   const lines = changelogText.split(/\r?\n/);
   const headingIdx = lines.findIndex((l) => /^##\s*\[/.test(l));
   if (headingIdx === -1) throw new ChangelogShapeError('CHANGELOG.md has no version heading ("## [X.Y.Z] - YYYY-MM-DD")');
@@ -36,6 +66,12 @@ export function extractChangelogEntry(changelogText, tagVersion) {
   }
 
   const rest = lines.slice(headingIdx + 1);
+  if (previousStable) {
+    const nextStable = rest.map((l) => l.match(/^##\s*\[(\d+\.\d+\.\d+)\]/)).find(Boolean)?.[1];
+    if (nextStable !== previousStable) {
+      throw new ChangelogShapeError(`the [${version}] entry is followed by ${nextStable ? `[${nextStable}]` : 'no stable heading'}, but the previous stable tag is v${previousStable} -- an entry heading was replaced instead of inserted above, or the previous release's entry is missing`);
+    }
+  }
   const nextHeadingIdx = rest.findIndex((l) => /^##\s/.test(l));
   const body = nextHeadingIdx === -1 ? rest : rest.slice(0, nextHeadingIdx);
 

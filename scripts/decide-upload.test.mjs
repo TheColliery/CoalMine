@@ -17,7 +17,7 @@ function scratchWithLib() {
 }
 
 function run(args) {
-  return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', timeout: 30000 });
 }
 
 test('decide-upload.mjs: no existing sums path given at all -- first run, upload-clobber, exit 0, prints the action on stdout', () => {
