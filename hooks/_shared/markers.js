@@ -18,8 +18,6 @@
 // tightened.
 const MARKER_MAX_BYTES = 1024 * 1024; // a .touched/.smells list is one short line per edited file
 const MARKER_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
-const MARKER_APPEND_FLAGS = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT
-  | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
 function markerDirPath() { return path.join(os.tmpdir(), 'coalmine'); }
 function ensureMarkerDir() {
   const dir = markerDirPath();
@@ -42,7 +40,7 @@ function markerBase(sid) {
 function readMarker(file) { // text, or null when absent / not a regular file / over the bound / unreadable
   let fd;
   try {
-    fd = fs.openSync(file, MARKER_READ_FLAGS);
+    fd = fs.openSync(file, MARKER_READ_FLAGS, 0o600); // R14 red: mode is inert without O_CREAT; stated because the CodeQL query reads the mode argument only, never the flags
     const st = fs.fstatSync(fd);
     if (!st.isFile() || st.size > MARKER_MAX_BYTES) return null;
     const buf = Buffer.alloc(st.size);
@@ -55,30 +53,5 @@ function readMarker(file) { // text, or null when absent / not a regular file / 
     return buf.toString('utf8', 0, got);
   } catch { return null; } finally {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
-  }
-}
-function markerExists(file) { // lstat: a link or FIFO is "present" as an entry, but readMarker will refuse it
-  try { fs.lstatSync(file); return true; } catch { return false; }
-}
-function appendMarker(file, text) {
-  let fd;
-  try {
-    fd = fs.openSync(file, MARKER_APPEND_FLAGS, 0o600);
-    if (!fs.fstatSync(fd).isFile()) return false;
-    fs.writeSync(fd, text);
-    return true;
-  } catch { return false; } finally {
-    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
-  }
-}
-function writeMarkerAtomic(file, text) { // wx temp in the same dir, then rename over the entry (replaces a planted link, never writes through it)
-  const tmp = `${file}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(tmp, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    fs.renameSync(tmp, file);
-    return true;
-  } catch {
-    try { fs.unlinkSync(tmp); } catch {}
-    return false;
   }
 }

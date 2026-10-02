@@ -174,3 +174,32 @@ test('link-check still runs its CLI when started through a directory junction/sy
   assert.match(r.stdout + r.stderr, /finding\(s\)/, 'the CLI ran (it printed its summary)');
   assert.equal(r.status, 1, 'and found the dead link');
 });
+
+// CI red at f460982 (macOS, node 22 and 24): process.cwd() is kernel-resolved (/private/var/...) while the touched list
+// carries the spelling the edit tool used (/var/...), so path.relative(root, file) climbed out of the root, projectRelative
+// fell back to the ABSOLUTE path, and an ancestor folder named like a fragment excluded every file. Reproduced here with a
+// directory link: the touched paths use the LINK spelling, the hook runs with the REAL spelling as its cwd.
+test('scanExcludePaths: the project-relative match survives two spellings of the project dir (macOS /var vs /private/var)', (t) => {
+  const real = mkDir(t, 'cm-r14-spell-');
+  const sandbox = path.join(real, 'scratchpad', 'sbx'); // an ancestor folder named like the fragment
+  const proj = path.join(sandbox, 'proj');
+  fs.mkdirSync(path.join(proj, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(proj, 'src'));
+  fs.mkdirSync(path.join(proj, 'scratchpad'));
+  fs.mkdirSync(path.join(sandbox, 'coalmine'), { mode: 0o700 });
+  fs.writeFileSync(path.join(proj, '.coalmine.json'), JSON.stringify({ scanExcludePaths: ['scratchpad'] }));
+  const linkHome = mkDir(t, 'cm-r14-spell-link-');
+  const link = path.join(linkHome, 'link'); // a second spelling of `real` itself, so the ancestor folder shows in BOTH spellings
+  try { fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (e) { t.skip(`cannot create a directory link here (${e.code})`); return; }
+  const keptViaLink = path.join(link, 'scratchpad', 'sbx', 'proj', 'src', 'real.js');
+  const labViaLink = path.join(link, 'scratchpad', 'sbx', 'proj', 'scratchpad', 'lab.js');
+  fs.writeFileSync(path.join(proj, 'src', 'real.js'), 'x');
+  fs.writeFileSync(path.join(proj, 'scratchpad', 'lab.js'), 'x');
+  fs.writeFileSync(path.join(sandbox, 'coalmine', 'rot-canary-SPELL.touched'), `${keptViaLink}\n${labViaLink}\n`);
+  const r = runNode(STOP, [], JSON.stringify({ session_id: 'SPELL', stop_hook_active: false }), proj, sandbox);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.ok(out.reason && out.reason.includes('real.js'), 'a real file still surfaces when the touched path uses the other spelling');
+  assert.ok(!out.reason.includes('lab.js'), 'the project\'s own scratchpad folder is still excluded');
+});

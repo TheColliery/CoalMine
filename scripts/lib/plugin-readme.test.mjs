@@ -27,7 +27,9 @@ test('the plugin README names every shipped hook, at least three example uses, t
   for (const n of names) assert.ok(md.includes('`' + n + '`'), `names the ${n} hook`);
   const examples = md.split('## Example uses')[1].split('\n## ')[0].split('\n').filter((l) => /^\d+\. /.test(l));
   assert.ok(examples.length >= 3, `${examples.length} example uses`);
-  assert.ok(md.includes('https://github.com/TheColliery/CoalMine/issues'));
+  // Parse each URL and compare host and path (a substring test of an unparsed URL is what CodeQL js/incomplete-url-substring-sanitization refuses).
+  const urls = (md.match(/https:\/\/[^\s<>)\]]+/g) || []).map((u) => new URL(u));
+  assert.ok(urls.some((u) => u.hostname === 'github.com' && u.pathname === '/TheColliery/CoalMine/issues'), 'names the issue tracker');
   assert.ok(!/anthropic'?s? (plugin )?directory|listed in anthropic/i.test(md), 'no claim of being listed (LAW-WAVES P-ANTHROPIC-3)');
 });
 

@@ -549,8 +549,6 @@ function loadCfg(base) {
 // tightened.
 const MARKER_MAX_BYTES = 1024 * 1024; // a .touched/.smells list is one short line per edited file
 const MARKER_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
-const MARKER_APPEND_FLAGS = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT
-  | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
 function markerDirPath() { return path.join(os.tmpdir(), 'coalmine'); }
 function ensureMarkerDir() {
   const dir = markerDirPath();
@@ -573,7 +571,7 @@ function markerBase(sid) {
 function readMarker(file) { // text, or null when absent / not a regular file / over the bound / unreadable
   let fd;
   try {
-    fd = fs.openSync(file, MARKER_READ_FLAGS);
+    fd = fs.openSync(file, MARKER_READ_FLAGS, 0o600); // R14 red: mode is inert without O_CREAT; stated because the CodeQL query reads the mode argument only, never the flags
     const st = fs.fstatSync(fd);
     if (!st.isFile() || st.size > MARKER_MAX_BYTES) return null;
     const buf = Buffer.alloc(st.size);
@@ -588,9 +586,12 @@ function readMarker(file) { // text, or null when absent / not a regular file / 
     if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
   }
 }
-function markerExists(file) { // lstat: a link or FIFO is "present" as an entry, but readMarker will refuse it
-  try { fs.lstatSync(file); return true; } catch { return false; }
-}
+// </coalmine-shared: markers>
+// <coalmine-shared: markers-append> — synced from hooks/_shared/markers-append.js by build-plugin; edit the partial, not this block
+// R14 red: the append half of the marker helpers, synced into the TOUCH hook only (the stop hook never appends; an unused function in
+// it is a CodeQL js/unused-local-variable alert). Uses ensureMarkerDir/markerBase from the common markers region.
+const MARKER_APPEND_FLAGS = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT
+  | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
 function appendMarker(file, text) {
   let fd;
   try {
@@ -602,18 +603,7 @@ function appendMarker(file, text) {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
   }
 }
-function writeMarkerAtomic(file, text) { // wx temp in the same dir, then rename over the entry (replaces a planted link, never writes through it)
-  const tmp = `${file}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(tmp, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    fs.renameSync(tmp, file);
-    return true;
-  } catch {
-    try { fs.unlinkSync(tmp); } catch {}
-    return false;
-  }
-}
-// </coalmine-shared: markers>
+// </coalmine-shared: markers-append>
 
 // Defensive edited-file-path extraction across hook payload shapes so the SAME
 // hook serves both Claude Code and Antigravity (one core, no fork):

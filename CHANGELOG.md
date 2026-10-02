@@ -2,6 +2,10 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+Work in progress (R14 red); the DRAFTER replaces this entry.
+
 ## [3.22.0] - 2026-10-02
 
 The release ZIPs now put each skill inside its own folder as Anthropic's guide asks, and rot-canary's session files move out of reach of other users on a shared machine.
