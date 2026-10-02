@@ -538,6 +538,92 @@ function loadCfg(base) {
   return _cfg;
 }
 // </coalmine-shared: node-config>
+// <coalmine-shared: markers> — synced from hooks/_shared/markers.js by build-plugin; edit the partial, not this block
+// R14 / CWK-158 item 8 (CSV-4, CSV-6, CSV-7, B-u1-L6): the per-session temp markers
+// (.touched .smells .scanned .memmoved) used to sit FLAT in os.tmpdir(), where on a shared
+// POSIX /tmp another user can plant a symlink (the .scanned write followed it) or a FIFO (a
+// blocking readFileSync hung the Stop hook, WSL exit 124). They now live in the owner-only
+// <tmpdir>/coalmine/ subdir the conductor and the sweep throttle already use, and are
+// read and written only through the helpers below:
+//   - the dir is accepted ONLY if it is a real directory (not a link), owned by this user and
+//     not group/other-writable (POSIX; fs.getuid is absent on Windows, where %TEMP% is per-user).
+//     A dir somebody else made is refused: the marker functions return null/false and the
+//     hook degrades to "no marker" (fail-silent), never writes into it.
+//   - READ = O_NONBLOCK open, fstat must be a regular file, size bounded (the
+//     readRepoFileBounded shape), so a FIFO or device cannot block and a huge file cannot
+//     be slurped.
+//   - WRITE = append with O_NOFOLLOW + fstat regular (the log-style .touched/.smells), a
+//     wx temp + rename (the whole-value .scanned), or wx create (the write-once .memmoved).
+// RESIDUALS, named: Windows has no O_NOFOLLOW/O_NONBLOCK, but its temp dir is per-user and
+// a FIFO cannot be planted; a dir pre-created by THIS user with loose bits is refused, not
+// tightened.
+const MARKER_MAX_BYTES = 1024 * 1024; // a .touched/.smells list is one short line per edited file
+const MARKER_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0);
+const MARKER_APPEND_FLAGS = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT
+  | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
+function markerDirPath() { return path.join(os.tmpdir(), 'coalmine'); }
+function ensureMarkerDir() {
+  const dir = markerDirPath();
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const st = fs.lstatSync(dir);
+    if (st.isSymbolicLink() || !st.isDirectory()) return null;
+    if (typeof process.getuid === 'function') {
+      if (st.uid !== process.getuid() || (st.mode & 0o022) !== 0) return null;
+    }
+    return dir;
+  } catch { return null; }
+}
+// <markerdir>/rot-canary-<sid>, or null when the dir is not trustworthy. `sid` is already
+// allowlisted by the caller (/^[A-Za-z0-9_-]+$/), so it cannot traverse out of the dir.
+function markerBase(sid) {
+  const dir = ensureMarkerDir();
+  return dir ? path.join(dir, `rot-canary-${sid}`) : null;
+}
+function readMarker(file) { // text, or null when absent / not a regular file / over the bound / unreadable
+  let fd;
+  try {
+    fd = fs.openSync(file, MARKER_READ_FLAGS);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > MARKER_MAX_BYTES) return null;
+    const buf = Buffer.alloc(st.size);
+    let got = 0;
+    while (got < st.size) {
+      const n = fs.readSync(fd, buf, got, st.size - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return buf.toString('utf8', 0, got);
+  } catch { return null; } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+function markerExists(file) { // lstat: a link or FIFO is "present" as an entry, but readMarker will refuse it
+  try { fs.lstatSync(file); return true; } catch { return false; }
+}
+function appendMarker(file, text) {
+  let fd;
+  try {
+    fd = fs.openSync(file, MARKER_APPEND_FLAGS, 0o600);
+    if (!fs.fstatSync(fd).isFile()) return false;
+    fs.writeSync(fd, text);
+    return true;
+  } catch { return false; } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+function writeMarkerAtomic(file, text) { // wx temp in the same dir, then rename over the entry (replaces a planted link, never writes through it)
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}
+    return false;
+  }
+}
+// </coalmine-shared: markers>
 
 // Heuristic user-language detection: explicit .coalmine.json override first, then
 // env locale, then regional characters in project docs (per hooks-safety.md section 5).
@@ -682,10 +768,12 @@ function sweepStale(canaryActive) {
       //     NOT obtainable: our marker CONTENTS (0o600 since CWK-043 — and both
       //     markers are written EMPTY, so there is nothing in them to learn); any write
       //     THROUGH a path we own (rename replaces a directory entry; `wx` refuses a
-      //     pre-planted name); and this residual has NO reach at all to `.touched`,
-      //     `.smells` or `.scanned`, which live FLAT in os.tmpdir() under /tmp's own sticky
-      //     bit (1777 — read under WSL2, same provenance caveat as (c) below: this box's
-      //     NTFS has no such bit to read), not in this subdir.
+      //     pre-planted name). [R14, CSV-4/6/7: `.touched`, `.smells`, `.scanned` and `.memmoved`
+      //     used to live FLAT in os.tmpdir() under /tmp's sticky bit; they now live in THIS subdir,
+      //     so the residual below DOES reach them. That is why the markers region's ensureMarkerDir()
+      //     refuses a dir that is not a real directory owned by this user and free of group/other
+      //     write bits: a pre-created hostile dir costs the markers (fail-silent, no scan nudge),
+      //     never a read of a planted FIFO or a write through a planted link.]
       //
       // (b) FORGERY / SUPPRESSION — REACHABLE, deliberately, and bounded to denial.
       //     Planting a REGULAR file here with a fresh mtime makes the throttle above read
@@ -780,7 +868,13 @@ function sweepStale(canaryActive) {
       // exception path, but process death between the write and the rename strands one that
       // nothing else we own could ever collect. A live stamp exists for microseconds and the
       // cutoff is >= 1 day (clamped), so anything this reaps is definitionally dead.
-      if (!f.endsWith('.marker') && !f.endsWith('.tmp')) continue;
+      // R14 (CSV-4/6/7): this canary's own per-session markers (rot-canary-<sid>.touched / .smells /
+      // .scanned / .memmoved) now live here too. Canary-owned, so collected on the active path only,
+      // exactly like the flat-root pass above; the `.marker` throttle and the conductor's markers
+      // stay unconditional.
+      const isSessionMarker = f.startsWith('rot-canary-') && /\.(touched|smells|scanned|memmoved)$/.test(f);
+      if (isSessionMarker && !canaryActive) continue;
+      if (!isSessionMarker && !f.endsWith('.marker') && !f.endsWith('.tmp')) continue;
       const p = path.join(markerDir, f);
       try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch {}
     }
@@ -999,17 +1093,22 @@ function main() {
   // evidence. The 2026-07-12 AG pilot's cadence DID fire, so real AG sids passed it).
   if (!sid || typeof sid !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sid)) return;
 
-  const base = path.join(os.tmpdir(), `rot-canary-${sid}`);
+  // R14 (CSV-4/6/7): the session markers live in the owner-only <tmpdir>/coalmine/ subdir and are
+  // read bounded + non-blocking (markers region above): a FIFO planted at one cannot hang this hook.
+  const base = markerBase(sid);
+  if (!base) return;
   const touched = base + '.touched';
-  if (!fs.existsSync(touched)) return;
+  const touchedRaw = readMarker(touched);
+  if (touchedRaw === null) return;
 
   let touchedMtime = 0;
   try { touchedMtime = fs.statSync(touched).mtimeMs; } catch { return; }
 
   const scanned = base + '.scanned';
   try {
-    if (fs.existsSync(scanned)) {
-      const content = fs.readFileSync(scanned, 'utf8').trim();
+    const scannedRaw = readMarker(scanned);
+    if (scannedRaw !== null) {
+      const content = scannedRaw.trim();
       // Unknown/legacy marker content (empty pre-v2.4 format) → 0 so the batch
       // re-nudges rather than being silently swallowed and deleted.
       const lastMtime = content ? Number(content) : 0;
@@ -1023,7 +1122,7 @@ function main() {
 
   let files = [];
   try {
-    files = [...new Set(fs.readFileSync(touched, 'utf8').split('\n').filter(Boolean).map((x) => path.normalize(x)))];
+    files = [...new Set(touchedRaw.split('\n').filter(Boolean).map((x) => path.normalize(x)))];
   } catch { return; }
   if (!files.length) return; // no recorded edit → nothing moved this session
 
@@ -1065,7 +1164,7 @@ function main() {
   try {
     const cfg = loadCfg();
     if (!(cfg && cfg.memoryDriftNudge === false)
-        && !fs.existsSync(base + '.memmoved')
+        && !markerExists(base + '.memmoved')
         && fs.existsSync(path.join(findGitRoot(process.cwd()), 'MEMORY.md'))) {
       driftText = t.memoryDrift || TRANSLATIONS.en.memoryDrift;
     }
@@ -1152,8 +1251,10 @@ function main() {
 
     let smellText = '';
     try {
-      if (fs.existsSync(base + '.smells')) {
-        const sm = [...new Set(fs.readFileSync(base + '.smells', 'utf8').split('\n').filter(Boolean))].sort();
+      const smellsRaw = readMarker(base + '.smells');
+      if (smellsRaw !== null) {
+        // B-u1-L6: each line is a path + findings the model reads inside the block reason; strip control characters.
+        const sm = [...new Set(smellsRaw.split('\n').map((x) => x.replace(/[\u0000-\u001f\u007f]/g, ' ')).filter(Boolean))].sort();
         if (sm.length) {
           smellText = t.smellPrefix + sm.map((x) => '  ' + x).join('\n');
         }
@@ -1172,15 +1273,10 @@ function main() {
   // Acknowledgement marker — store the mtime of .touched when we started the check
   // (so a later stop in this batch re-surfaces neither the scan nor the drift note).
   try {
-    // 0o600 for the same reason as the sweep stamp above: this is a flat os.tmpdir() write
-    // (no private subdir at all here), so on a shared Unix /tmp the file's own mode is the
-    // only thing scoping it to this user. Same CodeQL sink class (#66/#67's rule), caught by
-    // the batch sweep rather than by an alert — this site was never reported.
-    // Residual (CWK-043 INSPECT N1): `mode` is open(2)'s CREATION mode, ignored when the
-    // file already exists. The `wx` sites are always newly created so it is vacuous there,
-    // but this marker is rewritten every batch — a `.scanned` left by a pre-CWK-043 version
-    // at 0o666 is NOT tightened by this code. Self-heals on the next tmp clear.
-    fs.writeFileSync(scanned, String(touchedMtime), { encoding: 'utf8', mode: 0o600 });
+    // wx temp + rename inside the owner-only marker dir (R14, CSV-4): a symlink planted at .scanned is REPLACED,
+    // never written through, and the file is created 0o600 each batch (the CWK-043 N1 residual for a pre-existing
+    // looser file no longer applies to a rewrite).
+    writeMarkerAtomic(scanned, String(touchedMtime));
   } catch {}
 
   // Emit. AG mode (an event-name argv — ONLY the Antigravity template passes one):

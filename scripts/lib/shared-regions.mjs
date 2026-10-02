@@ -42,6 +42,8 @@ export function syncRegion(text, name, comment, body) {
 export const REGION_TARGETS = [
   { file: 'hooks/rot-canary-touch.js', name: 'node-config', comment: '//', partial: 'hooks/_shared/node-config.js' },
   { file: 'hooks/rot-canary-stop.js', name: 'node-config', comment: '//', partial: 'hooks/_shared/node-config.js' },
+  { file: 'hooks/rot-canary-touch.js', name: 'markers', comment: '//', partial: 'hooks/_shared/markers.js' },
+  { file: 'hooks/rot-canary-stop.js', name: 'markers', comment: '//', partial: 'hooks/_shared/markers.js' },
   { file: 'hooks/coalmine-conductor.js', name: 'node-config', comment: '//', partial: 'hooks/_shared/node-config.js' },
   { file: 'alt/powershell/rot-canary-touch.ps1', name: 'ps-config', comment: '#', partial: 'hooks/_shared/ps-config.ps1' },
   { file: 'alt/powershell/rot-canary-stop.ps1', name: 'ps-config', comment: '#', partial: 'hooks/_shared/ps-config.ps1' },
