@@ -27,7 +27,15 @@ export const LEGACY_CONFIGS = ['.claude/.coalmine.json', '.coalmine.json'];
 // because every caller runs `existsSync(p)` first and the global side must exist for a collision.
 export function isGlobalCfgFile(p) {
   try {
-    return fs.realpathSync.native(p) === fs.realpathSync.native(path.join(os.homedir(), '.claude', '.coalmine.json'));
+    // R14 / B-u3-2b (the git-home case): os.homedir() follows HOME/USERPROFILE, which a sandboxed run moves away from
+    // the real profile, so the REAL ~/.claude/.coalmine.json was taken for a project's legacy config and migrated.
+    // os.userInfo().homedir reads the OS account record, which no environment variable moves. Compare against both.
+    const here = fs.realpathSync.native(p);
+    const homes = [os.homedir()];
+    try { homes.push(os.userInfo().homedir); } catch { /* no account record: the env home alone */ }
+    return homes.some((h) => {
+      try { return here === fs.realpathSync.native(path.join(h, '.claude', '.coalmine.json')); } catch { return false; }
+    });
   } catch { return false; }
 }
 

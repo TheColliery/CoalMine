@@ -159,13 +159,13 @@ function resolveHooksDir(repoDir, gitDir) {
     // R13 / CWK-158 item 4 (B-u2-5a): read it as a PATH (`--type=path`), the way git itself does, so a
     // leading `~` or `~user` expands. The untyped read returned the literal `~/hooks`, which
     // path.resolve then joined under the project (<project>/~/hooks) while git ran $HOME/hooks.
-    const r = spawnSync('git', ['config', '--type=path', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
+    const r = spawnSync('git', ['config', '--type=path', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir), { keepUserConfig: true }), encoding: 'utf8' }); // R14-N1: the user's git config selection
     const configured = r.status === 0 && r.stdout ? r.stdout.trim() : '';
     if (configured) return path.resolve(repoDir, configured);
     if (r.status !== 0 && r.status !== 1) {
       // A git too old for --type (or any other failure of the typed read): ask the untyped way, and
       // refuse to guess at a value git would expand -- a "~" left unexpanded is exactly the bug.
-      const u = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
+      const u = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: repoDir, env: gitEnv(path.dirname(repoDir), { keepUserConfig: true }), encoding: 'utf8' });
       const raw = u.status === 0 && u.stdout ? u.stdout.trim() : '';
       if (raw && !raw.startsWith('~')) return path.resolve(repoDir, raw);
       if (raw) throw new Error('core.hooksPath starts with "~" and this git cannot expand it');
@@ -174,6 +174,14 @@ function resolveHooksDir(repoDir, gitDir) {
     if (/cannot expand it/.test(e.message)) throw e; // surfaces as the caller's "failed to install git hooks" warning
   }
   return path.join(gitDir, 'hooks');
+}
+
+// R14 / B-u2-5b: an absolute core.hooksPath outside this project (and not this repo's own git dir) is a folder every repo
+// that uses it shares; one repo's install or uninstall changes it for all of them. Say so, in one line. No refusal: since
+// the chain-only hook (R13 item 2) the owner's own hook still runs.
+function sharedHooksNote(hooksDir, gitDir) {
+  if (isUnderDir(hooksDir, process.cwd()) || isUnderDir(hooksDir, gitDir)) return '';
+  return `  NOTE: core.hooksPath points outside this project (${hooksDir}). That folder is shared by every repo that uses it, so installing or uninstalling CoalMine's hooks here changes them for all of those repos.`;
 }
 
 // Is this hook one WE generated? Every version has carried a `# CoalMine <name>
@@ -262,8 +270,17 @@ function installGitHooks() {
     // dir OUTSIDE the worktree (a linked worktree's gitdir, an absolute core.hooksPath)
     // was chosen by git config, not by a file the repo planted; it is its own root.
     const hooksRoot = isUnderDir(hooksDir, process.cwd()) ? process.cwd() : hooksDir;
+    const sharedNote = sharedHooksNote(hooksDir, gitDir);
+    // R14 / R13 INSPECT LOW-3: a hooks folder OUTSIDE the project that does not exist yet used to be refused with advice
+    // for a different problem ("replace it with a regular file"). Say what is true and what to do.
+    if (hooksRoot === hooksDir && !fs.existsSync(hooksDir)) {
+      console.warn(`  [refused] git hooks: core.hooksPath names ${hooksDir}, which does not exist yet and is outside this project, so CoalMine will not create it. Create that folder and re-run, or unset core.hooksPath.`);
+      process.exitCode = 1;
+      return;
+    }
     const dirWhy = checkRepoDirTarget(hooksDir, hooksRoot);
     if (dirWhy) { console.warn(refuseMsg('git hooks', dirWhy)); process.exitCode = 1; return; }
+    if (sharedNote) console.log(sharedNote);
     fs.mkdirSync(hooksDir, { recursive: true });
 
     // R13 / CWK-158 item 2 (B-u2-1, CSV-8): what lands in a USER's repo is a generic chain-only
@@ -346,6 +363,8 @@ function uninstallGitHooks() {
     const hooksRoot = isUnderDir(hooksDir, process.cwd()) ? process.cwd() : hooksDir; // CWK-137, same rule as install
     const dirWhy = checkRepoDirTarget(hooksDir, hooksRoot);
     if (dirWhy) { console.warn(refuseMsg('git hooks', dirWhy)); process.exitCode = 1; return; }
+    const sharedNoteU = sharedHooksNote(hooksDir, gitDir);
+    if (sharedNoteU) console.log(sharedNoteU);
     const readHook = (p) => (lexists(p) ? readRepoFileBounded(p, hooksRoot, MAX_DOC_BYTES) : null);
 
     const hookNames = ['pre-commit', 'pre-push'];

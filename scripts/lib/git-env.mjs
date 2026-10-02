@@ -20,11 +20,23 @@
 //
 // `ceilingDir` is the one directory a spawn may never walk up past -- ordinarily the
 // parent of the fixture or repository the spawn works in.
-export function gitEnv(ceilingDir) {
+//
+// R14-N1 (`keepUserConfig`): the installer's READ of the USER's `core.hooksPath` must see the same global and system
+// git config the user's own git sees, and those can be chosen by GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM and
+// GIT_CONFIG_NOSYSTEM. Stripped, git reports no hooksPath and the installer writes inert hooks into .git/hooks under a
+// success message. Only those three names pass, only when the caller asks, and only for that read; every fixture
+// spawn and every other production spawn keeps the full strip (the census still requires `env: gitEnv(...)` on each).
+const USER_CONFIG_SELECTION = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'];
+export function gitEnv(ceilingDir, { keepUserConfig = false } = {}) {
   const env = { ...process.env };
+  const kept = {};
+  if (keepUserConfig) {
+    for (const k of USER_CONFIG_SELECTION) if (Object.hasOwn(env, k)) kept[k] = env[k];
+  }
   for (const key of Object.keys(env)) {
     if (key.startsWith('GIT_')) delete env[key];
   }
+  Object.assign(env, kept);
   env.GIT_CEILING_DIRECTORIES = ceilingDir;
   return env;
 }
