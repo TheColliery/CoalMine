@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Hermetic spawn tests for scripts/secret-gate.mjs (UMB-282 (a)): the real entry file is run against a throwaway git
+// Hermetic spawn tests for scripts/secret-gate.mjs: the real entry file is run against a throwaway git
 // repository, and the exit code, the sanctioned output and the effect are asserted. PORTABLE like the gate: node builtins
 // only, no repository path or name, so a sibling repo copies it beside the gate unchanged.
 //
@@ -18,9 +18,15 @@ const LIB = path.join(HERE, 'lib', 'secret-scan.mjs');
 const KEY = ['AK', 'IA', 'ABCDEFGHIJKLMNOP'].join(''); // an access-key-id shape, assembled so this file never carries one
 const ZERO = '0'.repeat(40);
 const made = [];
+// A hook runs with GIT_DIR, GIT_INDEX_FILE and friends set; a fixture that inherited them would write into the repository
+// the hook runs for. Every fixture git call, and the gate under test, gets an environment without them.
+const gitEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
 
 function git(dir, ...args) {
-  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return gitWith({}, dir, ...args);
+}
+function gitWith(extra, dir, ...args) {
+  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: { ...gitEnv(), ...extra } }).trim();
 }
 
 // A throwaway repository holding the gate and its scanner, with one commit per entry of `commits` ({ file: text } maps;
@@ -47,10 +53,10 @@ function repo(commits, { withLib = true } = {}) {
   return dir;
 }
 
-function run(dir, args = [], input = '') {
+function run(dir, args = [], input = '', extraEnv = {}) {
   const r = spawnSync(process.execPath, [path.join(dir, 'scripts', 'secret-gate.mjs'), ...args], {
     cwd: dir, input, encoding: 'utf8', timeout: 60000,
-    env: { ...process.env, HOME: dir, USERPROFILE: dir },
+    env: { ...gitEnv(), HOME: dir, USERPROFILE: dir, ...extraEnv },
   });
   return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
 }
@@ -150,4 +156,64 @@ test('a file name that carries a right-to-left override is escaped in the report
   assert.strictEqual(r.code, 1);
   assert.ok(!r.out.includes(rlo), 'the override character must not reach the terminal');
   assert.ok(r.out.includes(String.fromCharCode(92) + 'u202e'), r.out);
+});
+
+test('a GIT_DIR a hook inherited is ignored: the gate scans the repository it runs in, not the one the variable names', () => {
+  const dirty = repo([{ 'notes.txt': `x ${KEY}\n` }]);
+  const decoy = repo([{ 'README.md': 'clean\n' }]);
+  const r = run(dirty, [], '', { GIT_DIR: path.join(decoy, '.git') });
+  assert.strictEqual(r.code, 1, 'the key in the repository the gate runs in must be found even when GIT_DIR names a clean one: ' + r.out + r.err);
+  assert.match(r.out, /tree "notes\.txt":1 aws-access-key-id/);
+});
+
+test('commit mode scans the STAGED blobs: a key staged and then removed from the working tree is found; one only in the working tree is not committable and is not reported', () => {
+  const dir = repo([{ 'a.txt': 'clean\n' }]);
+  fs.writeFileSync(path.join(dir, 'a.txt'), `${KEY}\n`, 'utf8');
+  git(dir, 'add', 'a.txt');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'clean\n', 'utf8'); // the working tree is clean again, the index still holds the key
+  const staged = run(dir);
+  assert.strictEqual(staged.code, 1, staged.out + staged.err);
+  assert.match(staged.out, /tree "a\.txt":1 aws-access-key-id/);
+  git(dir, 'reset', '-q', '--', 'a.txt');
+  fs.writeFileSync(path.join(dir, 'a.txt'), `${KEY}\n`, 'utf8'); // only in the working tree now: nothing a commit or a push can carry
+  assert.strictEqual(run(dir).code, 0, 'an unstaged edit is not what a commit records');
+});
+
+test('the commit\'s own index is the one read: a GIT_INDEX_FILE a hook sets (git commit -a) is honoured while every other GIT_* is dropped', () => {
+  const dir = repo([{ 'a.txt': 'clean\n' }]);
+  const idx = path.join(dir, '.git', 'commit-index');
+  fs.copyFileSync(path.join(dir, '.git', 'index'), idx);
+  const withKey = execFileSync('git', ['-C', dir, 'hash-object', '-w', '--stdin'], { input: `${KEY}\n`, encoding: 'utf8', timeout: 60000, env: gitEnv() }).trim();
+  gitWith({ GIT_INDEX_FILE: idx }, dir, 'update-index', '--add', '--cacheinfo', `100644,${withKey},k.txt`);
+  const r = run(dir, [], '', { GIT_INDEX_FILE: idx });
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /tree "k\.txt":1 aws-access-key-id/);
+  assert.strictEqual(run(dir).code, 0, 'without the variable the real index is clean');
+});
+
+test('a staged entry whose blob cannot be read fails the scan by count, never passes as scanned', () => {
+  const dir = repo([{ 'a.txt': 'clean\n' }]);
+  gitWith({}, dir, 'update-index', '--add', '--info-only', '--cacheinfo', `100644,${'1'.repeat(40)},ghost.txt`);
+  const r = run(dir);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /FAIL SECRETS: 1 tracked file\(s\) could not be read, so were NOT scanned: "ghost\.txt"/);
+});
+
+test('an unreadable pushed range fails: a ref line naming a commit git does not have exits 1 and says the added lines were NOT scanned', () => {
+  const dir = repo([{ 'a.txt': 'one\n' }]);
+  const r = run(dir, ['--pre-push'], `refs/heads/main ${'1'.repeat(40)} refs/heads/main ${ZERO}\n`);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /FAIL SECRETS: the pushed range could not be read .*; the added lines of this push were NOT scanned/);
+});
+
+test('a staged blob that is damaged on disk fails the scan by count: exit 1, named, never a clean pass', () => {
+  const dir = repo([{ 'a.txt': 'clean\n' }]);
+  const sha = execFileSync('git', ['-C', dir, 'hash-object', '-w', '--stdin'], { input: 'a blob that will be damaged\n', encoding: 'utf8', timeout: 60000, env: gitEnv() }).trim();
+  const loose = path.join(dir, '.git', 'objects', sha.slice(0, 2), sha.slice(2));
+  fs.chmodSync(loose, 0o644);
+  fs.writeFileSync(loose, 'not a zlib stream');
+  gitWith({}, dir, 'update-index', '--add', '--cacheinfo', `100644,${sha},damaged.txt`);
+  const r = run(dir);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /FAIL SECRETS: 1 tracked file\(s\) could not be read, so were NOT scanned: "damaged\.txt"/);
 });

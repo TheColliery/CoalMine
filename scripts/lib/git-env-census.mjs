@@ -59,17 +59,14 @@ function* matches(re, text) {
   }
 }
 
-// R13 / CWK-174 -- the house secret scan arrives as byte-equal copies of the published-code template
-// (SERIES-CANON "Secret scan": the scanner and its test byte-equal in every carrier, a parity check measures
-// it), so this room cannot route their git spawns through gitEnv() without breaking that parity. They are
-// exempt here ONLY while their content is exactly the pinned blob: any edit, or a template re-sync that
-// changes them, makes the entry a finding again ("re-derive"), so the exemption cannot widen or outlive its
-// reason silently. The pinned ids are git blob ids (git hash-object <file>) measured 2026-10-02 against
-// .github/templates/published-code/scripts/. Raised to the owner of the template: its fixtures spread
-// process.env into git (the CWK-133 hazard in a linked-worktree hook) and the caller's own spawns inherit it.
+// R13 / CWK-174, narrowed at R14: the house secret scan arrives as byte-equal copies of the published-code template
+// (SERIES-CANON "Secret scan": a parity check measures it). The caller pair (secret-gate.mjs and its test) now spawns git
+// through a cleaned environment (template blobs e49206b4... / 3fcd3f0d...), so it is held to the census like any other
+// file. ONE exemption remains: secret-scan.test.mjs, whose source (Bankfire's) still spawns git without a cleaned
+// environment; that is the LLM zone's unit. It is exempt ONLY while its content is exactly the pinned blob: any edit, or a
+// template re-sync that changes it, makes the entry a finding again ("re-derive"), so the exemption cannot widen or outlive
+// its reason silently. The pin is a git blob id (git hash-object <file>) against .github/templates/published-code/scripts/.
 export const EXEMPT_CARRIERS = {
-  'scripts/secret-gate.mjs': '70954815563c6067cdd233e78f8ea24103027ede',
-  'scripts/secret-gate.test.mjs': 'efea22993b15d0a1f0a89632b5661514b775bb88',
   'scripts/secret-scan.test.mjs': 'a9cb7145e31139ec3c490dd7714df8fa7dc6cf86',
 };
 
