@@ -865,10 +865,11 @@ function main() {
     // Atomic wx create (O_CREAT|O_EXCL): EEXIST = already recorded this session —
     // swallowed by the catch. No existsSync pre-check (that was a TOCTOU window,
     // js/insecure-temporary-file); wx also refuses to write through a pre-planted
-    // symlink. Name stays sid-scoped flat tmp like the sibling .touched/.smells
-    // state (the session-UUID makes it unpredictable — the dismissed-FP class).
-    // `mode: 0o600` — flat os.tmpdir(), no private subdir, so on a shared Unix /tmp this
-    // file's own mode is the only thing scoping it to this user. Same CodeQL sink class as
+    // symlink. Name stays sid-scoped like the sibling .touched/.smells state (the
+    // session-UUID makes it unpredictable — the dismissed-FP class). Since R14 (CSV-4/6/7) it
+    // lives in the owner-checked <tmpdir>/coalmine/ subdir (markerBase), not flat in os.tmpdir().
+    // `mode: 0o600` stays as defence in depth: when that dir already exists mkdir's mode is a no-op,
+    // and this file's own mode is then what scopes it to this user. Same CodeQL sink class as
     // #66/#67 (a temp-dir write with no `mode`); found by the CWK-043 batch sweep, never
     // itself reported. The sid in the name is unpredictability, which that rule does not read.
     const mbase = markerBase(sid);
@@ -924,9 +925,9 @@ function main() {
   }
   if (smells.length) {
     // One line per file — the stop hook reports each .smells line verbatim.
-    // `mode: 0o600` on the same threat grounds as `.touched` above (CWK-043 INSPECT M1):
-    // flat os.tmpdir(), and this one carries the user's paths PLUS the findings against
-    // them. Unmodelled by the query (appendFileSync is not one of its 14 sinks) and
+    // Written through appendMarker (O_NOFOLLOW, 0o600) into the owner-checked <tmpdir>/coalmine/
+    // subdir since R14, on the threat grounds of CWK-043 INSPECT M1: this file carries the user's
+    // paths PLUS the findings against them. Unmodelled by the query (appendFileSync is not one of its 14 sinks) and
     // hardened anyway — the threat, not the sink list, is the boundary.
     appendMarker(base + '.smells', `${normF}: ${smells.join('; ')}\n`);
   }
