@@ -2,6 +2,15 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+The installer no longer clears a skill folder it cannot prove it wrote.
+
+### Fixed
+- **Install could delete files you had put in a CoalMine skill's folder.** `install.mjs` decided a skill folder was CoalMine's from the install manifest's name list alone, then cleared the folder and wrote it again. A manifest that arrives with a cloned repo, naming a skill such as `rot-canary` over a folder of someone else's files, or a real installed skill where you had added or edited a file, lost that content with exit 0 and no message. The installer now clears a folder the manifest names only when every file in it matches the hash the manifest recorded (the same proof uninstall already used); a pre-manifest install is still recognised by its `skill-meta.json`. When the proof fails, nothing in that folder is touched, the installer exits non-zero, and it prints `[refused] <folder>: the manifest names it but its contents differ from what CoalMine wrote (an edited, added or unrecorded file) — skipped to protect it (move your changes aside or remove the folder, then re-install)`. A folder the manifest does not name keeps the earlier `holds non-CoalMine files` refusal. A skill refused this way is left out of the rewritten manifest, as a refused foreign folder already was. A normal re-install over an untouched earlier install is unchanged. The installer is not part of `plugin/`, so Claude Code plugin users are not affected. — test: `scripts/lib/install.test.mjs`
+
+**What you need to do:** nothing, unless an install prints `[refused]` for a skill folder: move your changes out of it, or remove it, and run `node scripts/install.mjs <agent>` again. The fix is in your checkout of CoalMine, so update it first (`git pull`); `claude plugin update coalmine@coalmine` and the `coalmine@claude-community` pin carry no installer change.
+
 ## [3.22.1] - 2026-10-02
 
 On macOS, the session-end scan no longer skips every edited file when the project's folder has two spellings.
