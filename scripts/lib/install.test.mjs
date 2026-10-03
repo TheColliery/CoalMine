@@ -956,6 +956,44 @@ test('R18b: uninstall after a refusal keeps the user-edited skill folder and say
     const un = runInstall(target, proj, ['--uninstall']);
     assert.ok(fs.existsSync(mine), 'the user file survives the uninstall');
     assert.match(un.stdout + un.stderr, /\[kept\].*rot-canary/, 'and the keep is reported');
+    // HIGH-2: the run AFTER the uninstall. The kept folder must still be refused, never cleared as "unmanifested".
+    const again = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'the user file survives the install that follows the uninstall');
+    assert.notEqual(again.status, 0, 'and that install refuses');
+    assert.match(again.stdout + again.stderr, /\[refused\].*rot-canary/, 'and says so');
+    // Recovery: the user moves the file aside, the next install is clean.
+    fs.rmSync(mine);
+    assert.equal(runInstall(target, proj).status, 0, 'once the file is gone the install is clean');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R18b bounce 2, LOW-A: a hashless legacy manifest over a folder with no skill-meta.json can never be proven, so the
+// refusal names what unblocks it (remove or rename the folder), carries no unprovable entry, and holds on the next run.
+test('R18b: a hashless manifest over a marker-less folder says to remove or rename the folder, and still refuses next run', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-hashless-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.rmSync(path.join(dir, 'skill-meta.json'));
+    const mine = path.join(dir, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    delete m.hashes;
+    fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(m), 'utf8');
+    const r1 = runInstall(target, proj);
+    assert.notEqual(r1.status, 0, 'refused');
+    assert.match(r1.stdout + r1.stderr, /remove or rename the folder/, 'and the message names what unblocks it');
+    assert.ok(fs.existsSync(mine), 'the user file is untouched');
+    const m2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.ok(!m2.skills.includes(CURRENT_SKILL), 'no unprovable entry is carried into the rewritten manifest');
+    const r2 = runInstall(target, proj);
+    assert.notEqual(r2.status, 0, 'the refusal holds on the next run');
+    assert.ok(fs.existsSync(mine), 'and the file survives it');
+    fs.renameSync(dir, path.join(target, CURRENT_SKILL + '-mine'));
+    assert.equal(runInstall(target, proj).status, 0, 'renaming the folder unblocks the install');
   } finally {
     fs.rmSync(proj, { recursive: true, force: true });
   }

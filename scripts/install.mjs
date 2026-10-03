@@ -495,7 +495,7 @@ function uninstallConfig(arg) {
 }
 
 // ─── Skills Uninstallation ───────────────────────────────────────────────────
-function uninstallSkills(destDir, skillsList, manifest = null) {
+function uninstallSkills(destDir, skillsList, manifest = null, kept = []) {
   try {
     if (!fs.existsSync(destDir)) return 0;
     let removed = 0;
@@ -505,6 +505,7 @@ function uninstallSkills(destDir, skillsList, manifest = null) {
         if (manifest && manifest.skills.includes(s) && !ownedByManifest(destDir, s, manifest)) {
           console.warn(`  [kept] ${targetDir}: the manifest names it but its contents are not provably CoalMine's -- left in place`);
           process.exitCode = 1;
+          kept.push(s);
           continue;
         }
         fs.rmSync(targetDir, { recursive: true, force: true });
@@ -688,16 +689,20 @@ function installSkills(dest, skills, shared, root = dest) {
       // Three different truths, three wordings: a link, a folder the manifest names whose contents differ
       // from what CoalMine wrote, and a folder that is simply not CoalMine's.
       const named = !!(manifestSkills && manifestSkills.includes(s));
+      // LOW-A: a manifest written before per-file hashes (no `hashes` object) names the folder but can never prove it.
+      const hashed = !!(manifest && manifest.hashes && typeof manifest.hashes === 'object');
       const p = path.join(dest, s);
       let isLink = false;
       try { isLink = fs.lstatSync(p).isSymbolicLink(); } catch { /* absent: not a link */ }
       console.warn(isLink
         ? `  [refused] ${p}: it is a link (symlink or junction), not a folder CoalMine wrote — skipped so nothing it points at is touched (remove the link, then re-install)`
+        : named && !hashed
+          ? `  [refused] ${p}: the manifest names it but records no file hashes and the folder has no skill-meta.json, so nothing proves it is CoalMine's — skipped to protect it (remove or rename the folder, then re-install; moving files out of it does not unblock it)`
         : named
           ? `  [refused] ${p}: the manifest names it but its contents differ from what CoalMine wrote (a changed, added or unrecorded file) — skipped to protect it (move your changes aside or remove the folder, then re-install)`
           : `  [refused] ${p} holds non-CoalMine files — skipped to protect it (remove it or install elsewhere)`);
       process.exitCode = 1;
-      if (named) {
+      if (named && hashed) {
         carried.skills.push(s);
         for (const [k, v] of Object.entries((manifest && manifest.hashes) || {})) if (k.startsWith(s + '/')) carried.hashes[k] = v;
       }
@@ -900,8 +905,21 @@ if (isUninstall) {
   const ownedNames = previous
     ? previous.skills
     : skills.filter((s) => !isForeignSkillDir(dest, s, null));
-  const removedCount = uninstallSkills(dest, [...safeSkillNames(ownedNames), ...RETIRED_SKILL_NAMES], previous);
-  try { fs.rmSync(path.join(dest, MANIFEST_NAME), { force: true }); } catch {}
+  const kept = [];
+  const removedCount = uninstallSkills(dest, [...safeSkillNames(ownedNames), ...RETIRED_SKILL_NAMES], previous, kept);
+  if (previous && kept.length) {
+    // HIGH-2: a kept folder must stay provable on the next run, so the manifest survives with ONLY the kept skills
+    // and their old hashes (the one-shot-guard lesson, applied to uninstall). Nothing kept -> the manifest goes.
+    try {
+      const hashes = {};
+      for (const [k, v] of Object.entries(previous.hashes || {})) if (kept.some((n) => k.startsWith(n + '/'))) hashes[k] = v;
+      const rest = { version: previous.version, installedAt: previous.installedAt, skills: kept };
+      if (previous.hashes && typeof previous.hashes === 'object') rest.hashes = hashes; // a hashless manifest stays hashless: an empty object would claim a proof it cannot give
+      writeRepoFile(path.join(dest, MANIFEST_NAME), JSON.stringify(rest, null, 2) + '\n', uninstallRoot); // CWK-137
+    } catch (e) { console.warn(`  [warn] could not keep the install manifest: ${e.message}`); process.exitCode = 1; }
+  } else {
+    try { fs.rmSync(path.join(dest, MANIFEST_NAME), { force: true }); } catch {}
+  }
   uninstallConfig(targetKey);
   uninstallGitHooks();
   console.log(`\nDone: Uninstalled ${removedCount} skill(s) and cleared configs.`);
