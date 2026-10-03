@@ -1036,7 +1036,7 @@ test('R18b: a file over the size bound is unproven and refused even when the man
     fs.writeFileSync(mpath, JSON.stringify(m), 'utf8');
     const res = runInstall(target, proj);
     assert.ok(fs.existsSync(big), 'the oversized file survives');
-    assert.match(res.stdout + res.stderr, /[refused].*rot-canary/);
+    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/);
     assert.notEqual(res.status, 0);
   } finally {
     fs.rmSync(proj, { recursive: true, force: true });
