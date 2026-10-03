@@ -890,3 +890,117 @@ test('R18: a real earlier install (the manifest hashes match) re-installs cleanl
     fs.rmSync(proj, { recursive: true, force: true });
   }
 });
+
+// R18b (INSPECT HIGH-1): the refusal must hold on the run AFTER the refusing run. The first R18 fix rewrote the
+// manifest without the refused skill, so run 3 fell back to the skill-meta.json marker and cleared the user's file.
+test('R18b: the refusal holds on the run after it -- an added file survives runs 2 and 3, and the skill stays in the manifest', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-added-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    const r3 = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'run 3 keeps the added file');
+    assert.match(r3.stdout + r3.stderr, /\[refused\].*rot-canary/, 'and refuses again, out loud');
+    assert.notEqual(r3.status, 0, 'with a non-zero exit');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.ok(m.skills.includes(CURRENT_SKILL), 'the refused skill is carried forward in the manifest');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18b: an EDIT inside an installed skill survives runs 2 and 3 too', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-edit-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const skill = path.join(target, CURRENT_SKILL, 'SKILL.md');
+    fs.appendFileSync(skill, '\nUSER-EDIT-MARKER\n', 'utf8');
+    runInstall(target, proj);
+    const r3 = runInstall(target, proj);
+    assert.ok(fs.readFileSync(skill, 'utf8').includes('USER-EDIT-MARKER'), 'run 3 keeps the edit');
+    assert.notEqual(r3.status, 0);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18b: once the user moves the change aside, the carried-forward skill re-installs cleanly (the refusal does not wedge)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-recover-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    fs.rmSync(mine);
+    const res = runInstall(target, proj);
+    assert.equal(res.status, 0, `after the file is gone the install must pass:\n${res.stdout}${res.stderr}`);
+    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18b: uninstall after a refusal keeps the user-edited skill folder and says so', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-uninstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    const un = runInstall(target, proj, ['--uninstall']);
+    assert.ok(fs.existsSync(mine), 'the user file survives the uninstall');
+    assert.match(un.stdout + un.stderr, /\[kept\].*rot-canary/, 'and the keep is reported');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// INSPECT LOW-2: a skill folder that is a link gets its own true wording, not "edited, added or unrecorded file".
+test('R18b: a skill folder that is a link is refused with link wording, and what it points at survives', (t) => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-link-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const outside = path.join(proj, 'outside');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'data.txt'), 'outside data', 'utf8');
+    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    try { fs.symlinkSync(outside, path.join(target, CURRENT_SKILL), 'junction'); } catch (e) { t.skip(`cannot make a link here: ${e.code}`); return; }
+    const res = runInstall(target, proj);
+    const out = res.stdout + res.stderr;
+    assert.ok(fs.existsSync(path.join(outside, 'data.txt')), 'what the link points at survives');
+    assert.match(out, /\[refused\].*rot-canary.*is a link/, 'the refusal says it is a link');
+    assert.doesNotMatch(out, /edited, added or unrecorded|changed, added or unrecorded/, 'not the edited-file wording');
+    assert.notEqual(res.status, 0);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// INSPECT fourth LOW: the proof hashed a user file whole. A file over the bound is not one CoalMine wrote (no shipped
+// skill file comes near it), so it is unproven and refused, even when the manifest records its exact hash.
+test('R18b: a file over the size bound is unproven and refused even when the manifest records its hash, and is not read whole', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-big-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const big = path.join(target, CURRENT_SKILL, 'big.bin');
+    fs.writeFileSync(big, Buffer.alloc(4 * 1024 * 1024 + 1, 1));
+    const mpath = path.join(target, MANIFEST);
+    const m = JSON.parse(fs.readFileSync(mpath, 'utf8'));
+    m.hashes[CURRENT_SKILL + '/big.bin'] = hashFile(big);
+    fs.writeFileSync(mpath, JSON.stringify(m), 'utf8');
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(big), 'the oversized file survives');
+    assert.match(res.stdout + res.stderr, /[refused].*rot-canary/);
+    assert.notEqual(res.status, 0);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
