@@ -552,16 +552,18 @@ function safeSkillNames(names) {
 // it; a blind name match is banned (resilience-audit/checks.md:15, "never
 // delete-then-write"). Ownership proofs, cheapest first:
 //   • the dir is absent or empty        → no user data to lose;
-//   • the destDir manifest lists it      → it is in our package file-list;
+//   • the destDir manifest lists it AND its contents match the manifest's own hashes
+//     (ownedByManifest) → we wrote exactly this; a name in a manifest alone proves nothing,
+//     because a project manifest arrives with a cloned repo (R18, CodeRabbit PR 36);
 //   • it carries our own skill-meta.json → a pre-manifest CoalMine install.
 // Anything else is a FOREIGN dir that merely shares a skill's name — refuse it, so
 // a name collision can never cost the user their files (the H12 root cause).
-function isForeignSkillDir(destDir, skillName, manifestSkills) {
+function isForeignSkillDir(destDir, skillName, manifestSkills, manifest = null) {
   let entries;
   try { entries = fs.readdirSync(path.join(destDir, skillName)); }
   catch { return false; }                                        // absent/unreadable → nothing to protect
   if (entries.length === 0) return false;                        // empty dir → no user data
-  if (manifestSkills && manifestSkills.includes(skillName)) return false; // our package file-list
+  if (manifestSkills && manifestSkills.includes(skillName)) return !ownedByManifest(destDir, skillName, manifest); // named AND proven by content
   if (entries.includes('skill-meta.json')) return false;         // our own pre-manifest marker
   return true;                                                   // has content, none of it ours → foreign
 }
@@ -606,15 +608,17 @@ function cleanPreviousInstall(destDir, manifest, current = []) {
   //   • RETIRED_SKILL_NAMES is our tombstone of names only CoalMine ever coined
   //     (rotcanary), for installs predating the manifest (15-Jun lesson) — the single
   //     named exception to "no name-match delete", bounded to CoalMine-only coinages.
-  // Current-set dirs are cleared+rewritten by installSkillDir, and a foreign collision
-  // on a current name is refused upstream in installSkills — so there is NEVER a blind
-  // name-match delete of a live skill name here (the H12 data-loss root cause). The old
-  // `: currentSkills` fallback did exactly that and is gone.
+  // Current-set dirs are cleared+rewritten by installSkillDir ONLY after installSkills has
+  // proven them ours by content (isForeignSkillDir -> ownedByManifest, or the skill-meta.json
+  // marker); one it cannot prove is refused there and never reaches installSkillDir. So there
+  // is NEVER a blind name-match delete of a live skill name (the H12 data-loss root cause).
+  // The old `: currentSkills` fallback did exactly that and is gone.
   const owned = safeSkillNames(manifest ? manifest.skills : []);
   let cleaned = 0;
   for (const s of [...owned, ...RETIRED_SKILL_NAMES]) {
-    // A current-set dir is cleared and rewritten by installSkillDir anyway; only an ORPHAN needs
-    // the ownership proof (item 7). RETIRED names are CoalMine-only coinages, the named exception.
+    // A current-set dir is not touched here: installSkills has already proven it ours by content
+    // or refused it (R18), and installSkillDir rewrites only what passed. An ORPHAN needs the proof
+    // below (item 7). RETIRED names are CoalMine-only coinages, the named exception.
     if (current.includes(s)) continue;
     const dir = path.join(destDir, s);
     try {
@@ -669,8 +673,13 @@ function installSkills(dest, skills, shared, root = dest) {
   // otherwise clear-and-write it, destroying the user's data (checks.md:15).
   const toInstall = [];
   for (const s of skills) {
-    if (isForeignSkillDir(dest, s, manifestSkills)) {
-      console.warn(`  [refused] ${path.join(dest, s)} holds non-CoalMine files — skipped to protect it (remove it or install elsewhere)`);
+    if (isForeignSkillDir(dest, s, manifestSkills, manifest)) {
+      // Two different truths: a folder the manifest names whose contents differ from what CoalMine
+      // wrote (the user edited a file or added one) vs a folder that is simply not CoalMine's.
+      const named = manifestSkills && manifestSkills.includes(s);
+      console.warn(named
+        ? `  [refused] ${path.join(dest, s)}: the manifest names it but its contents differ from what CoalMine wrote (an edited, added or unrecorded file) — skipped to protect it (move your changes aside or remove the folder, then re-install)`
+        : `  [refused] ${path.join(dest, s)} holds non-CoalMine files — skipped to protect it (remove it or install elsewhere)`);
       process.exitCode = 1;
     } else {
       toInstall.push(s);

@@ -836,3 +836,57 @@ test('CWK-137: a copilot-instructions.md symlink to a home dotfile is REFUSED --
   assert.notEqual(res.status, 0, `a refused write must fail loud:\n${res.stdout}${res.stderr}`);
   assert.equal(fs.readFileSync(bashrc, 'utf8'), SECRET, 'the fake ~/.bashrc is untouched');
 });
+
+// R18 / CodeRabbit PR 36 (install.mjs:618): the item-7 proof covered ORPHANS only. A manifest that names a
+// CURRENT skill (rot-canary) let isForeignSkillDir return false and installSkillDir clear the folder, so a cloned
+// repo's planted manifest, or a user's own file added inside an installed skill, was deleted without a word.
+const CURRENT_SKILL = 'rot-canary';
+
+test('R18: a planted manifest naming a CURRENT skill over foreign content keeps the content and reports the refusal', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-planted-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, CURRENT_SKILL), { recursive: true });
+    fs.writeFileSync(path.join(target, CURRENT_SKILL, 'notes.txt'), 'the users own data', 'utf8');
+    plantManifestNaming(target, [CURRENT_SKILL]);
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'notes.txt')), 'the foreign content survives the install');
+    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/, 'and the refusal is reported');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18: a file the user added inside an installed skill survives a re-install, and the message says the folder was EDITED, not foreign', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-edited-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'the added file survives the re-install');
+    const out = res.stdout + res.stderr;
+    assert.match(out, /\[refused\].*rot-canary/, 'the refusal is reported');
+    assert.match(out, /differ from what CoalMine wrote/, 'and says the contents were edited');
+    assert.doesNotMatch(out, /rot-canary holds non-CoalMine files/, 'not the foreign-folder wording, which is false here');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18: a real earlier install (the manifest hashes match) re-installs cleanly', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-reinstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'first install');
+    const res = runInstall(target, proj);
+    assert.equal(res.status, 0, `re-install must pass:\n${res.stdout}${res.stderr}`);
+    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/, 'nothing is refused');
+    assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'SKILL.md')), 'and the skill is there');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
