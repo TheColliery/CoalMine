@@ -13,9 +13,11 @@ permissions:
 # verify/test run. Space-separated shell globs; an adopting room edits this line only.
 # NOTE the asymmetry with codeql.yml on purpose -- a SHIPPED markdown artifact
 # (skills/**/SKILL.md, commands/*.md) MUST run CI, because verify.mjs checks dist-sync.
-# Only these NON-shipped root docs are exempt.
+# Only a root file NO gate reads is exempt: verify.mjs reads README.md, CONTRIBUTING.md, SECURITY.md and
+# PRIVACY.md (the pointer gate's DEFAULT_SURFACE_PLAN rows) and CHANGELOG.md (dist-changelog.mjs), and it
+# declares LICENSE out. A test (r14-fixes.test.mjs, B-u1-16) derives that set and fails if one is listed here.
 env:
-  DOCS_GLOBS: "CHANGELOG.md CONTRIBUTING.md PRIVACY.md SECURITY.md LICENSE"
+  DOCS_GLOBS: "LICENSE"
 
 # cancel-in-progress: TRUE -- ci.yml only reads, tests and compares; it publishes nothing and
 # touches no external state, so a superseded run has nothing to leave half-done.
@@ -218,7 +220,7 @@ jobs:
             {
               echo "### all-green: NO SUITE RAN -- and this is not a passing analysis"
               echo ""
-              echo "Every changed path is in this workflow's \`DOCS_GLOBS\` (non-shipped root docs),"
+              echo "Every changed path is in this workflow's \`DOCS_GLOBS\` (root files no gate reads),"
               echo "so the \`gate\` matrix was deliberately skipped. **Nothing was verified or tested.**"
               echo ""
               echo "This check reports success so the branch ruleset that requires \`all-green\` is"

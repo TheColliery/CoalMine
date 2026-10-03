@@ -1,7 +1,7 @@
 // R14 BUILD part A, ruling item 9 (the code lines): one red-first test per row that has an observable.
 // Rows: B-u2-6/7 (install/verify argv), B-u2-8 (compareAux by path), B-u1-7 (+B-u2-15) fragments vs the
 // project-relative path, B-u1-8 (STANDARDS.md scanned), B-u1-11/B-u3-7 (the ask directive names a real way
-// to save), B-u1-15 (Cursor wrapper forwards systemMessage), B-u1-16 (README not in CI DOCS_GLOBS),
+// to save), B-u1-15 (Cursor wrapper forwards systemMessage), B-u1-16 (no file verify.mjs reads is in CI DOCS_GLOBS),
 // B-u1-18 + B-u2-18 (help text), B-u2-16 (entry guards through a link). The dist-changelog tag filter and the
 // publisher's body rule have their tests beside their modules.
 import { test } from 'node:test';
@@ -12,6 +12,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { spawnSandboxed } from './test-sandbox.mjs';
+import { DEFAULT_SURFACE_PLAN } from './pointer-check.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INSTALL = path.join(repo, 'scripts', 'install.mjs');
@@ -141,11 +142,17 @@ test('the Cursor stop wrapper forwards a systemMessage-only output as the follow
 });
 
 // --- B-u1-16 / B-u1-18 / B-u2-18 -----------------------------------------------------------------------
-test('ci.yml does not skip CI for a README-only change while verify.mjs reads the README (B-u1-16)', () => {
+test('ci.yml skips CI only for root files no gate reads: every file verify.mjs reads is outside DOCS_GLOBS (B-u1-16, CodeRabbit PR 36 ci.yml:18)', () => {
   const ci = fs.readFileSync(path.join(repo, '.github', 'workflows', 'ci.yml'), 'utf8');
   const m = /DOCS_GLOBS: "([^"]*)"/.exec(ci);
   assert.ok(m, 'DOCS_GLOBS found');
-  assert.ok(!m[1].split(/\s+/).includes('README.md'), 'README.md is not a docs-only (skip) path');
+  const skipped = m[1].split(/\s+/).filter(Boolean);
+  // DERIVED, not named: every single-file row of the pointer gate's surface plan, plus CHANGELOG.md, which
+  // dist-changelog.mjs parses. A new file added to the plan joins this set by construction.
+  const read = new Set(DEFAULT_SURFACE_PLAN.filter((r) => !r.dir).map((r) => r.root));
+  read.add('CHANGELOG.md');
+  assert.ok(read.size >= 5, 'the derived set is not vacuous: ' + [...read].join(', '));
+  for (const file of read) assert.ok(!skipped.includes(file), file + ' is read by verify.mjs, so a change to it must run the gate (it is in DOCS_GLOBS)');
 });
 
 test('configure --help: every flag its examples use is a registered flag, and updateCheckDays documents 1-365 (B-u2-18, B-u1-18)', (t) => {
