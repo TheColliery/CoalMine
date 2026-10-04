@@ -743,3 +743,45 @@ test('collectSurfaces + checkPointers: a citation reachable ONLY through the scr
   assert.ok(!narrowedFindings.some((f) => f.msg.includes('ghost-target.md')),
     'the same citation that FAILed under the default plan must produce no finding at all under the narrowed one');
 });
+
+// R19 (ONE FLOCK ONE COLOR with CoalFace 586e0cd): only RELEASED CHANGELOG entries are history. The plan row keeps
+// historyOnly for the file, and collectSurfaces splits it at the SECOND '## [' heading.
+const TICK = String.fromCharCode(96);
+const cite = (p) => 'see ' + TICK + p + TICK;
+const chlogIo = (text) => ({ join: (a, b) => a + '/' + b, rel: (x) => x, read: () => text, walkMd: () => [], walkSrc: () => [] });
+const chlogPlan = DEFAULT_SURFACE_PLAN.filter((r) => r.root === 'CHANGELOG.md');
+const chlogText = (topPath, oldPath) => ['# Changelog', '', '## [Unreleased]', '', cite(topPath), '', '## [1.0.0] - 2026-01-01', '', cite(oldPath)].join(NL);
+const failsFor = (surfaces) => checkPointers({ ...base, surfaces, resolve: resolverFor([]) }).filter((x) => x.level === 'FAIL');
+
+test('R19: collectSurfaces splits CHANGELOG at the second heading -- the top entry is ordinary, released entries are historyOnly', () => {
+  assert.equal(chlogPlan.length, 1, 'the plan still carries the CHANGELOG row');
+  const surfaces = collectSurfaces('r', chlogPlan, chlogIo(chlogText('scripts/top.mjs', 'scripts/old.mjs')));
+  assert.equal(surfaces.length, 2);
+  assert.ok(surfaces[0].text.includes('scripts/top.mjs') && !surfaces[0].text.includes('scripts/old.mjs'), 'the preamble and top entry are the first surface');
+  assert.ok(!surfaces[0].historyOnly, 'the top entry is NOT history');
+  assert.ok(surfaces[1].text.startsWith('## [1.0.0]') && surfaces[1].text.includes('scripts/old.mjs'), 'released entries are the second surface');
+  assert.equal(surfaces[1].historyOnly, true, 'released entries ARE history');
+});
+
+test('R19: a CHANGELOG with one heading or none is one ordinary surface; an unreadable one keeps its null text', () => {
+  const one = collectSurfaces('r', chlogPlan, chlogIo('# C' + NL + '## [Unreleased]' + NL + 'x'));
+  assert.equal(one.length, 1);
+  assert.ok(!one[0].historyOnly);
+  const none = collectSurfaces('r', chlogPlan, chlogIo('# C only'));
+  assert.equal(none.length, 1);
+  assert.ok(!none[0].historyOnly);
+  const gone = collectSurfaces('r', chlogPlan, chlogIo(null));
+  assert.equal(gone.length, 1);
+  assert.equal(gone[0].text, null);
+});
+
+test('R19: a dead path in the TOP entry FAILs, the same in a RELEASED entry does not, and an ordinary surface still FAILs (the widening mutant is killed)', () => {
+  const both = failsFor(collectSurfaces('r', chlogPlan, chlogIo(chlogText('scripts/ghost-top.mjs', 'scripts/ghost-old.mjs'))));
+  assert.equal(both.length, 1, 'only the top entry fires');
+  assert.ok(both[0].msg.includes('scripts/ghost-top.mjs') && both[0].msg.includes('does not resolve'));
+  assert.ok(!both[0].msg.includes('ghost-old'), 'the released entry never fires');
+  // Killed mutants: (a) exempting the whole file passes the first line's finding away; (b) widening historyOnly to every
+  // surface passes this ordinary one away. Each is asserted by a FAIL that must be present.
+  const ordinary = failsFor([{ label: 'README.md', text: cite('scripts/ghost-readme.mjs') }]);
+  assert.equal(ordinary.length, 1, 'an ordinary surface is never exempt');
+});

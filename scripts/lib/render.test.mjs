@@ -444,6 +444,73 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
   }
 });
 
+// R19: the CHANGELOG's TOP entry is checked in full by the REAL gate (ONE FLOCK ONE COLOR with CoalFace 586e0cd). Two
+// shapes, and only the second passed before: a new [Unreleased] entry citing a gitignored scratchpad/ path (the gitignored-root
+// check already covered every entry) and one citing a path that resolves to nothing (the resolve check was skipped for the
+// whole file). A released entry citing the same dead path stays exempt -- history is never fixed forward.
+test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FAILs the real gate, the same path in a released entry does not', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-chlog-'));
+  const TICK = String.fromCharCode(96);
+  try {
+    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+      const src = path.join(repo, d);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
+    }
+    for (const d of ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'PRIVACY.md', 'CHANGELOG.md']) {
+      fs.copyFileSync(path.join(repo, d), path.join(tmp, d));
+    }
+    fs.writeFileSync(path.join(tmp, '.gitignore'), 'scratchpad/' + NL);
+    fs.mkdirSync(path.join(tmp, 'scratchpad'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'scratchpad', 'probe.md'), 'a throwaway probe' + NL);
+    const git = (args) => {
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
+      return r.stdout;
+    };
+    git(['init', '-q', '-b', 'main']);
+    git(['config', 'user.email', 'test@test.invalid']);
+    git(['config', 'user.name', 'Test']);
+    git(['config', 'commit.gpgsign', 'false']);
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', 'baseline']);
+    const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
+    const chlog = path.join(tmp, 'CHANGELOG.md');
+    const base = fs.readFileSync(chlog, 'utf8');
+    const second = base.indexOf(NL + '## [', base.indexOf('## [Unreleased]') + 1);
+    assert.ok(second > 0, 'the live CHANGELOG has a top entry and at least one released entry');
+    const lines = (r) => (r.stdout.match(/^\s*FAIL CHANGELOG\.md.*$/gm) || []);
+    assert.deepEqual(lines(run()), [], 'a clean copy has no CHANGELOG finding -- otherwise the plants below prove nothing');
+
+    const cite = (p) => NL + 'Planted: see ' + TICK + p + TICK + '.' + NL;
+    const withTop = (p) => base.replace('## [Unreleased]' + NL, () => '## [Unreleased]' + NL + cite(p));
+    const afterHeading = base.indexOf(NL, second + 1); // end of the SECOND heading line: the plant lands INSIDE the released entry
+    const withReleased = (p) => base.slice(0, afterHeading) + NL + cite(p) + base.slice(afterHeading);
+
+    // shape 2: the dead path, top entry. Red before R19.
+    fs.writeFileSync(chlog, withTop('scripts/lib/no-such-module.mjs'));
+    git(['add', '-A']);
+    const top = lines(run());
+    assert.equal(top.length, 1, 'the top entry citing a path that resolves to nothing must FAIL, got: ' + JSON.stringify(top));
+    assert.ok(top[0].includes('scripts/lib/no-such-module.mjs') && top[0].includes('does not resolve'));
+
+    // shape 1: a gitignored scratchpad path, top entry. Held before R19 too.
+    fs.writeFileSync(chlog, withTop('scratchpad/probe.md'));
+    git(['add', '-A']);
+    const ign = lines(run());
+    assert.equal(ign.length, 1, 'the top entry citing a gitignored path must FAIL, got: ' + JSON.stringify(ign));
+    assert.ok(ign[0].includes('gitignored'));
+
+    // released history: the same dead path is NOT a finding.
+    fs.writeFileSync(chlog, withReleased('scripts/lib/no-such-module.mjs'));
+    git(['add', '-A']);
+    assert.deepEqual(lines(run()), [], 'a released entry citing a dead path stays exempt');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 // verify.mjs 2.11 pointers, MEDIUM-2 (CWK-079 findings-back round 2): `looksPathShaped`
 // gates DISCOVERY only, never JUDGEMENT -- an extensionless citation under a gitignored
 // root is not exempt from the check, it is exempt only from contributing its OWN root

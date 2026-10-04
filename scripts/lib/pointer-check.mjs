@@ -173,7 +173,8 @@
 // means `root` is a directory to walk; its absence means `root` is one exact file.
 // `historyOnly: true` marks a surface `checkPointers` binds to the gitignored-root case
 // only, never the ordinary resolve check (CHANGELOG.md — published history is never
-// fixed forward).
+// fixed forward). `collectSurfaces` applies it to RELEASED entries only (from the second
+// `## [` heading on); the top entry and any preamble are ordinary surfaces (R19).
 export const DEFAULT_SURFACE_PLAN = [
   { kind: 'md', root: 'skills', dir: true,
     why: 'every canary body is ship-text a user reads' },
@@ -204,8 +205,19 @@ export const DEFAULT_SURFACE_PLAN = [
   { kind: 'raw', root: '.github/ISSUE_TEMPLATE', dir: true, ext: /[.]yml$/,
     why: 'user-facing prose, unlike workflows/, which is CI machinery and stays declared out' },
   { kind: 'raw', root: 'CHANGELOG.md', historyOnly: true,
-    why: 'published history is never fixed forward -- a path correct when the entry was written is not a defect now, but a gitignored citation was never correct on any day' },
+    why: 'RELEASED entries are published history, never fixed forward -- a path correct when the entry was written is not a defect now, but a gitignored citation was never correct on any day; the TOP entry (the text the next Release body is built from) is checked in full' },
 ];
+
+// Index of the nth line starting with `## [` (a CHANGELOG entry heading), or -1.
+function nthHeading(text, n) {
+  const re = /^## \[/gm;
+  let m;
+  for (let i = 0; i < n; i++) {
+    m = re.exec(text);
+    if (!m) return -1;
+  }
+  return m.index;
+}
 
 // COLLECT — plan-driven, DI'd fs so this module stays pure (it imports nothing today and
 // must not start). `io.join`/`io.walkMd`/`io.walkSrc`/`io.read`/`io.rel` are the SAME
@@ -233,7 +245,20 @@ export function collectSurfaces(repo, plan, io) {
         }
       }
     } else {
-      const s = { label: row.root, text: io.read(io.join(repo, row.root)) };
+      const text = io.read(io.join(repo, row.root));
+      if (row.historyOnly && typeof text === 'string') {
+        // R19 (ONE FLOCK ONE COLOR with CoalFace 586e0cd): only RELEASED entries are history. Split at the SECOND
+        // `## [` heading: the preamble and the top entry (`[Unreleased]`, or the version being released -- the text
+        // the next Release body is built from) are an ordinary surface; everything from the second heading on stays
+        // historyOnly. NAMED DIVERGENCE from CoalFace: its top entry skips the resolve check (historyResolve) because a
+        // Removed line may name a file the release deleted; this room checks the top entry in full, so a dead path in a
+        // new entry fails before it ships. A release whose top entry names a deleted file is the case to watch.
+        const second = nthHeading(text, 2);
+        if (second === -1) surfaces.push({ label: row.root, text });
+        else surfaces.push({ label: row.root, text: text.slice(0, second) }, { label: row.root, text: text.slice(second), historyOnly: true });
+        continue;
+      }
+      const s = { label: row.root, text };
       if (row.historyOnly) s.historyOnly = true;
       surfaces.push(s);
     }
