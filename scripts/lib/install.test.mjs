@@ -1134,3 +1134,67 @@ test('R19 LOW-D: uninstall keeps it with no manifest, and with a manifest that n
     fs.rmSync(proj, { recursive: true, force: true });
   }
 });
+
+// R20 LOW-E: a skill folder the installer cannot read is kept safely, but the message named a wrong cause ("contents
+// differ" when the manifest named it, "no skill-meta.json marker and no recorded hashes" when not). The read failure
+// is made on every volume the house way: a --require preload patches the node:fs default export in the CHILD
+// (chmod is a no-op on NTFS), so install.mjs's readdirSync of that one folder throws EACCES.
+function runInstallUnreadable(target, cwd, unreadableDir) {
+  const preload = path.join(cwd, 'eacces-preload.cjs');
+  fs.writeFileSync(preload, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const real = fs.readdirSync;",
+    "const bad = path.resolve(process.env.R20_EACCES_DIR);",
+    "fs.readdirSync = function (p, ...rest) {",
+    "  if (path.resolve(String(p)) === bad) { const e = new Error('EACCES: permission denied, scandir'); e.code = 'EACCES'; throw e; }",
+    "  return real.call(this, p, ...rest);",
+    "};",
+  ].join('\n'), 'utf8');
+  const saved = { opts: process.env.NODE_OPTIONS, dir: process.env.R20_EACCES_DIR };
+  process.env.NODE_OPTIONS = '--require "' + preload.split(path.sep).join('/') + '"';
+  process.env.R20_EACCES_DIR = unreadableDir;
+  try { return runInstall(target, cwd); }
+  finally {
+    if (saved.opts === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved.opts;
+    if (saved.dir === undefined) delete process.env.R20_EACCES_DIR; else process.env.R20_EACCES_DIR = saved.dir;
+  }
+}
+
+test('R20 LOW-E: an unreadable skill folder the manifest names is refused for the true reason, and nothing is changed', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowe-named-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    const before = fs.readdirSync(dir).sort();
+    const r = runInstallUnreadable(target, proj, dir);
+    const out = r.stdout + r.stderr;
+    assert.notEqual(r.status, 0, 'refused loudly');
+    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.doesNotMatch(out, /contents differ/, 'and does not blame its contents');
+    assert.doesNotMatch(out, /nothing proves/, 'nor the missing proof');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R20 LOW-E: an unreadable skill folder with no manifest is refused for the true reason too, even though it holds the marker', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowe-unnamed-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skill-meta.json'), '{}', 'utf8');
+    fs.writeFileSync(path.join(dir, 'mine.txt'), 'user file', 'utf8');
+    const r = runInstallUnreadable(target, proj, dir);
+    const out = r.stdout + r.stderr;
+    assert.notEqual(r.status, 0, 'refused loudly');
+    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.doesNotMatch(out, /nothing proves/, 'it does not claim the marker is missing');
+    assert.ok(fs.existsSync(path.join(dir, 'mine.txt')), 'the user file is untouched');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});

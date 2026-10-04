@@ -563,19 +563,25 @@ function safeSkillNames(names) {
 // R19 LOW-D: only "not found" (ENOENT) means absent. A plain FILE at the skill's path (ENOTDIR), an unreadable folder
 // (EACCES) or any other error is the user's data we cannot see into, so it is refused and kept -- it used to read as
 // "absent", and install then deleted the file with exit 0 and no message.
-function isForeignSkillDir(destDir, skillName, manifestSkills, manifest = null) {
+// R20 LOW-E: the verdict carries its reason. foreignReason returns null (absent or provably ours: install may write),
+// 'unreadable' (the folder could not be listed: nothing is known about it, so the message must not blame its contents),
+// or 'foreign' (everything else refused: a file, a link, or content nothing proves). isForeignSkillDir is the boolean.
+function foreignReason(destDir, skillName, manifestSkills, manifest = null) {
   const p = path.join(destDir, skillName);
   let st;
   try { st = fs.lstatSync(p); }
-  catch (e) { return !(e && e.code === 'ENOENT'); }              // absent → nothing to protect; any other error → refuse
-  if (!st.isDirectory() && !st.isSymbolicLink()) return true;    // a plain file (or other non-folder) is never ours to clear
+  catch (e) { return e && e.code === 'ENOENT' ? null : 'foreign'; } // absent → nothing to protect; any other error → refuse
+  if (!st.isDirectory() && !st.isSymbolicLink()) return 'foreign';   // a plain file (or other non-folder) is never ours to clear
   let entries;
   try { entries = fs.readdirSync(p); }
-  catch { return true; }                                         // dangling link, unreadable folder: cannot be seen into → refuse
-  if (entries.length === 0) return false;                        // empty dir → no user data
-  if (manifestSkills && manifestSkills.includes(skillName)) return !ownedByManifest(destDir, skillName, manifest); // named AND proven by content
-  if (entries.includes('skill-meta.json')) return false;         // our own pre-manifest marker
-  return true;                                                   // has content, none of it ours → foreign
+  catch { return 'unreadable'; }                                     // dangling link, unreadable folder: cannot be seen into → refuse
+  if (entries.length === 0) return null;                             // empty dir → no user data
+  if (manifestSkills && manifestSkills.includes(skillName)) return ownedByManifest(destDir, skillName, manifest) ? null : 'foreign'; // named AND proven by content
+  if (entries.includes('skill-meta.json')) return null;             // our own pre-manifest marker
+  return 'foreign';                                                  // has content, none of it ours → foreign
+}
+function isForeignSkillDir(destDir, skillName, manifestSkills, manifest = null) {
+  return foreignReason(destDir, skillName, manifestSkills, manifest) !== null;
 }
 
 // Skill dirs an earlier CoalMine installed under a now-retired name. A very old
@@ -693,9 +699,10 @@ function installSkills(dest, skills, shared, root = dest) {
   const toInstall = [];
   const carried = { skills: [], hashes: {} };
   for (const s of skills) {
-    if (isForeignSkillDir(dest, s, manifestSkills, manifest)) {
-      // Four different truths, four wordings: a plain file (R19), a link, a folder the manifest names whose contents
-      // differ from what CoalMine wrote, and a folder nothing proves is CoalMine's (no marker, no recorded hashes).
+    const why = foreignReason(dest, s, manifestSkills, manifest);
+    if (why !== null) {
+      // Five different truths, five wordings: a plain file (R19), a link, a folder that could not be read (R20), a folder
+      // the manifest names whose contents differ from what CoalMine wrote, and a folder nothing proves is CoalMine's.
       const named = !!(manifestSkills && manifestSkills.includes(s));
       // LOW-A: a manifest written before per-file hashes (no `hashes` object) names the folder but can never prove it.
       const hashed = !!(manifest && manifest.hashes && typeof manifest.hashes === 'object');
@@ -707,6 +714,8 @@ function installSkills(dest, skills, shared, root = dest) {
         ? `  [refused] ${p}: it is a file, not a folder CoalMine wrote — skipped so it is not deleted (move or remove it, then re-install)`
         : isLink
         ? `  [refused] ${p}: it is a link (symlink or junction), not a folder CoalMine wrote — skipped so nothing it points at is touched (remove the link, then re-install)`
+        : why === 'unreadable'
+        ? `  [refused] ${p}: it could not be read (permissions or a read error), so nothing was changed — skipped to protect it (fix the folder's permissions, then re-install)`
         : named && hashed
           ? `  [refused] ${p}: the manifest names it but its contents differ from what CoalMine wrote (a changed, added or unrecorded file) — skipped to protect it (move your changes aside or remove the folder, then re-install)`
           : `  [refused] ${p}: nothing proves it is CoalMine's (no skill-meta.json marker and no recorded file hashes for it) — skipped to protect it (remove or rename the folder, then re-install; moving only some files out of it does not unblock it)`);
