@@ -560,10 +560,18 @@ function safeSkillNames(names) {
 //   • it carries our own skill-meta.json → a pre-manifest CoalMine install.
 // Anything else is a FOREIGN dir that merely shares a skill's name — refuse it, so
 // a name collision can never cost the user their files (the H12 root cause).
+// R19 LOW-D: only "not found" (ENOENT) means absent. A plain FILE at the skill's path (ENOTDIR), an unreadable folder
+// (EACCES) or any other error is the user's data we cannot see into, so it is refused and kept -- it used to read as
+// "absent", and install then deleted the file with exit 0 and no message.
 function isForeignSkillDir(destDir, skillName, manifestSkills, manifest = null) {
+  const p = path.join(destDir, skillName);
+  let st;
+  try { st = fs.lstatSync(p); }
+  catch (e) { return !(e && e.code === 'ENOENT'); }              // absent → nothing to protect; any other error → refuse
+  if (!st.isDirectory() && !st.isSymbolicLink()) return true;    // a plain file (or other non-folder) is never ours to clear
   let entries;
-  try { entries = fs.readdirSync(path.join(destDir, skillName)); }
-  catch { return false; }                                        // absent/unreadable → nothing to protect
+  try { entries = fs.readdirSync(p); }
+  catch { return true; }                                         // dangling link, unreadable folder: cannot be seen into → refuse
   if (entries.length === 0) return false;                        // empty dir → no user data
   if (manifestSkills && manifestSkills.includes(skillName)) return !ownedByManifest(destDir, skillName, manifest); // named AND proven by content
   if (entries.includes('skill-meta.json')) return false;         // our own pre-manifest marker
@@ -686,23 +694,24 @@ function installSkills(dest, skills, shared, root = dest) {
   const carried = { skills: [], hashes: {} };
   for (const s of skills) {
     if (isForeignSkillDir(dest, s, manifestSkills, manifest)) {
-      // Three different truths, three wordings: a link, a folder the manifest names whose contents differ
-      // from what CoalMine wrote, and a folder that is simply not CoalMine's.
+      // Four different truths, four wordings: a plain file (R19), a link, a folder the manifest names whose contents
+      // differ from what CoalMine wrote, and a folder nothing proves is CoalMine's (no marker, no recorded hashes).
       const named = !!(manifestSkills && manifestSkills.includes(s));
       // LOW-A: a manifest written before per-file hashes (no `hashes` object) names the folder but can never prove it.
       const hashed = !!(manifest && manifest.hashes && typeof manifest.hashes === 'object');
       const p = path.join(dest, s);
       let isLink = false;
-      try { isLink = fs.lstatSync(p).isSymbolicLink(); } catch { /* absent: not a link */ }
-      console.warn(isLink
+      let isFile = false;
+      try { const st = fs.lstatSync(p); isLink = st.isSymbolicLink(); isFile = !st.isDirectory() && !isLink; } catch { /* unreadable: neither */ }
+      console.warn(isFile
+        ? `  [refused] ${p}: it is a file, not a folder CoalMine wrote — skipped so it is not deleted (move or remove it, then re-install)`
+        : isLink
         ? `  [refused] ${p}: it is a link (symlink or junction), not a folder CoalMine wrote — skipped so nothing it points at is touched (remove the link, then re-install)`
-        : named && !hashed
-          ? `  [refused] ${p}: the manifest names it but records no file hashes and the folder has no skill-meta.json, so nothing proves it is CoalMine's — skipped to protect it (remove or rename the folder, then re-install; moving files out of it does not unblock it)`
-        : named
+        : named && hashed
           ? `  [refused] ${p}: the manifest names it but its contents differ from what CoalMine wrote (a changed, added or unrecorded file) — skipped to protect it (move your changes aside or remove the folder, then re-install)`
-          : `  [refused] ${p} holds non-CoalMine files — skipped to protect it (remove it or install elsewhere)`);
+          : `  [refused] ${p}: nothing proves it is CoalMine's (no skill-meta.json marker and no recorded file hashes for it) — skipped to protect it (remove or rename the folder, then re-install; moving only some files out of it does not unblock it)`);
       process.exitCode = 1;
-      if (named && hashed) {
+      if (named && hashed && !isFile) {
         carried.skills.push(s);
         for (const [k, v] of Object.entries((manifest && manifest.hashes) || {})) if (k.startsWith(s + '/')) carried.hashes[k] = v;
       }
