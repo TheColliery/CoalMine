@@ -12,15 +12,24 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'release-notes.mjs');
 const LIB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lib');
 
+// F-R19-2 (UMB-427): a spawned child gets an EXPLICIT environment, never the parent's. RELEASE_TAG, PREVIOUS_STABLE_TAG, LATEST_TAG,
+// LAUNCH_FORM, GITHUB_REF_NAME and the rest of an Actions run's variables change what these scripts do, so a developer's exported
+// RELEASE_TAG (or a CI run's own) must not reach the child. Only what a node child needs to start is passed through, plus the test's own.
+const BASE_ENV_KEYS = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE'];
+const cleanEnv = (extra = {}) => ({ ...Object.fromEntries(BASE_ENV_KEYS.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])), ...extra });
+const made = [];
+test.after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+
 function scratchWithLib() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-notes-test-'));
+  made.push(dir);
   fs.mkdirSync(path.join(dir, 'scripts', 'lib'), { recursive: true });
   fs.copyFileSync(path.join(LIB_DIR, 'release-shape.mjs'), path.join(dir, 'scripts', 'lib', 'release-shape.mjs'));
   return dir;
 }
 
-function run(cwd, env) {
-  return spawnSync(process.execPath, [SCRIPT], { cwd, encoding: 'utf8', timeout: 30000, env: { ...process.env, ...env } });
+function run(cwd, env, args = []) {
+  return spawnSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: 'utf8', timeout: 30000, env: cleanEnv(env) });
 }
 
 test('release-notes.mjs: writes release-title.txt + release-body.md derived from CHANGELOG.md, exit 0', () => {
@@ -30,7 +39,6 @@ test('release-notes.mjs: writes release-title.txt + release-body.md derived from
   assert.equal(res.status, 0, res.stderr);
   assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'v1.2.0 - a test-only CLI wiring proof');
   assert.equal(fs.readFileSync(path.join(dir, 'release-body.md'), 'utf8'), 'A test-only CLI wiring proof.\n\n### Added\n- x\n');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('release-notes.mjs: a non-vX.Y.Z ref (e.g. a branch name from workflow_dispatch) fails loud, exit 1, no files written', () => {
@@ -40,7 +48,6 @@ test('release-notes.mjs: a non-vX.Y.Z ref (e.g. a branch name from workflow_disp
   assert.equal(res.status, 1);
   assert.match(res.stderr, /not a bare vX\.Y\.Z tag/);
   assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('release-notes.mjs: CHANGELOG.md missing fails loud, exit 1, names the problem', () => {
@@ -48,7 +55,6 @@ test('release-notes.mjs: CHANGELOG.md missing fails loud, exit 1, names the prob
   const res = run(dir, { GITHUB_REF_NAME: 'v1.0.0' });
   assert.equal(res.status, 1);
   assert.match(res.stderr, /could not read CHANGELOG\.md/);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 // UMB-182: the workflow passes PREVIOUS_STABLE_TAG (git describe) and LATEST_TAG (the repo's current Latest).
@@ -63,7 +69,6 @@ test('release-notes.mjs: release-latest.txt is "true" with no Latest yet and "fa
   res = run(dir, { GITHUB_REF_NAME: 'v1.2.0', PREVIOUS_STABLE_TAG: 'v1.1.0', LATEST_TAG: 'v2.0.0' });
   assert.equal(res.status, 0, res.stderr);
   assert.equal(fs.readFileSync(path.join(dir, 'release-latest.txt'), 'utf8'), 'false');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('release-notes.mjs: an entry not followed by the previous stable tag heading fails loud, no files written (C-2)', () => {
@@ -73,7 +78,6 @@ test('release-notes.mjs: an entry not followed by the previous stable tag headin
   assert.equal(res.status, 1);
   assert.match(res.stderr, /v1\.1\.5/);
   assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('release-notes.mjs: a PREVIOUS_STABLE_TAG or LATEST_TAG that is not a bare vX.Y.Z fails loud', () => {
@@ -85,7 +89,6 @@ test('release-notes.mjs: a PREVIOUS_STABLE_TAG or LATEST_TAG that is not a bare 
   res = run(dir, { GITHUB_REF_NAME: 'v1.2.0', PREVIOUS_STABLE_TAG: 'v1.1.0', LATEST_TAG: 'latest' });
   assert.equal(res.status, 1);
   assert.match(res.stderr, /LATEST_TAG/);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('release-notes.mjs: a tag/entry version mismatch fails loud rather than writing a wrong title', () => {
@@ -95,7 +98,6 @@ test('release-notes.mjs: a tag/entry version mismatch fails loud rather than wri
   assert.equal(res.status, 1);
   assert.match(res.stderr, /pushed tag is v1\.0\.0/);
   assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 // UMB-182 posting path for a tag that already exists: a workflow_dispatch run sits on the DEFAULT BRANCH,
@@ -108,7 +110,6 @@ test('release-notes.mjs: RELEASE_TAG wins over GITHUB_REF_NAME, so a dispatch ru
   assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'v1.2.0 - new');
   assert.equal(fs.readFileSync(path.join(dir, 'release-latest.txt'), 'utf8'), 'true');
   assert.equal(fs.readFileSync(path.join(dir, 'release-prerelease.txt'), 'utf8'), 'false');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('release-notes.mjs: a RELEASE_TAG that is not a bare vX.Y.Z fails loud, even when it looks like shell (the input is untrusted text)', () => {
@@ -120,7 +121,6 @@ test('release-notes.mjs: a RELEASE_TAG that is not a bare vX.Y.Z fails loud, eve
     assert.match(res.stderr, /not a bare vX\.Y\.Z tag/, bad);
   }
   assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 const LAUNCH = '## [0.1.0-beta.1] - 2026-09-21\n\nThe first public beta.\n\n### Added\n- engine\n';
@@ -133,7 +133,6 @@ test('release-notes.mjs: LAUNCH_FORM=true derives the one pre-release launch Rel
   assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'v0.1.0-beta.1 - the first public beta');
   assert.equal(fs.readFileSync(path.join(dir, 'release-latest.txt'), 'utf8'), 'false', 'a pre-release is never Latest, even when the repo has no Latest yet');
   assert.equal(fs.readFileSync(path.join(dir, 'release-prerelease.txt'), 'utf8'), 'true');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('release-notes.mjs: a hyphenated tag without LAUNCH_FORM, and LAUNCH_FORM on a stable tag, both fail loud (a launch form is one pre-release tag, said out loud)', () => {
@@ -147,5 +146,77 @@ test('release-notes.mjs: a hyphenated tag without LAUNCH_FORM, and LAUNCH_FORM o
   assert.equal(res.status, 1);
   assert.match(res.stderr, /launch form/);
   assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
-  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// UMB-392: a lead paragraph under the summary line rides into the body (right after the Lead, before the sections); the title stays the summary only.
+test('release-notes.mjs: a lead paragraph under the summary line is carried into release-body.md after the Lead -- RED before UMB-392', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '## [1.2.0] - 2026-10-03\n\nA short summary line.\n\nThe longer explanation, in a paragraph.\n\n### Added\n- x\n');
+  const res = run(dir, { GITHUB_REF_NAME: 'v1.2.0' });
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'v1.2.0 - a short summary line');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-body.md'), 'utf8'), 'A short summary line.\n\nThe longer explanation, in a paragraph.\n\n### Added\n- x\n');
+});
+
+// F-R19-2: the environment of the PARENT never reaches the child. An exported RELEASE_TAG, a launch-form flag and stale tags in the
+// parent must not change what the CLI derives (the witness: RELEASE_TAG=v9.9.9 turned the lead-paragraph test red).
+test('release-notes.mjs: the parent\'s RELEASE_TAG, PREVIOUS_STABLE_TAG, LATEST_TAG and LAUNCH_FORM never reach the child -- RED before F-R19-2', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '## [1.2.0] - 2026-10-03\n\nA short summary line.\n\n### Added\n- x\n');
+  const saved = {};
+  const leak = { RELEASE_TAG: 'v9.9.9', PREVIOUS_STABLE_TAG: 'v8.0.0', LATEST_TAG: 'v7.0.0', LAUNCH_FORM: 'true', GITHUB_REF_NAME: 'v6.6.6' };
+  for (const k of Object.keys(leak)) { saved[k] = process.env[k]; process.env[k] = leak[k]; }
+  try {
+    const res = run(dir, { GITHUB_REF_NAME: 'v1.2.0' });
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'v1.2.0 - a short summary line');
+    assert.equal(fs.readFileSync(path.join(dir, 'release-prerelease.txt'), 'utf8'), 'false', 'LAUNCH_FORM did not leak');
+  } finally {
+    for (const k of Object.keys(leak)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+});
+
+// UMB-433: the pre-tag check. "node scripts/release-notes.mjs --check" reads the TOP CHANGELOG entry (no tag needed, so it runs BEFORE the
+// tag) and fails a summary whose announcement title would overflow GitHub's 200-character ceiling; the band stays an advisory warning.
+const checkEntry = (summaryLen) => '## [1.2.0] - 2026-10-04\n\n' + 'Word '.repeat(Math.ceil(summaryLen / 5)).slice(0, summaryLen).trimEnd() + '.\n\n### Added\n- x\n';
+
+test('release-notes.mjs --check: a summary whose announcement title fits passes (exit 0) and prints what it checked', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), checkEntry(60));
+  const res = run(dir, {}, ['--check', '--repo', 'CoalBoard']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /release-notes --check: v1\.2\.0, announcement title "CoalBoard v1\.2\.0 - word/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false, 'a check writes no release file');
+});
+
+test('release-notes.mjs --check: a summary that overflows the 200-character ceiling FAILS by name, exit 1; one over the 75 band only warns and passes -- RED before UMB-433', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), checkEntry(192));
+  const bad = run(dir, {}, ['--check', '--repo', 'CoalBoard']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /release-title-cap: the announcement title "CoalBoard v1\.2\.0 - word/);
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), checkEntry(120));
+  const warn = run(dir, {}, ['--check', '--repo', 'CoalBoard']);
+  assert.equal(warn.status, 0, warn.stderr);
+  assert.match(warn.stdout, /WARNING release-title-band/);
+});
+
+test('release-notes.mjs --check: the repository name comes from --repo, else GITHUB_REPOSITORY; with neither it says so (exit 1); an unknown flag is exit 64', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), checkEntry(60));
+  assert.equal(run(dir, { GITHUB_REPOSITORY: 'TheColliery/CoalBoard' }, ['--check']).status, 0);
+  const none = run(dir, {}, ['--check']);
+  assert.equal(none.status, 1); assert.match(none.stderr, /cannot tell the repository name/);
+  const flag = run(dir, {}, ['--bogus']);
+  assert.equal(flag.status, 64); assert.match(flag.stderr, /usage:/);
+  assert.equal(run(dir, {}, ['-h']).status, 0);
+});
+
+test('release-notes.mjs (the derive step after the tag): an announcement overflow is a WARNING that names the way out and never blocks the Release', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), checkEntry(192));
+  const res = run(dir, { GITHUB_REF_NAME: 'v1.2.0', GITHUB_REPOSITORY: 'TheColliery/CoalBoard' });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /WARNING release-title-cap: the announcement title/);
+  assert.ok(fs.existsSync(path.join(dir, 'release-title.txt')), 'the Release is still derived');
 });

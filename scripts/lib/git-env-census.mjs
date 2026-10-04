@@ -72,11 +72,13 @@ function* matches(re, text) {
 // git spawn gives an EXPLICIT allowlist env (no GIT_* inherited), the property this census guards, but not the textual form
 // it accepts (gitEnv(...) alone), so it is blob-pinned instead (measured red without the pin: "carries no 'env:'"). Any edit or
 // re-sync that changes it makes the entry a finding again.
-// NAMED DIVERGENCE: scripts/release-notes.test.mjs is HELD at this room's own 8a527897, not adopted at canon a8f3ba69, because
-// a8f3ba69's env assertion ("nothing else but what node needs to start") fails on macOS (__CF_USER_TEXT_ENCODING, which the OS
-// injects into every child) and under coverage (NODE_V8_COVERAGE), the defect CoalBoard measured (CI run 37224469491, fixed at
-// ddffc82). 8a527897 is green against the new release-notes.mjs, plain and under NODE_V8_COVERAGE (11/11 both), and passes this
-// census as is, so it carries no pin. Re-sync it to the canon when the canon fixes that assertion.
+// NAMED DIVERGENCE: scripts/release-notes.test.mjs is HELD at the previous canon blob d7e299c4ff76bf163041ac678be317fbc49ce436
+// (canon 2bb0460), not adopted at canon a8f3ba69 (31e6b51). Only a8f3ba69 is the defect: its env assertion ("nothing else but
+// what node needs to start") fails on macOS (__CF_USER_TEXT_ENCODING, which the OS injects into every child) and under coverage
+// (NODE_V8_COVERAGE), as CoalBoard measured (CI run 37224469491, fixed at ddffc82). d7e299c4 has no such assertion and carries
+// the tests for the adopted release-notes.mjs (--check, the exit-64 argument guard, the lead paragraph); the room's older
+// 8a527897 did not. Measured here against the new release-notes.mjs: 17/17 plain and 17/17 under NODE_V8_COVERAGE. It passes
+// this census as is, so it carries no pin. Re-sync it to the canon when the canon fixes that assertion.
 export const EXEMPT_CARRIERS = {
   'scripts/secret-scan.test.mjs': 'a9cb7145e31139ec3c490dd7714df8fa7dc6cf86',
   'scripts/release-notes.mjs': '674592e0ff25dbdc14a8a4e21e6a598953b90eaa',
