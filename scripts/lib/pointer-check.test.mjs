@@ -803,8 +803,8 @@ test('R20 LOW-F: the same with a tilde fence, and a longer closing fence', () =>
   const tilde = failsFor(collectSurfaces('r', chlogPlan, chlogIo(fenced('~~~', '## [9.9.9] - example'))));
   assert.equal(tilde.length, 1);
   assert.ok(tilde[0].msg.includes('ghost-after-fence'));
-  // a fence closes with the same character at least as long: ```` opened by ``` is closed by ````, and a ~~~ line inside a
-  // ``` fence does not close it
+  // a fence closes with the same character at least as long: a ``` fence is closed by a ```` line (longer, same character),
+  // and a ~~~ line inside a ``` fence does not close it (different character)
   const mixed = ['# C', '## [Unreleased]', TICK + TICK + TICK, '~~~', '## [9.9.9]', TICK + TICK + TICK + TICK, cite('scripts/ghost-mixed.mjs'), '## [1.0.0]', cite('scripts/ghost-old.mjs')].join(NL);
   const m = failsFor(collectSurfaces('r', chlogPlan, chlogIo(mixed)));
   assert.equal(m.length, 1, 'got: ' + JSON.stringify(m));
@@ -824,4 +824,18 @@ test('R20 LOW-F: headings outside any fence still split as before', () => {
   const s = collectSurfaces('r', chlogPlan, chlogIo(chlogText('scripts/top.mjs', 'scripts/old.mjs')));
   assert.equal(s.length, 2);
   assert.ok(!s[0].historyOnly && s[1].historyOnly === true);
+});
+
+// R20 bounce 1, LOW-H (CoalFace 91ecb3a has this case): a SHORTER fence line does not close a LONGER fence. Mutant: drop the
+// length comparison -- the ``` line would close the ```` fence, the quoted heading would count as the second heading and the dead
+// path below it would pass as released history.
+test('R20 LOW-F: a shorter fence does not close a longer one -- a dead path after the quoted heading still FAILs', () => {
+  const four = TICK + TICK + TICK + TICK;
+  const three = TICK + TICK + TICK;
+  const text = ['# C', '## [Unreleased]', four, three, '## [9.9.9] - quoted', four, cite('scripts/ghost-shorter.mjs'), '## [1.0.0] - 2026-01-01', cite('scripts/ghost-old.mjs')].join(NL);
+  const surfaces = collectSurfaces('r', chlogPlan, chlogIo(text));
+  assert.equal(surfaces.length, 2, 'the real second heading still splits, the quoted one does not');
+  const f = failsFor(surfaces);
+  assert.equal(f.length, 1, 'got: ' + JSON.stringify(f));
+  assert.ok(f[0].msg.includes('ghost-shorter'), 'the dead path after the longer fence closes is in the top entry');
 });

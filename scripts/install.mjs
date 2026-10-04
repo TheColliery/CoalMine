@@ -570,7 +570,7 @@ function foreignReason(destDir, skillName, manifestSkills, manifest = null) {
   const p = path.join(destDir, skillName);
   let st;
   try { st = fs.lstatSync(p); }
-  catch (e) { return e && e.code === 'ENOENT' ? null : 'foreign'; } // absent → nothing to protect; any other error → refuse
+  catch (e) { return e && e.code === 'ENOENT' ? null : 'unreadable'; } // absent → nothing to protect; any other error (EACCES, ELOOP, EIO) → refuse, and nothing is known about it (R20 LOW-G)
   if (!st.isDirectory() && !st.isSymbolicLink()) return 'foreign';   // a plain file (or other non-folder) is never ours to clear
   let entries;
   try { entries = fs.readdirSync(p); }

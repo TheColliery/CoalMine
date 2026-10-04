@@ -1139,15 +1139,15 @@ test('R19 LOW-D: uninstall keeps it with no manifest, and with a manifest that n
 // differ" when the manifest named it, "no skill-meta.json marker and no recorded hashes" when not). The read failure
 // is made on every volume the house way: a --require preload patches the node:fs default export in the CHILD
 // (chmod is a no-op on NTFS), so install.mjs's readdirSync of that one folder throws EACCES.
-function runInstallUnreadable(target, cwd, unreadableDir) {
+function runInstallUnreadable(target, cwd, unreadableDir, method = 'readdirSync') {
   const preload = path.join(cwd, 'eacces-preload.cjs');
   fs.writeFileSync(preload, [
     "const fs = require('node:fs');",
     "const path = require('node:path');",
-    "const real = fs.readdirSync;",
+    "const real = fs." + method + ";",
     "const bad = path.resolve(process.env.R20_EACCES_DIR);",
-    "fs.readdirSync = function (p, ...rest) {",
-    "  if (path.resolve(String(p)) === bad) { const e = new Error('EACCES: permission denied, scandir'); e.code = 'EACCES'; throw e; }",
+    "fs." + method + " = function (p, ...rest) {",
+    "  if (path.resolve(String(p)) === bad) { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }",
     "  return real.call(this, p, ...rest);",
     "};",
   ].join('\n'), 'utf8');
@@ -1194,6 +1194,34 @@ test('R20 LOW-E: an unreadable skill folder with no manifest is refused for the 
     assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
     assert.doesNotMatch(out, /nothing proves/, 'it does not claim the marker is missing');
     assert.ok(fs.existsSync(path.join(dir, 'mine.txt')), 'the user file is untouched');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R20 bounce 1, LOW-G: the same true message when it is lstat (the folder cannot even be searched) that fails, not only readdir.
+test('R20 LOW-G: a skill folder whose lstat fails (not ENOENT) is refused as unreadable too, manifest or not', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowg-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    // named by a manifest
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    const before = fs.readdirSync(dir).sort();
+    const named = runInstallUnreadable(target, proj, dir, 'lstatSync');
+    const outNamed = named.stdout + named.stderr;
+    assert.notEqual(named.status, 0, 'refused loudly');
+    assert.match(outNamed, /\[refused\].*rot-canary.*could not be read/, 'named: the message says it could not be read');
+    assert.doesNotMatch(outNamed, /contents differ/, 'and does not blame its contents');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
+    // no manifest at all
+    fs.rmSync(path.join(target, '.coalmine-manifest.json'), { force: true });
+    const bare = runInstallUnreadable(target, proj, dir, 'lstatSync');
+    const outBare = bare.stdout + bare.stderr;
+    assert.notEqual(bare.status, 0, 'refused loudly');
+    assert.match(outBare, /\[refused\].*rot-canary.*could not be read/, 'unnamed: the message says it could not be read');
+    assert.doesNotMatch(outBare, /nothing proves/, 'and does not claim the proof is missing');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'still exactly as it was');
   } finally {
     fs.rmSync(proj, { recursive: true, force: true });
   }
