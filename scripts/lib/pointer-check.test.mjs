@@ -785,3 +785,43 @@ test('R19: a dead path in the TOP entry FAILs, the same in a RELEASED entry does
   const ordinary = failsFor([{ label: 'README.md', text: cite('scripts/ghost-readme.mjs') }]);
   assert.equal(ordinary.length, 1, 'an ordinary surface is never exempt');
 });
+
+// R20 LOW-F (ONE FLOCK ONE COLOR with CoalFace 91ecb3a): the split counts only '## [' headings OUTSIDE a code fence. A
+// heading quoted inside a fence of the top entry used to end the checked span early, so a dead path below the fence
+// passed as released history (the widening direction, silent).
+const fenced = (fence, quoted) => ['# Changelog', '', '## [Unreleased]', '', fence, quoted, fence, '', cite('scripts/ghost-after-fence.mjs'), '', '## [1.0.0] - 2026-01-01', '', cite('scripts/ghost-old.mjs')].join(NL);
+
+test('R20 LOW-F: a heading quoted inside a backtick fence does not end the top entry -- a dead path below the fence FAILs', () => {
+  const surfaces = collectSurfaces('r', chlogPlan, chlogIo(fenced(TICK + TICK + TICK, '## [9.9.9] - example')));
+  assert.equal(surfaces.length, 2, 'the real second heading still splits');
+  const f = failsFor(surfaces);
+  assert.equal(f.length, 1, 'only the dead path in the top entry fires, got: ' + JSON.stringify(f));
+  assert.ok(f[0].msg.includes('ghost-after-fence'), 'and it is the one below the fence');
+});
+
+test('R20 LOW-F: the same with a tilde fence, and a longer closing fence', () => {
+  const tilde = failsFor(collectSurfaces('r', chlogPlan, chlogIo(fenced('~~~', '## [9.9.9] - example'))));
+  assert.equal(tilde.length, 1);
+  assert.ok(tilde[0].msg.includes('ghost-after-fence'));
+  // a fence closes with the same character at least as long: ```` opened by ``` is closed by ````, and a ~~~ line inside a
+  // ``` fence does not close it
+  const mixed = ['# C', '## [Unreleased]', TICK + TICK + TICK, '~~~', '## [9.9.9]', TICK + TICK + TICK + TICK, cite('scripts/ghost-mixed.mjs'), '## [1.0.0]', cite('scripts/ghost-old.mjs')].join(NL);
+  const m = failsFor(collectSurfaces('r', chlogPlan, chlogIo(mixed)));
+  assert.equal(m.length, 1, 'got: ' + JSON.stringify(m));
+  assert.ok(m[0].msg.includes('ghost-mixed'));
+});
+
+test('R20 LOW-F: an UNCLOSED fence fails CLOSED -- the top entry runs to the end of the file, so nothing after it is exempt', () => {
+  const open = ['# C', '## [Unreleased]', TICK + TICK + TICK, '## [9.9.9] - quoted', cite('scripts/ghost-in-open-fence.mjs'), '## [1.0.0] - 2026-01-01', cite('scripts/ghost-old.mjs')].join(NL);
+  const surfaces = collectSurfaces('r', chlogPlan, chlogIo(open));
+  assert.equal(surfaces.length, 1, 'no heading counts, so there is one surface');
+  assert.ok(!surfaces[0].historyOnly, 'and it is an ordinary one');
+  const f = failsFor(surfaces);
+  assert.equal(f.length, 2, 'both dead paths fire, the "released" one included: got ' + JSON.stringify(f));
+});
+
+test('R20 LOW-F: headings outside any fence still split as before', () => {
+  const s = collectSurfaces('r', chlogPlan, chlogIo(chlogText('scripts/top.mjs', 'scripts/old.mjs')));
+  assert.equal(s.length, 2);
+  assert.ok(!s[0].historyOnly && s[1].historyOnly === true);
+});

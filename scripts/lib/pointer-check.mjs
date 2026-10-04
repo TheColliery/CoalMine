@@ -208,15 +208,26 @@ export const DEFAULT_SURFACE_PLAN = [
     why: 'RELEASED entries are published history, never fixed forward -- a path correct when the entry was written is not a defect now, but a gitignored citation was never correct on any day; the TOP entry (the text the next Release body is built from) is checked in full' },
 ];
 
-// Index of the nth line starting with `## [` (a CHANGELOG entry heading), or -1.
+// Index of the nth line starting with `## [` (a CHANGELOG entry heading) that is not inside a code fence, or -1.
+// R20 LOW-F (ONE FLOCK ONE COLOR with CoalFace 91ecb3a): a heading QUOTED in a fence of the top entry is not an entry
+// heading, and counting it ended the checked span early (everything after the fence passed as released history).
 function nthHeading(text, n) {
-  const re = /^## \[/gm;
-  let m;
-  for (let i = 0; i < n; i++) {
-    m = re.exec(text);
-    if (!m) return -1;
+  // Lines inside a fenced code block are never headings. CommonMark: a fence opens with 3+ backticks or tildes (up to 3
+  // spaces of indent) and closes with a fence of the same character at least as long, carrying nothing but spaces.
+  // An UNCLOSED fence stays open to the end of the text, so no later heading counts: the top entry then runs to the end of
+  // the file, which fails CLOSED (more is checked, never less).
+  let fence = null;
+  let seen = 0;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && /^\s*$/.test(line.slice(f[0].length))) fence = null;
+    } else if (f) fence = f[1];
+    else if (line.startsWith('## [') && ++seen === n) return offset;
+    offset += line.length + 1;
   }
-  return m.index;
+  return -1;
 }
 
 // COLLECT — plan-driven, DI'd fs so this module stays pure (it imports nothing today and

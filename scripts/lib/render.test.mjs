@@ -511,6 +511,49 @@ test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FA
   }
 });
 
+// R20 LOW-F, through the REAL gate: a '## [' heading quoted inside a code fence of the CHANGELOG top entry must not end
+// the checked span, so a dead path below the fence FAILs. It passed before the split became fence-aware.
+test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence of the CHANGELOG top entry does not exempt the dead path below it', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-fence-'));
+  const TICK = String.fromCharCode(96);
+  try {
+    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+      const src = path.join(repo, d);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
+    }
+    for (const d of ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'PRIVACY.md', 'CHANGELOG.md']) {
+      fs.copyFileSync(path.join(repo, d), path.join(tmp, d));
+    }
+    const git = (args) => {
+      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
+      return r.stdout;
+    };
+    git(['init', '-q', '-b', 'main']);
+    git(['config', 'user.email', 'test@test.invalid']);
+    git(['config', 'user.name', 'Test']);
+    git(['config', 'commit.gpgsign', 'false']);
+    git(['config', 'maintenance.auto', 'false']);
+    git(['config', 'gc.auto', '0']);
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', 'baseline']);
+    const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
+    const lines = (r) => (r.stdout.match(/^\s*FAIL CHANGELOG\.md.*$/gm) || []);
+    const chlog = path.join(tmp, 'CHANGELOG.md');
+    const base = fs.readFileSync(chlog, 'utf8');
+    assert.deepEqual(lines(run()), [], 'a clean copy has no CHANGELOG finding -- otherwise the plant below proves nothing');
+    const fence = TICK + TICK + TICK;
+    const plant = NL + fence + NL + '## [9.9.9] - quoted example' + NL + fence + NL + NL + 'Planted: see ' + TICK + 'scripts/lib/no-such-module.mjs' + TICK + '.' + NL;
+    fs.writeFileSync(chlog, base.replace('## [Unreleased]' + NL, () => '## [Unreleased]' + NL + plant));
+    git(['add', '-A']);
+    const found = lines(run());
+    assert.equal(found.length, 1, 'the dead path below the fence must FAIL, got: ' + JSON.stringify(found));
+    assert.ok(found[0].includes('scripts/lib/no-such-module.mjs') && found[0].includes('does not resolve'));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 // verify.mjs 2.11 pointers, MEDIUM-2 (CWK-079 findings-back round 2): `looksPathShaped`
 // gates DISCOVERY only, never JUDGEMENT -- an extensionless citation under a gitignored
 // root is not exempt from the check, it is exempt only from contributing its OWN root
