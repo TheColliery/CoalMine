@@ -117,3 +117,14 @@ test('census (R14 LOW-1): the installer\'s core.hooksPath read with keepUserConf
   assert.equal(censusGitSpawns([{ rel: 'scripts/other.mjs', text: read }]).length, 1, 'the same read elsewhere is refused');
   assert.deepEqual(censusGitSpawns(collectScriptsMjs(repo)), []);
 });
+
+// 05a: the release-notes.mjs pin is load-bearing. Its allowlist-env spawn is not the textual form the census accepts, so the
+// census FAILS without the pin and PASSES with it, and an edited file is a finding again.
+test('census (05a): scripts/release-notes.mjs fails without its pin, passes with it, and an edited copy is a finding again', () => {
+  const live = collectScriptsMjs(repo).filter((f) => f.rel === 'scripts/release-notes.mjs');
+  assert.equal(live.length, 1, 'the carrier is in the walked tree');
+  assert.ok(censusGitSpawns(live, {}).length >= 1, 'red: with the pin absent the census refuses it');
+  assert.deepEqual(censusGitSpawns(live), [], 'green: with the pin it passes');
+  const edited = [{ rel: live[0].rel, text: live[0].text + '\n// edited\n' }];
+  assert.match(censusGitSpawns(edited)[0], /blob id is .*, not the pinned 674592e0/, 'an edit makes it a finding again');
+});

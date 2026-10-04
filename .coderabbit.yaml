@@ -30,7 +30,7 @@ reviews:
         - Zero dependencies: Node built-in modules only, nothing that needs npm install.
         - No network: local filesystem only.
         - Deterministic: the same input gives the same output.
-        - Sandboxed: reads and writes stay inside the OS temp directory and the tool's own state directory under the user's agent config directory, except reading the project's own config file from the project root.
+        - Sandboxed: reads and writes stay inside the OS temp directory and the tool's own state directory under the user's agent config directory, except reading the project's own config file from the project root, and except writing the tool's own project-scoped state folder (<project root>/.<agent-dir>/<tool>/) through a realpath-containment helper that resolves both the project root and the candidate with fs.realpathSync.native, refuses a candidate that is not inside that folder itself (not merely inside the project root), fails closed, and is named in the room's SECURITY.md or the README. Any other write to the project is a finding.
     # Restates scripts-quality.md section 1 (fail loud) and hooks-safety.md section 6, commandment 2 (zero dependencies).
     - path: "scripts/**"
       instructions: |

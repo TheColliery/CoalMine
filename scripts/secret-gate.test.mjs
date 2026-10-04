@@ -18,9 +18,18 @@ const LIB = path.join(HERE, 'lib', 'secret-scan.mjs');
 const KEY = ['AK', 'IA', 'ABCDEFGHIJKLMNOP'].join(''); // an access-key-id shape, assembled so this file never carries one
 const ZERO = '0'.repeat(40);
 const made = [];
+// UMB-439 ruling 3 (a): ONE sandbox of the test's own. Every fixture folder, every child's TEMP, TMP, TMPDIR, HOME and USERPROFILE live in it, and the
+// developer's global git configuration never applies (GIT_CONFIG_GLOBAL is an empty file of the sandbox, the system config is off).
+const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-gate-sandbox-'));
+const EMPTY_GLOBAL = path.join(SANDBOX, 'empty-global-gitconfig');
+fs.writeFileSync(EMPTY_GLOBAL, '');
 // A hook runs with GIT_DIR, GIT_INDEX_FILE and friends set; a fixture that inherited them would write into the repository
 // the hook runs for. Every fixture git call, and the gate under test, gets an environment without them.
-const gitEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
+const gitEnv = () => ({
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k))),
+  TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX, HOME: SANDBOX, USERPROFILE: SANDBOX,
+  GIT_CONFIG_GLOBAL: EMPTY_GLOBAL, GIT_CONFIG_NOSYSTEM: '1',
+});
 
 function git(dir, ...args) {
   return gitWith({}, dir, ...args);
@@ -32,7 +41,7 @@ function gitWith(extra, dir, ...args) {
 // A throwaway repository holding the gate and its scanner, with one commit per entry of `commits` ({ file: text } maps;
 // a null text deletes the file).
 function repo(commits, { withLib = true } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-gate-'));
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'secret-gate-'));
   made.push(dir);
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 'test@example.invalid');
@@ -61,7 +70,7 @@ function run(dir, args = [], input = '', extraEnv = {}) {
   return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
 }
 
-test.after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+test.after(() => { for (const d of [...made, SANDBOX]) fs.rmSync(d, { recursive: true, force: true }); });
 
 test('a clean tree passes: exit 0 and a PASS SECRETS line naming the files scanned', () => {
   const r = run(repo([{ 'README.md': 'hello\n' }]));
@@ -126,7 +135,7 @@ test('a scan that cannot run fails: a missing scanner and a directory that is no
   assert.strictEqual(noLib.code, 1);
   assert.match(noLib.out, /FAIL SECRETS: scripts\/lib\/secret-scan\.mjs could not load/);
   assert.ok(!/at .*:\d+:\d+/.test(noLib.out + noLib.err), 'no stack frame');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-gate-nogit-'));
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'secret-gate-nogit-'));
   made.push(dir);
   fs.mkdirSync(path.join(dir, 'scripts', 'lib'), { recursive: true });
   fs.copyFileSync(GATE, path.join(dir, 'scripts', 'secret-gate.mjs'));
@@ -216,4 +225,29 @@ test('a staged blob that is damaged on disk fails the scan by count: exit 1, nam
   const r = run(dir);
   assert.strictEqual(r.code, 1, r.out + r.err);
   assert.match(r.out, /FAIL SECRETS: 1 tracked file\(s\) could not be read, so were NOT scanned: "damaged\.txt"/);
+});
+
+// UMB-439 ruling 3 (a), from the LLM zone's patrol: the fixtures must not depend on, or write into, the developer's own machine. Every fixture
+// folder lives in ONE sandbox of the test's own, the children's TEMP, TMP and TMPDIR point at it, and the developer's global git configuration
+// (a hooks path, a signing rule, a template directory) never applies: GIT_CONFIG_GLOBAL is an empty file inside the sandbox and the system
+// config is switched off. The witness below plants a hostile global config and a hostile HOME; the fixture commits must still work.
+test('the fixtures run in the test\'s own sandbox: a hostile global git config and HOME never reach them, and the fixture folders live inside the sandbox -- RED before UMB-439', () => {
+  const hostile = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-gate-hostile-'));
+  made.push(hostile);
+  const hooks = path.join(hostile, 'hooks');
+  fs.mkdirSync(hooks);
+  fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\necho hostile global hook >&2\nexit 1\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(hostile, '.gitconfig'), '[core]\n\thooksPath = ' + hooks.replace(/\\/g, '/') + '\n');
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  process.env.HOME = hostile; process.env.USERPROFILE = hostile; process.env.XDG_CONFIG_HOME = hostile;
+  try {
+    const dir = repo([{ 'a.txt': 'x\n' }]); // a commit under the hostile global hook would fail with exit 1
+    assert.ok(path.resolve(dir).startsWith(path.resolve(SANDBOX) + path.sep), 'the fixture folder is inside the sandbox: ' + dir);
+    const probe = execFileSync(process.execPath, ['-e', 'const e = process.env; console.log(JSON.stringify([e.TEMP, e.TMP, e.TMPDIR, e.GIT_CONFIG_GLOBAL, e.GIT_CONFIG_NOSYSTEM]))'], { encoding: 'utf8', timeout: 60000, env: gitEnv() });
+    const [tmp, tmp2, tmpdir, global, nosys] = JSON.parse(probe);
+    assert.deepEqual([tmp, tmp2, tmpdir], [SANDBOX, SANDBOX, SANDBOX]);
+    assert.equal(path.dirname(global), SANDBOX);
+    assert.equal(fs.readFileSync(global, 'utf8'), '', 'the global config is an empty file of the sandbox');
+    assert.equal(nosys, '1');
+  } finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 });

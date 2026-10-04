@@ -13,6 +13,7 @@
 // and its comparison logic is exercised by a test with no `gh`/network dependency at all.
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { titleBandWarning } from './lib/release-shape.mjs';
 
 function sha256(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
@@ -62,6 +63,10 @@ function main() {
   // em-dash-to-hyphen shape this rail exists for, trims away to nothing and still differs.
   const titleMatch = sha256(published.name?.trim() ?? '') === sha256(intendedTitle.trim());
   const bodyMatch = sha256(published.body?.trim() ?? '') === sha256(intendedBody.trim());
+
+  // A signal, never a refusal (RELEASE-PATTERN.md "The title"): outside the summary-length band the rail names it and goes on.
+  const band = titleBandWarning(intendedTitle.trim());
+  if (band) console.log(`${process.env.GITHUB_ACTIONS ? '::warning title=release-title-band::' : ''}verify-release-shape: WARNING ${band}`);
 
   if (titleMatch && bodyMatch) {
     console.log('verify-release-shape: published title + body match the derived CHANGELOG-sourced text, byte for byte');

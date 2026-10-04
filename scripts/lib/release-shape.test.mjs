@@ -139,3 +139,117 @@ test('makeLatestFlag: no current Latest, or a tag newer than or equal to it, is 
 test('makeLatestFlag: a Latest tag that is not a bare vX.Y.Z throws a named error -- never a guessed flag', () => {
   assert.throws(() => makeLatestFlag('1.0.0', 'nightly'), ReleaseRefError);
 });
+
+// UMB-392 / BA-14 (the owner: fix it at the source of the river): the Release title is derived from the CHANGELOG summary line, so the
+// length bound lives there. A SIGNAL with a band, never a hard cap: aim 60 characters, 45 to 75 passes clean, outside the band a named
+// warning. The numbers are the house's own (no formal standard sets one), declared in RELEASE-PATTERN.md.
+import { SUMMARY_AIM, SUMMARY_BAND, titleBandWarning, MIRROR_TITLE_CAP, mirroredTitle, mirroredTitleOverflow } from './release-shape.mjs';
+
+const titleOf = (n) => `v1.2.3 - ${'a'.repeat(n)}`;
+
+test('the summary band: aim 60, clean from 45 to 75', () => {
+  assert.equal(SUMMARY_AIM, 60);
+  assert.deepEqual(SUMMARY_BAND, [45, 75]);
+});
+
+test('titleBandWarning: 60, 45 and 75 pass clean; 44 and 76 warn, naming the length, the band and the way out; nothing refuses', () => {
+  for (const n of [60, 45, 75]) assert.equal(titleBandWarning(titleOf(n)), null, String(n));
+  for (const n of [44, 76, 140, 1]) {
+    const w = titleBandWarning(titleOf(n));
+    assert.ok(w.startsWith(`release-title-band: the summary in the title is ${n} characters, outside the band 45 to 75 (aim 60)`), String(n));
+    assert.match(w, /lead paragraph/, 'it says where a longer explanation goes');
+  }
+});
+
+test('titleBandWarning counts characters, not UTF-16 units, and reads only the part after the first " - "', () => {
+  assert.equal(titleBandWarning('v1.0.0 - ' + '\u{1F600}'.repeat(60)), null, '60 astral characters are 60 characters');
+  assert.equal(titleBandWarning('v1.0.0 - ' + 'a'.repeat(30) + ' - ' + 'b'.repeat(30)), null, 'a hyphen inside the summary does not split it');
+  assert.equal(titleBandWarning('v1.0.0'), null, 'a title with no summary has nothing to measure (the shape rail owns that)');
+});
+
+// The lead paragraph under the summary line: text between the summary and the first "### " heading rides into the body right after the
+// Lead (it used to be dropped, so a longer explanation had nowhere to go).
+test('extractChangelogEntry: the text between the summary line and the first "### " heading is the lead paragraph', () => {
+  const e = extractChangelogEntry('## [1.2.3] - 2026-10-03\n\nShort summary.\n\nA longer explanation that\nspans two lines.\n\n### Fixed\n- x\n', '1.2.3');
+  assert.equal(e.summary, 'Short summary.');
+  assert.equal(e.lead, 'A longer explanation that\nspans two lines.');
+  assert.equal(e.sectionsBody, '### Fixed\n- x');
+  assert.equal(extractChangelogEntry('## [1.2.3] - 2026-10-03\n\nShort summary.\n\n### Fixed\n- x\n', '1.2.3').lead, '');
+  assert.equal(extractChangelogEntry('## [1.2.3] - 2026-10-03\n\nShort summary.\n', '1.2.3').lead, '');
+});
+
+test('buildReleaseBody: Lead, then the lead paragraph, then the sections, a blank line between each; without a lead paragraph the body is unchanged', () => {
+  assert.equal(buildReleaseBody('Short.', '### Fixed\n- x', 'More words.'), 'Short.\n\nMore words.\n\n### Fixed\n- x\n');
+  assert.equal(buildReleaseBody('Short.', '', 'More words.'), 'Short.\n\nMore words.\n');
+  assert.equal(buildReleaseBody('Short.', '### Fixed\n- x', ''), 'Short.\n\n### Fixed\n- x\n');
+  assert.equal(buildReleaseBody('Short.', '### Fixed\n- x'), 'Short.\n\n### Fixed\n- x\n');
+});
+
+// UMB-417 (the CoalFace room's INSPECT, M-A): a first word with an INTERIOR capital is a product or identifier name, never an
+// ordinary sentence opener, so it keeps its case. "CoalFace ..." used to become "coalFace ..." in the Release title.
+test('buildReleaseTitle: a CamelCase first word keeps its case (the product name), the cases the comment names are unchanged -- RED before UMB-417', () => {
+  assert.equal(buildReleaseTitle('0.14.0', 'CoalFace now reads its config from both legacy paths'), 'v0.14.0 - CoalFace now reads its config from both legacy paths');
+  assert.equal(buildReleaseTitle('0.14.0', "CoalFace's config walk names the file it read."), "v0.14.0 - CoalFace's config walk names the file it read");
+  assert.equal(buildReleaseTitle('2.0.0', 'CoalBoard, CoalTipple and CoalHearth share one config walk'), 'v2.0.0 - CoalBoard, CoalTipple and CoalHearth share one config walk');
+  assert.equal(buildReleaseTitle('1.0.0', 'McKinsey-style review now ships'), 'v1.0.0 - McKinsey-style review now ships');
+  // unchanged: an acronym or file name, an article, a pronoun, an ordinary word with later capitals in other words
+  assert.equal(buildReleaseTitle('1.0.0', 'SHA256SUMS.txt now ships beside every ZIP'), 'v1.0.0 - SHA256SUMS.txt now ships beside every ZIP');
+  assert.equal(buildReleaseTitle('1.0.0', 'CI now runs on macOS'), 'v1.0.0 - CI now runs on macOS');
+  assert.equal(buildReleaseTitle('1.0.0', 'A fix'), 'v1.0.0 - a fix');
+  assert.equal(buildReleaseTitle('1.0.0', 'I moved the file'), 'v1.0.0 - i moved the file');
+  assert.equal(buildReleaseTitle('1.0.0', 'Fixed the CoalFace config walk'), 'v1.0.0 - fixed the CoalFace config walk', 'only the first word decides');
+  assert.equal(buildReleaseTitle('1.0.0', 'A project config is now reported'), 'v1.0.0 - a project config is now reported');
+});
+
+// A-2 (pass 14): only a first word made of ONE capital followed by lower-case letters is an ordinary sentence opener and lower-cases;
+// every other opener is left as written ("V8 flags", "Node.js 22", "CoalFace", "SHA256SUMS.txt", "CI", "Python3").
+test('buildReleaseTitle: V8, Node.js and every other non-ordinary opener keeps its case; only One-capital-then-lowercase lowers -- RED before the pass 14 fix', () => {
+  const t = (s) => buildReleaseTitle('1.0.0', s);
+  assert.equal(t('V8 flags are now documented'), 'v1.0.0 - V8 flags are now documented');
+  assert.equal(t('Node.js 22 is now the floor'), 'v1.0.0 - Node.js 22 is now the floor');
+  assert.equal(t('Python3 hooks now run'), 'v1.0.0 - Python3 hooks now run');
+  assert.equal(t('CoalFace reads both paths'), 'v1.0.0 - CoalFace reads both paths');
+  assert.equal(t('SHA256SUMS.txt now ships'), 'v1.0.0 - SHA256SUMS.txt now ships');
+  assert.equal(t('CI now runs on macOS'), 'v1.0.0 - CI now runs on macOS');
+  // ordinary openers still lower, with punctuation, a contraction or a hyphenated compound
+  assert.equal(t('Fixed the thing'), 'v1.0.0 - fixed the thing');
+  assert.equal(t('Fixed, then shipped'), 'v1.0.0 - fixed, then shipped');
+  assert.equal(t("It's fixed now"), "v1.0.0 - it's fixed now");
+  assert.equal(t('Two-phase commit now ships'), 'v1.0.0 - two-phase commit now ships');
+  assert.equal(t('A fix'), 'v1.0.0 - a fix');
+  assert.equal(t('I moved the file'), 'v1.0.0 - i moved the file');
+});
+
+// UMB-433 (the owner on org discussion #23: "if it really overflows, re-compose it, never leave the text off"): the org announcement mirrors
+// "<Repo> <Release title>" as a discussion title, and GitHub's title ceiling is a hard 200 (it stored a 211-character title as 199, n = 1).
+// A title that fits posts whole; a real overflow is never cut by a machine and never posted bare, so the DRAFTER re-composes the summary
+// BEFORE the tag. One definition of the mirrored title and its ceiling, here, used by the announcer and by the pre-tag check.
+test('mirroredTitle: "<Repo> <Release title>" when the title opens with its tag, else "<Repo> <tag> - <name>", else "<Repo> <tag>"', () => {
+  assert.equal(MIRROR_TITLE_CAP, 200);
+  assert.equal(mirroredTitle('CoalBoard', 'v2.7.0', 'v2.7.0 - a summary'), 'CoalBoard v2.7.0 - a summary');
+  assert.equal(mirroredTitle('CoalBoard', 'v2.7.0', 'a hand-named release'), 'CoalBoard v2.7.0 - a hand-named release');
+  assert.equal(mirroredTitle('CoalBoard', 'v2.7.0', ''), 'CoalBoard v2.7.0');
+  assert.equal(mirroredTitle('CoalBoard', 'v2.7.0', '  v2.7.0 - padded  '), 'CoalBoard v2.7.0 - padded');
+});
+
+test('mirroredTitleOverflow: null at 200 characters and below, a named message at 201 and above; CoalBoard v2.7.0 (name 201) overflows -- RED before UMB-433', () => {
+  const nameOf = (total) => 'v1.0.0 - ' + 'a'.repeat(total - 'CoalBoard '.length - 'v1.0.0 - '.length);
+  assert.equal(mirroredTitle('CoalBoard', 'v1.0.0', nameOf(200)).length, 200);
+  assert.equal(mirroredTitleOverflow('CoalBoard', 'v1.0.0', nameOf(200)), null);
+  assert.equal(mirroredTitleOverflow('CoalBoard', 'v1.0.0', nameOf(150)), null);
+  for (const n of [201, 211, 400]) {
+    const m = mirroredTitleOverflow('CoalBoard', 'v1.0.0', nameOf(n));
+    assert.match(m, new RegExp('^release-title-cap: the announcement title "CoalBoard v1\\.0\\.0 - a+" is ' + n + ' characters, over GitHub\'s ' + MIRROR_TITLE_CAP + '-character title ceiling'), String(n));
+    assert.match(m, /re-compose|shorten/i, 'it says what to do');
+  }
+  const v270 = 'v2.7.0 - ' + 'word '.repeat(40).slice(0, 192).trimEnd();
+  assert.ok(mirroredTitleOverflow('CoalBoard', 'v2.7.0', 'v2.7.0 - ' + 'x'.repeat(192)) !== null, 'the real v2.7.0 shape (a 201-character Release name) overflows');
+  void v270;
+});
+
+test('mirroredTitleOverflow counts UTF-16 units (the conservative count: an astral character may count twice at GitHub)', () => {
+  const emoji = '\u{1F600}';
+  const name = 'v1.0.0 - ' + emoji.repeat(100);
+  assert.equal(Array.from(mirroredTitle('R', 'v1.0.0', name)).length < 200, true);
+  assert.ok(mirroredTitleOverflow('R', 'v1.0.0', name) !== null, '100 emoji are 200 units: held, never risked');
+});
