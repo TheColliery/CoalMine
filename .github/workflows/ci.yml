@@ -162,19 +162,24 @@ jobs:
       # cross-platform — verify (dist-sync + repo consistency checks) then the test suite.
       # No build step here: rebuilding the dist in CI would mask a stale COMMITTED
       # plugin/ — the exact drift verify exists to catch.
-      - run: node scripts/verify.mjs
-      - run: node scripts/test.mjs
-      # PowerShell parity tests (the PS twins of the Node hooks) — pwsh ships on the GitHub
-      # runners; skip gracefully if it is ever absent so the node gate above still gates.
-      - name: PowerShell parity tests
-        shell: bash
-        run: |
-          if command -v pwsh >/dev/null 2>&1; then
-            pwsh -NoProfile -File scripts/lib/ps-config.test.ps1
-            pwsh -NoProfile -File scripts/lib/ps-hooks.test.ps1
-          else
-            echo "pwsh not found — skipping PS parity tests"
-          fi
+      # CWK2-002: the three work steps below are independent reads of the committed tree, so they
+      # run as ONE `parallel:` group (GitHub's workflow-syntax reference, "jobs.<job_id>.steps[*].parallel":
+      # every step in the group runs concurrently, with an implicit wait at the end of it). A red
+      # run shows all three results at once.
+      - parallel:
+          - run: node scripts/verify.mjs
+          - run: node scripts/test.mjs
+          # PowerShell parity tests (the PS twins of the Node hooks) — pwsh ships on the GitHub
+          # runners; skip gracefully if it is ever absent so the node gate above still gates.
+          - name: PowerShell parity tests
+            shell: bash
+            run: |
+              if command -v pwsh >/dev/null 2>&1; then
+                pwsh -NoProfile -File scripts/lib/ps-config.test.ps1
+                pwsh -NoProfile -File scripts/lib/ps-hooks.test.ps1
+              else
+                echo "pwsh not found — skipping PS parity tests"
+              fi
 
 
   # A single STABLE required-check context (the matrix names drift; this does not).
