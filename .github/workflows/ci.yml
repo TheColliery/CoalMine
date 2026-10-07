@@ -143,7 +143,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node: [22, 24]  # supported LTS only (24 Active, 22 Maintenance); 18/20 are EOL — bump as the Node LTS schedule moves
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15 # measured 2026-10-02: gate max 82 s over 65 job runs, successful runs only; a finite clock (testing.md), ~10x the max
+    timeout-minutes: 15 # measured 2026-10-08: gate max 168 s (windows-latest · node 22) over 60 job runs, successful runs only (5 pushes before + 5 re-runs of one push after the parallel: group, 6 cells each); a finite clock (testing.md), ~5.4x the max (900 s / 168 s)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,7 +159,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       # Zero-dependency: no install step. Run the same fail-loud gate as a local pre-push,
-      # cross-platform — verify (dist-sync + repo consistency checks) then the test suite.
+      # cross-platform — verify (dist-sync + repo consistency checks), the test suite and the PS parity tests.
       # No build step here: rebuilding the dist in CI would mask a stale COMMITTED
       # plugin/ — the exact drift verify exists to catch.
       # CWK2-002: the three work steps below are independent reads of the committed tree, so they
@@ -170,7 +170,7 @@ jobs:
           - run: node scripts/verify.mjs
           - run: node scripts/test.mjs
           # PowerShell parity tests (the PS twins of the Node hooks) — pwsh ships on the GitHub
-          # runners; skip gracefully if it is ever absent so the node gate above still gates.
+          # runners; skip gracefully if it is ever absent, so a missing pwsh never fails the group (verify and the test suite still gate).
           - name: PowerShell parity tests
             shell: bash
             run: |
