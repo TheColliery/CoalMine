@@ -143,7 +143,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node: [22, 24]  # supported LTS only (24 Active, 22 Maintenance); 18/20 are EOL — bump as the Node LTS schedule moves
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15 # measured 2026-10-08: gate max 168 s (windows-latest · node 22) over 60 job runs, successful runs only (5 pushes before + 5 re-runs of one push after the parallel: group, 6 cells each); a finite clock (testing.md), ~5.4x the max (900 s / 168 s)
+    timeout-minutes: 15 # measured 2026-10-08: gate max 168 s (windows-latest · node 22) over 60 job runs, successful runs only (5 pushes before + 5 attempts of one push after the parallel: group, 6 cells each); a finite clock (testing.md), ~5.4x the max (900 s / 168 s)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
