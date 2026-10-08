@@ -29,6 +29,8 @@ const gitEnv = () => ({
   ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k))),
   TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX, HOME: SANDBOX, USERPROFILE: SANDBOX,
   GIT_CONFIG_GLOBAL: EMPTY_GLOBAL, GIT_CONFIG_NOSYSTEM: '1',
+  // git stops searching for a repository at the sandbox's parent: a temp folder that sits inside a repository must not make a fixture look like part of it (UMB-456 (1) vi)
+  GIT_CEILING_DIRECTORIES: path.dirname(SANDBOX),
 });
 
 function git(dir, ...args) {
@@ -237,7 +239,10 @@ test('the fixtures run in the test\'s own sandbox: a hostile global git config a
   const hooks = path.join(hostile, 'hooks');
   fs.mkdirSync(hooks);
   fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\necho hostile global hook >&2\nexit 1\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(hostile, '.gitconfig'), '[core]\n\thooksPath = ' + hooks.replace(/\\/g, '/') + '\n');
+  const hostileConfig = '[core]\n\thooksPath = ' + hooks.replace(/\\/g, '/') + '\n';
+  fs.writeFileSync(path.join(hostile, '.gitconfig'), hostileConfig); // read through HOME
+  fs.mkdirSync(path.join(hostile, 'git'));
+  fs.writeFileSync(path.join(hostile, 'git', 'config'), hostileConfig); // read through XDG_CONFIG_HOME (UMB-456 (1) v: it was planted at hostile/.gitconfig, a path XDG never reads)
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
   process.env.HOME = hostile; process.env.USERPROFILE = hostile; process.env.XDG_CONFIG_HOME = hostile;
   try {
@@ -250,4 +255,22 @@ test('the fixtures run in the test\'s own sandbox: a hostile global git config a
     assert.equal(fs.readFileSync(global, 'utf8'), '', 'the global config is an empty file of the sandbox');
     assert.equal(nosys, '1');
   } finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+});
+
+// UMB-456 (1) vi (CoalGob N1): when the machine's temp folder sits inside a git repository, the sandbox sits inside it too, and a fixture folder that is
+// NOT a repository would find that outer repository. The sandbox's git calls carry a ceiling at the sandbox's parent so the search stops there.
+// The witness runs the test that needs "not inside a git repository" in a child whose TEMP, TMP and TMPDIR are a folder inside a real repository.
+// The child's reporter is PINNED to tap: left to its default it is spec on Node 24 (measured, stdout a pipe or a file) and tap on Node 22 when stdout is not a TTY
+// (nodejs.org v22 test docs), so a count read from the default was right on a developer's Node 24 and wrong on CI's Node 22 (run 37722574073).
+test('the sandbox is closed against a repository ABOVE the temp folder: a non-repository fixture is still not inside one -- RED before UMB-456 (1) vi', { skip: process.env.SECRET_GATE_NESTED ? 'this is the nested run' : false }, () => {
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-gate-outer-'));
+  made.push(outer);
+  git(outer, 'init', '-q', '-b', 'main');
+  const tmpInside = path.join(outer, 'tmp');
+  fs.mkdirSync(tmpInside);
+  const keep = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'WINDIR'];
+  const env = { ...Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])), TEMP: tmpInside, TMP: tmpInside, TMPDIR: tmpInside, HOME: tmpInside, USERPROFILE: tmpInside, SECRET_GATE_NESTED: '1' };
+  const r = spawnSync(process.execPath, ['--max-old-space-size=512', '--test', '--test-timeout=60000', '--test-reporter=tap', '--test-name-pattern=a scan that cannot run', fileURLToPath(import.meta.url)], { encoding: 'utf8', timeout: 120000, env });
+  assert.match(r.stdout, /^# pass 1$/m, 'the nested run really ran the test: ' + r.stdout.slice(-400));
+  assert.strictEqual(r.status, 0, r.stdout.slice(-800) + r.stderr.slice(-400));
 });

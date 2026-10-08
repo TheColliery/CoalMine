@@ -30,7 +30,8 @@ function repoName(args) {
   if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY.split('/').pop();
   // An EXPLICIT environment (UMB-443 ruling 2): only what git needs to start. A GIT_DIR or GIT_WORK_TREE a hook or a patrol leaves in the
   // environment would aim this at ANOTHER repository's origin, and --local reads this repository's own config only, never the user's.
-  const keep = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE'];
+  // GIT_CEILING_DIRECTORIES is kept on purpose (UMB-456 (1) iii): it only NARROWS where git searches, and without it a plain folder inside a repository reads that repository's origin.
+  const keep = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'GIT_CEILING_DIRECTORIES'];
   const env = { ...Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])), GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
   const r = spawnSync('git', ['config', '--local', '--get', 'remote.origin.url'], { encoding: 'utf8', timeout: 30000, env });
   const m = r.status === 0 ? /([^/:]+?)(?:\.git)?\s*$/.exec(r.stdout.trim()) : null;
@@ -62,7 +63,9 @@ function check(args) {
 function main() {
   const args = process.argv.slice(2);
   if (args.includes('-h') || args.includes('--help')) { console.log(USAGE); return; }
-  const known = (a, i) => a === '--check' || a === '--repo' || args[i - 1] === '--repo';
+  // --repo names the repository for --check only (UMB-456 (1) vii); in the derive step it would be accepted and ignored.
+  const checking = args.includes('--check');
+  const known = (a, i) => a === '--check' || (checking && (a === '--repo' || args[i - 1] === '--repo'));
   const bad = args.find((a, i) => !known(a, i));
   if (bad !== undefined) { console.error('release-notes: unknown argument ' + JSON.stringify(bad) + '\n' + USAGE); process.exitCode = 64; return; }
   if (args.includes('--check')) { check(args); return; }

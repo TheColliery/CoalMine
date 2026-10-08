@@ -63,25 +63,20 @@ function* matches(re, text) {
 
 // R13 / CWK-174, narrowed at R14: the house secret scan arrives as byte-equal copies of the published-code template
 // (SERIES-CANON "Secret scan": a parity check measures it). The caller pair (secret-gate.mjs and its test) now spawns git
-// through a cleaned environment (template blobs e49206b4... / 3fcd3f0d...), so it is held to the census like any other
+// through a cleaned environment (canon blobs 044ec446... / a17ae233..., 08c), so it is held to the census like any other
 // file. ONE exemption remains: secret-scan.test.mjs, whose source (Bankfire's) still spawns git without a cleaned
 // environment; that is the LLM zone's unit. It is exempt ONLY while its content is exactly the pinned blob: any edit, or a
 // template re-sync that changes it, makes the entry a finding again ("re-derive"), so the exemption cannot widen or outlive
 // its reason silently. The pin is a git blob id (git hash-object <file>) against .github/templates/published-code/scripts/.
-// 05a (order 04e, .github b4cf4ab): the overlay-coal-skill scripts/release-notes.mjs (canon 674592e0) is the second carrier. Its
+// 05a (order 04e), re-pinned at 08c: the overlay-coal-skill scripts/release-notes.mjs (canon f8d998d8) is the second carrier. Its
 // git spawn gives an EXPLICIT allowlist env (no GIT_* inherited), the property this census guards, but not the textual form
 // it accepts (gitEnv(...) alone), so it is blob-pinned instead (measured red without the pin: "carries no 'env:'"). Any edit or
 // re-sync that changes it makes the entry a finding again.
-// NAMED DIVERGENCE: scripts/release-notes.test.mjs is HELD at the previous canon blob d7e299c4ff76bf163041ac678be317fbc49ce436
-// (canon 2bb0460), not adopted at canon a8f3ba69 (31e6b51). Only a8f3ba69 is the defect: its env assertion ("nothing else but
-// what node needs to start") fails on macOS (__CF_USER_TEXT_ENCODING, which the OS injects into every child) and under coverage
-// (NODE_V8_COVERAGE), as CoalBoard measured (CI run 37224469491, fixed at ddffc82). d7e299c4 has no such assertion and carries
-// the tests for the adopted release-notes.mjs (--check, the exit-64 argument guard, the lead paragraph); the room's older
-// 8a527897 did not. Measured here against the new release-notes.mjs: 17/17 plain and 17/17 under NODE_V8_COVERAGE. It passes
-// this census as is, so it carries no pin. Re-sync it to the canon when the canon fixes that assertion.
+// 08c: the hold of scripts/release-notes.test.mjs at the previous canon blob d7e299c4 is RELEASED. The canon fixed the defective
+// assertion (its env check failed on macOS and under coverage) and the room now holds the canon test, blob 8cf7e5fd, byte for byte.
 export const EXEMPT_CARRIERS = {
-  'scripts/secret-scan.test.mjs': 'a9cb7145e31139ec3c490dd7714df8fa7dc6cf86',
-  'scripts/release-notes.mjs': '674592e0ff25dbdc14a8a4e21e6a598953b90eaa',
+  'scripts/secret-scan.test.mjs': '4433fb56bc97d1facc3fb27804e1934c0577115f',
+  'scripts/release-notes.mjs': 'f8d998d8fe14a5972440043123398115d02fc50e',
 };
 
 // The git blob id of `text`, as `git hash-object` would print it for a file holding exactly these bytes.

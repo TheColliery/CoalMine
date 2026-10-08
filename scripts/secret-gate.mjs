@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 // secret-gate — the secret scan a repository runs before a commit and before a push.
 //
-// WHY: GitHub scans a public repository for PROVIDER tokens, but a private key, a connection string or an HTTP
-// authentication header is a "generic" pattern that its free scanning does not cover. This gate is the repository's own
-// check for those: it runs the portable scanner (scripts/lib/secret-scan.mjs, kept byte-identical in every repository
-// that carries it) before a commit and before a push.
+// WHY: GitHub scans a public repository for PROVIDER tokens. This gate is the repository's own check: it runs the
+// portable scanner (scripts/lib/secret-scan.mjs, kept byte-identical in every repository that carries it) before a
+// commit and before a push. The scanner catches a provider-shaped token, a private-key header and a high-entropy value
+// assigned to a name like secret, token, password or key. It does NOT catch a credential inside a URL or connection
+// string (scheme://user:pass@host), an HTTP authentication header whose value is not on such a named assignment, or a
+// key split across lines.
 //
 // TWO SCANS. (1) The STAGED tree, always: every blob in the index, which is what a commit records and what a CI checkout
 // holds (a staged edit is scanned even when the working file was changed back; an unstaged edit cannot be committed or
 // pushed and is not reported). A commit made with "git commit -a" or a partial commit reads the index that commit uses
-// (GIT_INDEX_FILE), the one GIT_* variable the gate keeps. (2) With --pre-push (the hook passes it,
+// (GIT_INDEX_FILE), one of the two GIT_* variables the gate keeps. (2) With --pre-push (the hook passes it,
 // with git's ref lines on stdin): the ADDED lines of every commit being pushed, so a key added and then deleted inside the
 // range is still found, plus every pushed commit message and annotated-tag message. --remote=<name> narrows a new branch
 // to the commits that remote does not already have.
@@ -47,8 +49,10 @@ const unit4 = (c) => `${BACKSLASH}u${c.charCodeAt(0).toString(16).padStart(4, '0
 const esc = (s) => JSON.stringify(String(s)).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (c) => c.split('').map(unit4).join(''));
 // A hook runs with GIT_DIR, GIT_WORK_TREE, GIT_PREFIX and others that aim git at the repository the hook was started for.
 // Every git call here drops them (the gate runs from the repository root and finds its repository from there), except
-// GIT_INDEX_FILE, which names the index a commit is made from and is the thing commit mode must read.
-const gitEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k) || k.toUpperCase() === 'GIT_INDEX_FILE')), LC_ALL: 'C', LANGUAGE: 'C' });
+// GIT_INDEX_FILE, which names the index a commit is made from and is the thing commit mode must read, and GIT_CEILING_DIRECTORIES, which only NARROWS where git
+// searches for the repository (a folder under a ceiling is not part of a repository above it; the worst a wrong value does is make the gate fail closed, UMB-456 (1) vi).
+const KEPT = new Set(['GIT_INDEX_FILE', 'GIT_CEILING_DIRECTORIES']);
+const gitEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k) || KEPT.has(k.toUpperCase()))), LC_ALL: 'C', LANGUAGE: 'C' });
 const gitIn = (a) => execFileSync('git', a, { encoding: 'utf8', maxBuffer: 256 << 20, timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() });
 // Reads blobs in one process: "<sha> <type> <size>\n<bytes>\n" per object, "<sha> missing\n" for one git does not have.
 function readBlobs(shas) {

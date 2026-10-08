@@ -126,5 +126,5 @@ test('census (05a): scripts/release-notes.mjs fails without its pin, passes with
   assert.ok(censusGitSpawns(live, {}).length >= 1, 'red: with the pin absent the census refuses it');
   assert.deepEqual(censusGitSpawns(live), [], 'green: with the pin it passes');
   const edited = [{ rel: live[0].rel, text: live[0].text + '\n// edited\n' }];
-  assert.match(censusGitSpawns(edited)[0], /blob id is .*, not the pinned 674592e0/, 'an edit makes it a finding again');
+  assert.match(censusGitSpawns(edited)[0], /blob id is .*, not the pinned f8d998d8/, 'an edit makes it a finding again');
 });

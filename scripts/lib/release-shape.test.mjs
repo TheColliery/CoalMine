@@ -232,6 +232,16 @@ test('mirroredTitle: "<Repo> <Release title>" when the title opens with its tag,
   assert.equal(mirroredTitle('CoalBoard', 'v2.7.0', '  v2.7.0 - padded  '), 'CoalBoard v2.7.0 - padded');
 });
 
+// UMB-456 (1) iv (CoalHearth t19 #2): a Release name that merely BEGINS with the tag's characters is not named by the tag. "v2.7.0" is a prefix of
+// "v2.7.01" and of "v2.7.0-rc1", and the old startsWith test dropped the real tag from the announcement title.
+test('mirroredTitle: the tag counts as the name\'s own prefix only at a boundary (end or whitespace) -- RED before UMB-456 (1) iv', () => {
+  assert.equal(mirroredTitle('R', 'v2.7.0', 'v2.7.01 - x'), 'R v2.7.0 - v2.7.01 - x');
+  assert.equal(mirroredTitle('R', 'v2.7.0', 'v2.7.0-rc1 - x'), 'R v2.7.0 - v2.7.0-rc1 - x');
+  assert.equal(mirroredTitle('R', 'v2.7.0', 'v2.7.0'), 'R v2.7.0');
+  assert.equal(mirroredTitle('R', 'v2.7.0', 'v2.7.0 - x'), 'R v2.7.0 - x');
+  assert.equal(mirroredTitle('R', 'v2.7.0', 'v2.7.0\t- tabbed'), 'R v2.7.0\t- tabbed');
+});
+
 test('mirroredTitleOverflow: null at 200 characters and below, a named message at 201 and above; CoalBoard v2.7.0 (name 201) overflows -- RED before UMB-433', () => {
   const nameOf = (total) => 'v1.0.0 - ' + 'a'.repeat(total - 'CoalBoard '.length - 'v1.0.0 - '.length);
   assert.equal(mirroredTitle('CoalBoard', 'v1.0.0', nameOf(200)).length, 200);
@@ -242,9 +252,7 @@ test('mirroredTitleOverflow: null at 200 characters and below, a named message a
     assert.match(m, new RegExp('^release-title-cap: the announcement title "CoalBoard v1\\.0\\.0 - a+" is ' + n + ' characters, over GitHub\'s ' + MIRROR_TITLE_CAP + '-character title ceiling'), String(n));
     assert.match(m, /re-compose|shorten/i, 'it says what to do');
   }
-  const v270 = 'v2.7.0 - ' + 'word '.repeat(40).slice(0, 192).trimEnd();
   assert.ok(mirroredTitleOverflow('CoalBoard', 'v2.7.0', 'v2.7.0 - ' + 'x'.repeat(192)) !== null, 'the real v2.7.0 shape (a 201-character Release name) overflows');
-  void v270;
 });
 
 test('mirroredTitleOverflow counts UTF-16 units (the conservative count: an astral character may count twice at GitHub)', () => {

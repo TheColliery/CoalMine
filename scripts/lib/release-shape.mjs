@@ -114,7 +114,9 @@ export const MIRROR_TITLE_CAP = 200;
 
 export function mirroredTitle(repo, tag, releaseName) {
   const name = String(releaseName || '').trim();
-  return name ? (name.startsWith(tag) ? `${repo} ${name}` : `${repo} ${tag} - ${name}`) : `${repo} ${tag}`;
+  // The tag is the name's own prefix only at a boundary: "v2.7.0" is not the prefix of "v2.7.01" or "v2.7.0-rc1" (UMB-456 (1) iv).
+  const named = name.startsWith(tag) && /^(\s|$)/.test(name.slice(tag.length));
+  return name ? (named ? `${repo} ${name}` : `${repo} ${tag} - ${name}`) : `${repo} ${tag}`;
 }
 
 // null when the mirrored title fits; else the named message the pre-tag check prints (and the announcer's run summary repeats).

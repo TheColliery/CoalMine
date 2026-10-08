@@ -3,7 +3,7 @@
 #   this file lacks the canon step named "Check the derive step wrote its four release files (a stale release-notes.mjs
 #   stops here)", which sits between "Derive the canon Release title + body from CHANGELOG.md" and "Check the tag carries
 #   its own packaging scripts". It is the canon's guard for a room that kept an older scripts/release-notes.mjs; this room
-#   holds the canon's release-notes.mjs (blob 674592e0, adopted 05a), so nothing it guards can happen here today. The
+#   holds the canon's release-notes.mjs (blob f8d998d8, adopted 05a, re-synced 08c), so nothing it guards can happen here today. The
 #   reason it is absent is only that this file was last adopted (4dd17d7, 2026-10-02) before the canon added the step; no
 #   decision to omit it was ever taken. Adopting it is a non-comment change to this workflow, left to its own unit.
 # NOT divergences (the canon carries them too, so this file already matches): timeout-minutes, persist-credentials: false
