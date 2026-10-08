@@ -63,9 +63,9 @@ test('test-spawn: scripts/test.mjs spawns its child with the plan argv, env, dea
 });
 
 // ---- end to end: the REAL test.mjs and plan, copied into a temp tree whose roster is one planted file ----
-// The per-test clock and the whole-run deadline are patched down in the COPY only (3 s and 6 s). Every run is bounded by its own
-// 40 s timer that kills the whole tree, so a regression fails this test instead of hanging the suite.
-function plant(t, probeSource) {
+// The per-test clock and the whole-run deadline are patched down in the COPY only (3 s and 6 s unless a test says otherwise). Every
+// run is bounded by its own 40 s timer that kills the whole tree, so a regression fails this test instead of hanging the suite.
+function plant(t, probeSource, testClockMs = 3000) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-testspawn-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
   fs.mkdirSync(path.join(dir, 'scripts', 'lib'), { recursive: true });
@@ -74,7 +74,7 @@ function plant(t, probeSource) {
   assert.notEqual(roster, runner, 'the roster in the copy was replaced');
   fs.writeFileSync(path.join(dir, 'scripts', 'test.mjs'), roster);
   const plan = fs.readFileSync(path.join(ROOM, 'scripts', 'lib', 'test-spawn.mjs'), 'utf8')
-    .replace('TEST_TIMEOUT_MS = 120000', 'TEST_TIMEOUT_MS = 3000').replace('RUN_TIMEOUT_MS = 600000', 'RUN_TIMEOUT_MS = 6000');
+    .replace('TEST_TIMEOUT_MS = 120000', `TEST_TIMEOUT_MS = ${testClockMs}`).replace('RUN_TIMEOUT_MS = 600000', `RUN_TIMEOUT_MS = ${PLANT_RUN_MS}`);
   fs.writeFileSync(path.join(dir, 'scripts', 'lib', 'test-spawn.mjs'), plan);
   fs.writeFileSync(path.join(dir, 'scripts', 'lib', 'probe.test.mjs'), probeSource);
   return dir;
@@ -116,8 +116,17 @@ test('test-spawn (run): a file that leaks a handle at its top level while its on
   assert.equal(r.code, 0, r.out.slice(-400));
 });
 
+// Why this fixture's per-test clock is LONGER than the deadline (08b bounce 2, CI run 37724484940): before Node 24.0.0 --test-timeout
+// applied per test EXECUTION, which on our reading of the CI log includes the FILE ("test_runner: improve --test-timeout to be per test", nodejs/node #57672, listed under Notable
+// Changes in CHANGELOG_V24 and in neither CHANGELOG_V22 nor CHANGELOG_V23; the CLI docs say "subtests inherit this value from their
+// parent"), so on Node 22 a 3 s clock cancelled the thread-blocked file at 3 s ("failureType: 'testTimeoutFailure'" on probe.test.mjs,
+// cancelled 1), before the 6 s deadline could fire, and no FAIL line was printed. With the clock at 60 s the deadline is the first
+// clock to fire on both lines, so the backstop branch is tested on Node 22 and on Node 24 alike.
+const PLANT_RUN_MS = 6000;
+const BACKSTOP_TEST_CLOCK_MS = 60000;
 test('test-spawn (run): a test that blocks its thread past the whole-run deadline is a named FAIL and a non-zero exit, never a pass (08b INSPECT M-1 backstop)', async (t) => {
-  const dir = plant(t, "import test from 'node:test';\nimport fs from 'node:fs';\ntest('blocks the thread', () => { fs.writeFileSync('child.pid', String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000); });\n");
+  assert.ok(BACKSTOP_TEST_CLOCK_MS > PLANT_RUN_MS, 'the deadline must be the first clock to fire in this fixture');
+  const dir = plant(t, "import test from 'node:test';\nimport fs from 'node:fs';\ntest('blocks the thread', () => { fs.writeFileSync('child.pid', String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000); });\n", BACKSTOP_TEST_CLOCK_MS);
   const r = await runPlanted(dir);
   try { process.kill(Number(fs.readFileSync(path.join(dir, 'child.pid'), 'utf8')), 'SIGKILL'); } catch { /* gone, or never written */ }
   assert.equal(r.bound, false, 'the run did not end by itself\n' + r.out.slice(-400));
