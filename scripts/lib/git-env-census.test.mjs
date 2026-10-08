@@ -232,6 +232,12 @@ const WITNESS_F = [
   { id: 'F32', src: "const env = { PATH: process.env.PATH, " + NS + " };\nfunction b(d) {\n  let env = { ...process.env };\n  @SPAWN@\n}", forms: DECL },
   { id: 'F33', src: "const env = { PATH: process.env.PATH, " + NS + " };\nfunction b(env) {\n  @SPAWN@\n}", forms: DECL },
   { id: 'F34', src: "function a() { const e2 = { PATH: process.env.PATH, " + NS + " }; return e2; }\nfunction b() {\n  const e2 = { ...process.env };\n  @SPAWN@\n}", forms: ['env: e2'] },
+  // 08d bounce 2: the RE-INSPECT rows C1-C4 and C8, a write through any reference but the env's own name.
+  { id: 'C1', src: KEEPLIST + "const env = { " + PICK + ", " + NS + " };\nconst alias = env;\nfor (const k in process.env) alias[k] = process.env[k];\n@SPAWN@", forms: DECL },
+  { id: 'C2', src: KEEPLIST + "function fill(o) { for (const k in process.env) o[k] = process.env[k]; }\nconst env = { " + PICK + ", " + NS + " };\nfill(env);\n@SPAWN@", forms: DECL },
+  { id: 'C3', src: KEEPLIST + "const env = { " + PICK + ", " + NS + " };\nReflect.set(env, 'GIT_DIR', d);\n@SPAWN@", forms: DECL },
+  { id: 'C4', src: KEEPLIST + "const env = { " + PICK + ", " + NS + " };\nconst alias = env;\nalias.GIT_DIR = d;\n@SPAWN@", forms: DECL },
+  { id: 'C8', src: KEEPLIST + "const env = { " + PICK + ", " + NS + " };\nObject.assign(Object(env), { GIT_DIR: d });\n@SPAWN@", forms: DECL },
 ];
 const WITNESS_P = [
   { id: 'P3a', src: "@SPAWN@", forms: ['env: gitEnv(d)'] },
@@ -296,4 +302,25 @@ test('census (08d): an options spread AFTER env, a loop variable named env, a re
   assert.equal(one("function a() { const env = { PATH: process.env.PATH, " + NS + " }; return env; }\nfunction b() { const env = { PATH: process.env.PATH }; " + SG + ", ['x'], { env }); }\n").length, 1, 'the second declaration alone lacks GIT_CONFIG_NOSYSTEM');
   assert.deepEqual(one("const env = { /* note */ PATH: process.env.PATH, /* the system config is off */ " + NS + " };\n" + SG + ", ['x'], { env });\n"), [], 'a block comment between members is not an unreadable member');
   assert.equal(one(KEEPLIST + "const env = { ...Object.fromEntries(keep.filter((k) => Object.keys(other).includes(k)).map((k) => [k, process.env[k]])), " + NS + " };\n" + SG + ", ['x'], { env });\n").length, 1, 'a pick callback may not read another whole object');
+});
+
+// 08d bounce 2: the branches of the any-other-use rule and of the for-in read, each with a leg only that branch can catch.
+test('census (08d bounce 2): a bare reference to the env binding, a for-in over process.env and a shebang line', () => {
+  const good = "const env = { PATH: process.env.PATH, " + NS + " };\n";
+  assert.match(one(good + "const other = flag ? env : {};\n" + SG + ", ['x'], { env });\n")[0], /bare reference/, 'an alias through a ternary names the bare reference');
+  assert.equal(one(good + "log(Object.keys(env));\n" + SG + ", ['x'], { env });\n").length, 1, 'a call argument is a bare reference');
+  assert.deepEqual(one(good + "const home = env.PATH;\nconst first = env['PATH'];\n" + SG + ", ['x'], { env });\n" + SG + ", ['y'], { cwd: d, env: env });\n"), [], 'a member read and both spawn forms are allowed');
+  assert.equal(one(good + "let n = 0;\nfor (const k in process.env) n++;\n" + SG + ", ['x'], { env });\n").length, 1, 'a for-in over process.env reads the whole object');
+  assert.deepEqual(one(good + "const present = 'PATH' in process.env;\n" + SG + ", ['x'], { env });\n"), [], 'a presence test is not a read of the object');
+  assert.deepEqual(one('#!/usr/bin/env node\n' + good + SG + ", ['x'], { env });\n"), [], 'a shebang line naming env is not a use of the binding');
+});
+
+test('census (08d bounce 2): the any-other-use rule also binds a spread source and a key list, and a destructured parameter or a second declaration is judged', () => {
+  const good = "const env = { PATH: process.env.PATH, " + NS + " };\n";
+  const pickDecl = "const pick = { PATH: process.env.PATH };\n";
+  assert.deepEqual(one(pickDecl + "const env = { ...pick, " + NS + " };\n" + SG + ", ['x'], { env });\n"), [], 'a spread source used only by its spread is clean');
+  assert.equal(one(pickDecl + "fill(pick);\nconst env = { ...pick, " + NS + " };\n" + SG + ", ['x'], { env });\n").length, 1, 'a spread source handed to a call can be changed there');
+  assert.equal(one(KEEPLIST + "fill(keep);\nconst env = { " + PICK + ", " + NS + " };\n" + SG + ", ['x'], { env });\n").length, 1, 'a key list handed to a call can gain a GIT_ name there');
+  assert.equal(one(good + "function run({ env }) {\n" + SG + ", ['x'], { env });\n}\n").length, 1, 'a destructured parameter named env is unreadable');
+  assert.ok(one("function a() { const env = { PATH: process.env.PATH, " + NS + " };\n" + SG + ", ['a'], { env }); }\nfunction b() { const env = { PATH: process.env.PATH };\n" + SG + ", ['b'], { env }); }\n").length >= 1, 'the second declaration alone lacks NOSYSTEM and is judged, with no return env to trip the other rule');
 });

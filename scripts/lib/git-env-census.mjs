@@ -67,6 +67,11 @@ function scanSource(text) {
   const blank = (arr, a, b) => { for (let k = a; k < b; k++) if (arr[k] !== '\n' && arr[k] !== '\r') arr[k] = CHAR_SPACE; };
   const prevIdx = (i) => { let p = i - 1; while (p >= 0 && isWs(masked[p])) p--; return p; };
   let i = 0;
+  if (text.startsWith('#!')) { // a shebang line is a comment to the engine
+    const j = text.indexOf('\n');
+    i = j < 0 ? n : j;
+    blank(code, 0, i); blank(masked, 0, i);
+  }
   while (i < n) {
     const c = text[i];
     const d = text[i + 1];
@@ -167,8 +172,25 @@ const GIT_ENV_CALL = /^(?:gitEnv|gitTestEnv)\s*\(/;
 const isGitEnvAlone = (m, s, e) => { const mm = GIT_ENV_CALL.exec(m.slice(s, e)); return mm !== null && findMatching(m, s + mm[0].length - 1) === e - 1; };
 const IDENT = /^[A-Za-z_$][\w$]*$/;
 // `'K' in process.env` only asks whether a key exists, so it is not a read of the object.
+const FOR_IN_ENV = /\bfor\s*\(\s*(?:(?:const|let|var)\s+)?[\w$]+\s+in\s+process\s*\.\s*env\b/;
 const BARE_ENV = /(?<!\bin\s+)\bprocess\s*\.\s*env\b(?!\s*\[)(?!\s*\.\s*[A-Za-z_$])/;
 const BARE_PROCESS_VALUE = /(?<![\w$.])process\b(?!\s*\.\s*[A-Za-z_$])(?!\s*\[)/;
+
+// True when a binding that feeds an env (the env itself or a spread source) is mentioned anywhere but its declaration, a member read (a write is judged apart) and the spawn's own { name } / env: name (a spread's name sits after dots the pattern already skips).
+function strayUse(m, name) {
+  const re = new RegExp('(?<![\\w$.])' + esc(name) + '(?![\\w$])', 'g');
+  const asValue = new RegExp('[{,]\\s*' + esc(name) + '\\s*:\\s*$');
+  for (const mm of m.matchAll(re)) {
+    const before = m.slice(0, mm.index);
+    const after = m.slice(mm.index + name.length);
+    if (/\b(?:const|let|var)\s+$/.test(before) && /^\s*=(?![=>])/.test(after)) continue;
+    if (/^\s*(?:\.\s*[A-Za-z_$]|\[)/.test(after)) continue;
+    if (/[{,]\s*$/.test(before) && /^\s*(?:[,}]|:)/.test(after)) continue;
+    if (asValue.test(before) && /^\s*[,}]/.test(after)) continue;
+    return true;
+  }
+  return false;
+}
 
 // The reasons the declarations of `name` cannot be read, or that it is written after its declaration.
 function bindingHazards(ctx, name) {
@@ -198,6 +220,7 @@ function bindingHazards(ctx, name) {
     new RegExp('(?<!\\b(?:const|let|var)\\s)(?<![\\w$.])' + q + '\\s*(?:=(?![=>])|\\+=)'),
   ];
   if (writes.some((re) => re.test(m))) bad.push(`writes to ${name} after its declaration`);
+  if (strayUse(m, name)) bad.push(`uses ${name} by a bare reference (an alias, a call argument, Reflect.*, Object(...)), so the object can change where the census cannot see; only its declaration, a member read and the spawn's own env are allowed`);
   return bad;
 }
 
@@ -353,7 +376,7 @@ function judgeHelper(ctx, name, depth, res) {
 function fileWideReasons(ctx) {
   const { masked: m, code } = ctx;
   const out = [];
-  if (BARE_ENV.test(m) || /\bprocess\s*\[/.test(m) || BARE_PROCESS_VALUE.test(m)
+  if (BARE_ENV.test(m) || FOR_IN_ENV.test(m) || /\bprocess\s*\[/.test(m) || BARE_PROCESS_VALUE.test(m)
     || /\bimport\b[^;]*\benv\b[^;]*\bfrom\s*['"](?:node:)?process['"]/.test(code)
     || /\brequire\s*\(\s*['"](?:node:)?process['"]\s*\)/.test(code)
     || /\{[^}]*\benv\b[^}]*\}\s*=\s*(?:globalThis\s*\.\s*)?process\b/.test(m)) {
