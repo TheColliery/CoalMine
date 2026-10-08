@@ -693,7 +693,7 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
       NL + 'See `totally-fake-root/notes.md` for details.' + NL);
 
     const git = (args, opts = {}) => {
-      const r = spawnSync('git', args, { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', ...opts });
+      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8', ...opts, env: gitEnv(path.dirname(tmp)) });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
       return r.stdout;
     };

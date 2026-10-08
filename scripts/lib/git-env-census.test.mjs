@@ -174,15 +174,126 @@ test('census rule (a), witness e: an allowlist that names or sets a GIT_* key be
     assert.equal(f.length, 1, file);
     assert.match(f[0], /names GIT_(DIR|WORK_TREE)/);
   }
-  assert.deepEqual(one(allowFile(ALLOW_GOOD).replace('// x', '')), [], 'control: the three canon names are allowed');
+  assert.deepEqual(one(allowFile(ALLOW_GOOD)), [], 'control: the three canon names are allowed');
   assert.deepEqual(one('// GIT_DIR is what a hook leaves behind\n' + allowFile(ALLOW_GOOD)), [], 'a name in a line comment is not a key');
 });
 
 test('census rule (a): a shorthand env with no declaration in the file, or declared as a call, stays a finding', () => {
   const f = one(SG + ", ['status'], { encoding: 'utf8', env });\n");
   assert.equal(f.length, 1);
-  assert.match(f[0], /carries no 'env:'/);
-  const call = one("const env = buildEnv();\n" + SG + ", ['status'], { env });\n");
+  assert.match(f[0], /no readable declaration/);
+  const call =one("const env = buildEnv();\n" + SG + ", ['status'], { env });\n");
   assert.equal(call.length, 1, 'an env the census cannot read is never waved through');
-  assert.match(call[0], /carries no 'env:'/);
+  assert.match(call[0], /does not define|cannot read|no readable declaration/);
+});
+
+// 08d: THE CENSUS WITNESS LIST (F1-F34 and P1-P6 of the 08d order), one probe per vector. F = must be a finding, P = must pass with no pin.
+// A vector that declares `const env` is probed in both call forms, shorthand { env } and env: env. Probes are assembled here, so this file holds no spawn of its own.
+const SPAWN_AT = (prop) => SG + ", ['status'], { cwd: d, " + prop + ' });';
+const probe = (src, prop) => src.split('@SPAWN@').join(SPAWN_AT(prop));
+const KEEPLIST = "const keep = ['PATH', 'HOME'];\n";
+const PICK = "...Object.fromEntries(keep.filter((k) => k in process.env).map((k) => [k, process.env[k]]))";
+const NS = "GIT_CONFIG_NOSYSTEM: '1'";
+const DECL = ['env', 'env: env'];
+const WITNESS_F = [
+  { id: 'F1', src: "const base = { ...process.env };\nconst env = { ...base, " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F1b', src: "const extra = process.env;\nconst env = { ...extra, " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F1c', src: "const e = process.env;\nconst env = { ...Object.fromEntries(Object.entries(e)), " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F2', src: "const env = { ...Object.fromEntries(Object.entries(process.env)), " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F3', src: "const env = { ...Object.fromEntries(Object.entries(process.env).filter(() => true)), " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F4', src: "const env = { ...process['env'], " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F5', src: "import { env as penv } from 'node:process';\nconst env = { ...penv, " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F6', src: "@SPAWN@", forms: ["env: { ...gitEnv(d), ...process.env }"] },
+  { id: 'F7', src: "const base = { ...process.env };\n@SPAWN@", forms: ["env: { ...gitEnv(d), ...base }"] },
+  { id: 'F8', src: "@SPAWN@", forms: ["env: { " + NS + ", extra: { ...process.env } }"] },
+  { id: 'F9', src: KEEPLIST + "const env = { ...Object.fromEntries(keep.filter(Boolean).map((k) => [k, process.env[k]]).concat(Object.entries(process.env))), " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F10', src: KEEPLIST + "const env = { ...Object.fromEntries(keep.filter(Boolean).flatMap(() => Object.entries(process.env))), " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F11', src: "@SPAWN@", forms: ["env: { " + NS + ", all: process.env }"] },
+  { id: 'F12', src: "function all() { return process.env; }\nconst env = { ...Object.fromEntries(Object.entries(all())), " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F13', src: "function mk(x) { if (x) return { PATH: process.env.PATH, " + NS + " }; return process.env; }\n@SPAWN@", forms: ["env: mk(d)"] },
+  { id: 'F14', src: "@SPAWN@", forms: ["env: sandboxEnv(cwd)"] },
+  { id: 'F15', src: KEEPLIST + "const env = { " + PICK + ", " + NS + " };\nObject.assign(env, process.env);\n@SPAWN@", forms: DECL },
+  { id: 'F16', src: "const env = { " + NS + " };\nfor (const k of Object.keys(process.env)) env[k] = process.env[k];\n@SPAWN@", forms: DECL },
+  { id: 'F17', src: KEEPLIST + "const env = { " + PICK + ", " + NS + " };\nenv.GIT_DIR = '/elsewhere/.git';\n@SPAWN@", forms: DECL },
+  { id: 'F18', src: "const KEYS = ['PATH'];\nKEYS.push('GIT_DIR');\nconst env = { ...Object.fromEntries(KEYS.map((k) => [k, process.env[k]])), " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F19', src: "const keep = ['PATH', 'GIT_DIR'];\nconst env = { " + PICK + ", " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F20', src: "const k2 = ['GIT_DIR'];\nconst keep = ['PATH', ...k2];\nconst env = { " + PICK + ", " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F21', src: "const keep = ['PATH', 'GIT_' + 'DIR'];\nconst env = { " + PICK + ", " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'F22', src: "@SPAWN@", forms: ["env: { " + NS + ", ['GIT' + '_DIR']: process.env['GIT' + '_DIR'] }"] },
+  { id: 'F23', src: "const env = { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '0' };\n@SPAWN@", forms: DECL },
+  { id: 'F24', src: "const env = { PATH: process.env.PATH, " + NS + ", GIT_CONFIG_NOSYSTEM: '0' };\n@SPAWN@", forms: DECL },
+  { id: 'F25', src: KEEPLIST + "const over = { GIT_CONFIG_NOSYSTEM: '0' };\nconst env = { " + NS + ", " + PICK + ", ...over };\n@SPAWN@", forms: DECL },
+  { id: 'F26', src: "const env = { PATH: process.env.PATH, HOME: process.env.HOME };\n@SPAWN@", forms: DECL },
+  { id: 'F27', src: "const flag = '1';\nconst env = { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: flag };\n@SPAWN@", forms: DECL },
+  { id: 'F28', src: "const env = { /* GIT_CONFIG_NOSYSTEM: '1' */ PATH: process.env.PATH };\n// GIT_CONFIG_NOSYSTEM: '1'\n@SPAWN@", forms: DECL },
+  { id: 'F29', src: "const env = { PATH: process.env.PATH, " + NS + ", git_dir: d };\n@SPAWN@", forms: DECL },
+  { id: 'F30', src: "const env = { PATH: process.env.PATH, " + NS + ", GIT_DIR: d };\n@SPAWN@", forms: DECL },
+  { id: 'F31', src: "function a() { const env = { PATH: process.env.PATH, " + NS + " }; return env; }\nfunction b(d) {\n  const env = { ...process.env };\n  @SPAWN@\n}", forms: DECL },
+  { id: 'F32', src: "const env = { PATH: process.env.PATH, " + NS + " };\nfunction b(d) {\n  let env = { ...process.env };\n  @SPAWN@\n}", forms: DECL },
+  { id: 'F33', src: "const env = { PATH: process.env.PATH, " + NS + " };\nfunction b(env) {\n  @SPAWN@\n}", forms: DECL },
+  { id: 'F34', src: "function a() { const e2 = { PATH: process.env.PATH, " + NS + " }; return e2; }\nfunction b() {\n  const e2 = { ...process.env };\n  @SPAWN@\n}", forms: ['env: e2'] },
+];
+const WITNESS_P = [
+  { id: 'P3a', src: "@SPAWN@", forms: ['env: gitEnv(d)'] },
+  { id: 'P3b', src: "const env = gitEnv(d);\n@SPAWN@", forms: DECL },
+  { id: 'P4', src: "@SPAWN@", forms: ["env: { PATH: process.env.PATH, HOME: process.env.HOME, " + NS + " }"] },
+  { id: 'P5', src: KEEPLIST + "const env = { " + PICK + ", " + NS + " };\n@SPAWN@", forms: DECL },
+  { id: 'P6', src: KEEPLIST + "const env = { " + PICK + ", " + NS + ", GIT_TERMINAL_PROMPT: '0', GIT_CEILING_DIRECTORIES: d };\n@SPAWN@", forms: DECL },
+  { id: 'P7 quoted key and a process.env mention in a string', src: "const note = 'process.env is never copied';\nconst env = { 'GIT_CONFIG_NOSYSTEM': '1', PATH: process.env.PATH };\n@SPAWN@", forms: DECL },
+  { id: 'P8 helper with one literal return', src: "const mk = (dir) => ({ PATH: process.env.PATH, HOME: dir, " + NS + " });\n@SPAWN@", forms: ['env: mk(d)'] },
+  { id: 'P9 helper with a block body', src: "function mk(dir) {\n  const x = 1;\n  return { PATH: process.env.PATH, HOME: dir, " + NS + " };\n}\n@SPAWN@", forms: ['env: mk(d)'] },
+];
+for (const v of WITNESS_F) {
+  for (const prop of v.forms) {
+    test('witness ' + v.id + ' must FAIL [' + prop.slice(0, 24) + ']', () => {
+      const f = one(probe(v.src, prop));
+      assert.equal(f.length, 1, v.id + ' must be exactly one finding, got: ' + JSON.stringify(f));
+    });
+  }
+}
+for (const v of WITNESS_P) {
+  for (const prop of v.forms) {
+    test('witness ' + v.id + ' must PASS with no pin [' + prop.slice(0, 24) + ']', () => {
+      assert.deepEqual(censusGitSpawns([{ rel: 'scripts/x.mjs', text: probe(v.src, prop) }], {}), []);
+    });
+  }
+}
+
+test('witness P1: the canon release-notes.mjs (blob f8d998d8) passes with the pin table empty', () => {
+  const live = collectScriptsMjs(repo).filter((f) => f.rel === 'scripts/release-notes.mjs');
+  assert.equal(live.length, 1);
+  assert.ok(blobId(live[0].text).startsWith('f8d998d8'), 'the file under test IS the canon blob');
+  assert.deepEqual(censusGitSpawns(live, {}), []);
+});
+
+// P2: the canon release-notes.test.mjs builds its sandbox as ONE literal and hands it to git through a same-file helper.
+test('witness P2: the sandboxEnv shape (a helper returning one allowlist literal) passes with no pin, and the live release-notes.test.mjs does too', () => {
+  const helper = "const BASE_ENV_KEYS = ['PATH', 'Path', 'SystemRoot'];\nconst sandboxEnv = (dir) => ({\n  ...Object.fromEntries(BASE_ENV_KEYS.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),\n  HOME: dir, TEMP: dir, GIT_CEILING_DIRECTORIES: path.dirname(dir), GIT_CONFIG_NOSYSTEM: '1',\n  HOMEDRIVE: process.platform === 'win32' ? path.parse(dir).root : undefined,\n});\nconst childEnv = (dir, extra = {}) => Object.assign(sandboxEnv(dir), extra);\n";
+  assert.deepEqual(censusGitSpawns([{ rel: 'scripts/x.mjs', text: helper + probe('@SPAWN@', 'env: sandboxEnv(d)') }], {}), []);
+  const live = collectScriptsMjs(repo).filter((f) => f.rel === 'scripts/release-notes.test.mjs');
+  assert.equal(live.length, 1);
+  assert.deepEqual(censusGitSpawns(live, {}), []);
+});
+
+// Branches of the rule the witness list does not name, each with its own leg.
+test('census (08d): an options spread AFTER env, a loop variable named env, a reassigned env and a helper with a second return are findings', () => {
+  const good = "const env = { PATH: process.env.PATH, " + NS + " };\n";
+  assert.equal(one(good + SG + ", ['x'], { env, ...opts });\n").length, 1, 'a spread after env can replace it');
+  assert.deepEqual(one(good + SG + ", ['x'], { ...opts, env });\n"), [], 'a spread BEFORE env is replaced by it');
+  assert.equal(one("for (const env of list) {\n" + SG + ", ['x'], { env });\n}\n").length, 1, 'a loop variable is unreadable');
+  assert.equal(one(good + "let again = 1;\nenv = { ...gitEnv(d) };\n" + SG + ", ['x'], { env });\n").length, 1, 'a reassignment after the declaration');
+  assert.equal(one("function mk() { if (a) return { PATH: process.env.PATH, " + NS + " }; return { PATH: process.env.PATH }; }\n" + SG + ", ['x'], { env: mk() });\n").length, 1, 'every return of a helper is judged');
+  assert.equal(one(KEEPLIST + "const env = { ...Object.fromEntries(keep.filter(Boolean).concat(other)), " + NS + " };\n" + SG + ", ['x'], { env });\n").length, 1, 'a pick may only filter and map');
+  assert.equal(one(KEEPLIST + "keep[0] = 'GIT_DIR';\nconst env = { " + PICK + ", " + NS + " };\n" + SG + ", ['x'], { env });\n").length, 1, 'a key list written after its declaration');
+  assert.equal(one(good + "const env2 = 1;\nconst env = { ...process.env };\n" + SG + ", ['x'], { env });\n").length, 1, 'a second declaration is judged too');
+  assert.equal(one(SG + ", ['x'], { env: gitEnv(d) || other });\n").length, 1, 'gitEnv(...) is trusted alone, not as the head of a larger expression');
+  assert.match(one(SG + ", ['x'], { env: flag ? good : other });\n")[0], /cannot read/, 'a ternary is an env the census cannot read');
+  assert.match(one("for (const env of list) {\n" + SG + ", ['x'], { env });\n}\n")[0], /loop variable/, 'the loop variable is named as the reason');
+  assert.match(one(SG + ", ['x'], { env: { " + NS + ", ['GIT' + '_DIR']: 1 } });\n")[0], /computed property key/, 'a computed key is named as the reason');
+  assert.equal(one(good + "const note = process['env'];\n" + SG + ", ['x'], { env });\n").length, 1, 'process[...] anywhere in the file is a read of the whole object');
+  assert.equal(one("import { env as penv } from 'node:process';\n" + SG + ", ['x'], { env: { PATH: 'x', " + NS + " } });\n").length, 1, 'an import of the process env anywhere in the file, with no env binding to trip');
+  assert.deepEqual(one("const env = { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: /* the system config is off */ '1' };\n" + SG + ", ['x'], { env });\n"), [], 'a block comment inside the NOSYSTEM value does not make the value something other than the literal 1');
+  assert.equal(one("function a() { const env = { PATH: process.env.PATH, " + NS + " }; return env; }\nfunction b() { const env = { PATH: process.env.PATH }; " + SG + ", ['x'], { env }); }\n").length, 1, 'the second declaration alone lacks GIT_CONFIG_NOSYSTEM');
+  assert.deepEqual(one("const env = { /* note */ PATH: process.env.PATH, /* the system config is off */ " + NS + " };\n" + SG + ", ['x'], { env });\n"), [], 'a block comment between members is not an unreadable member');
+  assert.equal(one(KEEPLIST + "const env = { ...Object.fromEntries(keep.filter((k) => Object.keys(other).includes(k)).map((k) => [k, process.env[k]])), " + NS + " };\n" + SG + ", ['x'], { env });\n").length, 1, 'a pick callback may not read another whole object');
 });
