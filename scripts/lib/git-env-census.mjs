@@ -68,8 +68,9 @@ function scanSource(text) {
   const prevIdx = (i) => { let p = i - 1; while (p >= 0 && isWs(masked[p])) p--; return p; };
   let i = 0;
   if (text.startsWith('#!')) { // a shebang line is a comment to the engine
-    const j = text.indexOf('\n');
-    i = j < 0 ? n : j;
+    // The engine ends a hashbang at ANY ECMAScript line terminator (LF, CR, U+2028, U+2029), not only LF.
+    const ends = ['\n', '\r', String.fromCharCode(0x2028), String.fromCharCode(0x2029)].map((t) => text.indexOf(t)).filter((x) => x >= 0);
+    i = ends.length ? Math.min(...ends) : n;
     blank(code, 0, i); blank(masked, 0, i);
   }
   while (i < n) {

@@ -324,3 +324,12 @@ test('census (08d bounce 2): the any-other-use rule also binds a spread source a
   assert.equal(one(good + "function run({ env }) {\n" + SG + ", ['x'], { env });\n}\n").length, 1, 'a destructured parameter named env is unreadable');
   assert.ok(one("function a() { const env = { PATH: process.env.PATH, " + NS + " };\n" + SG + ", ['a'], { env }); }\nfunction b() { const env = { PATH: process.env.PATH };\n" + SG + ", ['b'], { env }); }\n").length >= 1, 'the second declaration alone lacks NOSYSTEM and is judged, with no return env to trip the other rule');
 });
+
+test('census (08d bounce 3): a hashbang ends at ANY line terminator, so a spawn after a lone CR, U+2028 or U+2029 is still read', () => {
+  const spawn = SG + ", ['status'], { env: process.env });\n";
+  for (const [name, term] of [['LF', '\n'], ['CR', String.fromCharCode(13)], ['U+2028', String.fromCharCode(0x2028)], ['U+2029', String.fromCharCode(0x2029)]]) {
+    assert.equal(one('#!/usr/bin/env node' + term + spawn).length, 1, 'a spawn after a hashbang ended by ' + name + ' is a finding');
+  }
+  const good = "const env = { PATH: process.env.PATH, " + NS + " };\n";
+  assert.deepEqual(one('#!/usr/bin/env node' + String.fromCharCode(0x2028) + good + SG + ", ['x'], { env });\n"), [], 'a clean file with the odd terminator still passes');
+});
