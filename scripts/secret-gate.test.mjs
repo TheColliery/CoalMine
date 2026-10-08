@@ -42,9 +42,12 @@ function gitWith(extra, dir, ...args) {
 
 // A throwaway repository holding the gate and its scanner, with one commit per entry of `commits` ({ file: text } maps;
 // a null text deletes the file).
-function repo(commits, { withLib = true } = {}) {
+// `env` is laid over the sandbox environment for every git call of this fixture (the hostile-config witness passes its HOME and XDG_CONFIG_HOME this way,
+// per call, never by changing this process's own environment).
+function repo(commits, { withLib = true, env = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(SANDBOX, 'secret-gate-'));
   made.push(dir);
+  const git = (d, ...args) => gitWith(env, d, ...args);
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 'test@example.invalid');
   git(dir, 'config', 'user.name', 'test');
@@ -243,10 +246,12 @@ test('the fixtures run in the test\'s own sandbox: a hostile global git config a
   fs.writeFileSync(path.join(hostile, '.gitconfig'), hostileConfig); // read through HOME
   fs.mkdirSync(path.join(hostile, 'git'));
   fs.writeFileSync(path.join(hostile, 'git', 'config'), hostileConfig); // read through XDG_CONFIG_HOME (UMB-456 (1) v: it was planted at hostile/.gitconfig, a path XDG never reads)
-  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
-  process.env.HOME = hostile; process.env.USERPROFILE = hostile; process.env.XDG_CONFIG_HOME = hostile;
-  try {
-    const dir = repo([{ 'a.txt': 'x\n' }]); // a commit under the hostile global hook would fail with exit 1
+  // The hostile HOME and XDG_CONFIG_HOME are laid over the sandbox environment of each git call (not set on this process): they REACH git, so the only thing
+  // standing between them and the fixture is GIT_CONFIG_GLOBAL. Take that variable out of gitEnv() and the commit below fails under the hostile hook.
+  const hostileEnv = { HOME: hostile, USERPROFILE: hostile, XDG_CONFIG_HOME: hostile };
+  {
+    const dir = repo([{ 'a.txt': 'x\n' }], { env: hostileEnv }); // a commit under the hostile global hook would fail with exit 1
+    assert.equal(gitWith(hostileEnv, dir, 'config', '--global', '--list'), '', 'git reads no global configuration even with the hostile HOME and XDG_CONFIG_HOME in place');
     assert.ok(path.resolve(dir).startsWith(path.resolve(SANDBOX) + path.sep), 'the fixture folder is inside the sandbox: ' + dir);
     const probe = execFileSync(process.execPath, ['-e', 'const e = process.env; console.log(JSON.stringify([e.TEMP, e.TMP, e.TMPDIR, e.GIT_CONFIG_GLOBAL, e.GIT_CONFIG_NOSYSTEM]))'], { encoding: 'utf8', timeout: 60000, env: gitEnv() });
     const [tmp, tmp2, tmpdir, global, nosys] = JSON.parse(probe);
@@ -254,7 +259,7 @@ test('the fixtures run in the test\'s own sandbox: a hostile global git config a
     assert.equal(path.dirname(global), SANDBOX);
     assert.equal(fs.readFileSync(global, 'utf8'), '', 'the global config is an empty file of the sandbox');
     assert.equal(nosys, '1');
-  } finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+  }
 });
 
 // UMB-456 (1) vi (CoalGob N1): when the machine's temp folder sits inside a git repository, the sandbox sits inside it too, and a fixture folder that is

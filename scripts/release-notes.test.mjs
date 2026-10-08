@@ -18,15 +18,26 @@ const LIB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lib');
 // LATEST_TAG, LAUNCH_FORM, GITHUB_REF_NAME and the rest of an Actions run's variables change what these scripts do, so none of the
 // parent's reaches the child. Only what a node child needs to start (the program path and, on Windows, SystemRoot) is passed through.
 const BASE_ENV_KEYS = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT'];
-const sandboxEnv = (dir, extra = {}) => ({
+// The keys that make this a sandbox. A caller's `extra` env may add or change anything else, but changing one of these needs the caller to name it in `allow`:
+// a silent override of HOME, TEMP or the ceiling would defeat the sandbox every other test here relies on (CoalBoard's patrol, t24 #5).
+const SANDBOX_KEYS = ['HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'HOMEDRIVE', 'HOMEPATH', 'GIT_CEILING_DIRECTORIES'];
+// The sandbox environment as one literal built from named keys: the allowlist shape a room's git-spawn census accepts without a pin (an allowlisted base, named
+// keys, GIT_CONFIG_NOSYSTEM the literal 1, no spread of a caller's object). Windows puts HOMEDRIVE and HOMEPATH (the real profile) into every process it starts;
+// they are overridden too, so no path variable points out, and the undefined they take elsewhere is dropped by spawn.
+const sandboxEnv = (dir) => ({
   ...Object.fromEntries(BASE_ENV_KEYS.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),
-  HOME: dir, USERPROFILE: dir, TEMP: dir, TMP: dir, TMPDIR: dir, GIT_CEILING_DIRECTORIES: path.dirname(dir),
-  // Windows puts HOMEDRIVE and HOMEPATH (the real profile) into every process it starts; they are overridden too, so no path variable points out.
-  ...(process.platform === 'win32' ? { HOMEDRIVE: path.parse(dir).root.replace(/[\\/]+$/, ''), HOMEPATH: dir.slice(path.parse(dir).root.length - 1) } : {}),
-  ...extra,
+  HOME: dir, USERPROFILE: dir, TEMP: dir, TMP: dir, TMPDIR: dir, GIT_CEILING_DIRECTORIES: path.dirname(dir), GIT_CONFIG_NOSYSTEM: '1',
+  HOMEDRIVE: process.platform === 'win32' ? path.parse(dir).root.replace(/[\\/]+$/, '') : undefined,
+  HOMEPATH: process.platform === 'win32' ? dir.slice(path.parse(dir).root.length - 1) : undefined,
 });
+// The environment of a spawned script: the sandbox, then the caller's `extra` (a workflow variable such as GITHUB_REF_NAME), a sandbox key only when named in `allow`.
+const childEnv = (dir, extra = {}, allow = []) => {
+  const silent = Object.keys(extra).filter((k) => SANDBOX_KEYS.includes(k.toUpperCase()) && !allow.includes(k));
+  if (silent.length) throw new Error('childEnv: the caller overrides sandbox key(s) ' + silent.join(', ') + ' without naming them in allow');
+  return Object.assign(sandboxEnv(dir), extra);
+};
 // The one place every spawn of these tests goes through, so the sandbox is applied by construction.
-const spawnIn = (cwd, script, args = [], { env, input } = {}) => spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', timeout: 30000, input, env: sandboxEnv(cwd, env) });
+const spawnIn = (cwd, script, args = [], { env, allow, input } = {}) => spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', timeout: 30000, input, env: childEnv(cwd, env, allow) });
 const made = [];
 test.after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
 
@@ -38,8 +49,8 @@ function scratchWithLib() {
   return dir;
 }
 
-function run(cwd, env, args = []) {
-  return spawnIn(cwd, SCRIPT, args, { env });
+function run(cwd, env, args = [], allow = []) {
+  return spawnIn(cwd, SCRIPT, args, { env, allow });
 }
 
 test('release-notes.mjs: writes release-title.txt + release-body.md derived from CHANGELOG.md, exit 0', () => {
@@ -246,7 +257,7 @@ test('the allowed child keys take the two a runtime or an OS injects and refuse 
 test('the spawn the tests share gives the child the scratch folder as HOME, USERPROFILE, TEMP, TMP and TMPDIR, a git ceiling above it, and nothing of the parent\'s -- RED before UMB-443', () => {
   const dir = scratchWithLib();
   const probe = path.join(dir, 'probe.mjs');
-  fs.writeFileSync(probe, "const e = process.env; console.log(JSON.stringify({ HOME: e.HOME, USERPROFILE: e.USERPROFILE, TEMP: e.TEMP, TMP: e.TMP, TMPDIR: e.TMPDIR, CEIL: e.GIT_CEILING_DIRECTORIES, HOMEDRIVE: e.HOMEDRIVE, HOMEPATH: e.HOMEPATH, KEYS: Object.keys(e).sort() }));\n");
+  fs.writeFileSync(probe, "const e = process.env; console.log(JSON.stringify({ HOME: e.HOME, USERPROFILE: e.USERPROFILE, TEMP: e.TEMP, TMP: e.TMP, TMPDIR: e.TMPDIR, CEIL: e.GIT_CEILING_DIRECTORIES, HOMEDRIVE: e.HOMEDRIVE, HOMEPATH: e.HOMEPATH, NOSYS: e.GIT_CONFIG_NOSYSTEM, KEYS: Object.keys(e).sort() }));\n");
   const saved = { HOME: process.env.HOME, GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GH_TOKEN };
   process.env.GITHUB_TOKEN = 'a-parent-value'; process.env.GH_TOKEN = 'a-parent-value';
   try {
@@ -255,9 +266,10 @@ test('the spawn the tests share gives the child the scratch folder as HOME, USER
     const seen = JSON.parse(r.stdout);
     for (const k of ['HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR']) assert.equal(seen[k], dir, k + ' is the scratch folder');
     assert.equal(seen.CEIL, path.dirname(dir));
+    assert.equal(seen.NOSYS, '1', 'the system git configuration is off for the child too');
     if (process.platform === 'win32') assert.equal(seen.HOMEDRIVE + seen.HOMEPATH, dir, 'HOMEDRIVE and HOMEPATH point into the scratch folder too');
     assert.ok(!seen.KEYS.includes('GITHUB_TOKEN') && !seen.KEYS.includes('GH_TOKEN'), 'no credential of the parent reaches the child');
-    assert.deepEqual(seen.KEYS.filter((k) => !CHILD_KEYS_OK.test(k)), [], 'nothing else but what node needs to start');
+    assert.deepEqual(seen.KEYS.filter((k) => k !== 'GIT_CONFIG_NOSYSTEM' && !CHILD_KEYS_OK.test(k)), [], 'nothing else but what node needs to start');
   } finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 });
 
@@ -283,12 +295,12 @@ test('release-notes.mjs --check: a plain folder inside a repository honours GIT_
   git(outer, 'init', '-q'); git(outer, 'remote', 'add', 'origin', 'https://github.com/TheColliery/Enclosing.git');
   const sub = path.join(outer, 'sub'); fs.mkdirSync(sub);
   fs.writeFileSync(path.join(sub, 'CHANGELOG.md'), checkEntry(60));
-  const res = run(sub, { GIT_CEILING_DIRECTORIES: outer }, ['--check']);
+  const res = run(sub, { GIT_CEILING_DIRECTORIES: outer }, ['--check'], ['GIT_CEILING_DIRECTORIES']);
   assert.equal(res.status, 1, res.stdout);
   assert.match(res.stderr, /cannot tell the repository name/);
   assert.doesNotMatch(res.stdout + res.stderr, /Enclosing/);
   // and without a ceiling the enclosing repository is what git finds, which is why the ceiling has to get through
-  const open = run(sub, { GIT_CEILING_DIRECTORIES: path.dirname(outer) }, ['--check']);
+  const open = run(sub, { GIT_CEILING_DIRECTORIES: path.dirname(outer) }, ['--check'], ['GIT_CEILING_DIRECTORIES']);
   assert.equal(open.status, 0, open.stderr);
   assert.match(open.stdout, /announcement title "Enclosing v1\.2\.0 - /);
 });
@@ -302,4 +314,28 @@ test('release-notes.mjs: --repo outside --check is an unknown argument (exit 64)
   assert.match(res.stderr, /unknown argument "--repo"/);
   assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false, 'nothing was derived');
   assert.equal(run(dir, {}, ['--check', '--repo', 'CoalBoard']).status, 0);
+});
+
+// CoalBoard's patrol (t24 #5, 2026-10-08): `extra` was spread last, so a caller could override HOME, TEMP or the ceiling and silently defeat the sandbox. A sandbox key now
+// changes only when the caller names it in `allow`; any other key (GITHUB_REF_NAME, LATEST_TAG ...) passes as before.
+test('childEnv: overriding a sandbox key without naming it in allow throws; naming it, or changing any other key, works -- RED before the CoalBoard canon ticket', () => {
+  const dir = path.join(os.tmpdir(), 'sandbox-env-probe');
+  for (const key of ['HOME', 'USERPROFILE', 'TEMP', 'TMP', 'TMPDIR', 'GIT_CEILING_DIRECTORIES']) {
+    assert.throws(() => childEnv(dir, { [key]: 'elsewhere' }), /overrides sandbox key/, key + ' is a sandbox key');
+    assert.equal(childEnv(dir, { [key]: 'elsewhere' }, [key])[key], 'elsewhere', key + ' named in allow');
+  }
+  assert.throws(() => childEnv(dir, { HOME: 'x', GIT_CEILING_DIRECTORIES: 'y' }, ['HOME']), /GIT_CEILING_DIRECTORIES/, 'allowing one key does not allow the next');
+  assert.equal(childEnv(dir, { GITHUB_REF_NAME: 'v1.2.0' }).GITHUB_REF_NAME, 'v1.2.0', 'a key outside the sandbox set passes');
+  assert.equal(childEnv(dir, {}).HOME, dir);
+});
+
+// CoalFace, CoalHearth and CoalLedger each carried a pin for this file because its sandboxEnv spread the caller's object and a conditional object and set no GIT_CONFIG_NOSYSTEM
+// (the CoalWorks chief's 08c, canon item 4 i). The literal below is what lets the pin come out: the system git config is off, and the only spread is the allowlisted base.
+test('sandboxEnv: one literal of named keys with GIT_CONFIG_NOSYSTEM the literal 1 and no spread but the allowlisted base -- RED before the 08c canon ticket', () => {
+  assert.equal(sandboxEnv(path.join(os.tmpdir(), 'sandbox-env-probe')).GIT_CONFIG_NOSYSTEM, '1');
+  const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('const sandboxEnv = (dir) => ({'), src.indexOf('// The environment of a spawned script'));
+  const spreads = body.split('\n').filter((l) => !l.trim().startsWith('//') && /\.\.\./.test(l)).map((l) => l.trim());
+  assert.deepEqual(spreads, ['...Object.fromEntries(BASE_ENV_KEYS.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),']);
+  assert.ok(/GIT_CONFIG_NOSYSTEM: '1'/.test(body));
 });

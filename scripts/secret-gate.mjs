@@ -3,10 +3,11 @@
 //
 // WHY: GitHub scans a public repository for PROVIDER tokens. This gate is the repository's own check: it runs the
 // portable scanner (scripts/lib/secret-scan.mjs, kept byte-identical in every repository that carries it) before a
-// commit and before a push. The scanner catches a provider-shaped token, a private-key header and a high-entropy value
-// assigned to a name like secret, token, password or key. It does NOT catch a credential inside a URL or connection
-// string (scheme://user:pass@host), an HTTP authentication header whose value is not on such a named assignment, or a
-// key split across lines.
+// commit and before a push. The scanner catches a provider-shaped token anywhere on a line (a URL or an HTTP header included), a
+// private-key header and a high-entropy value assigned to a name like secret, token, password or key. It does NOT catch a credential
+// inside a URL or connection string (scheme://user:pass@host) unless the credential is provider-shaped, an HTTP authentication header
+// whose value is a scheme and a token (Authorization: Bearer <key>, X-Api-Token: Bearer <key>) unless that token is provider-shaped,
+// or a key split across lines.
 //
 // TWO SCANS. (1) The STAGED tree, always: every blob in the index, which is what a commit records and what a CI checkout
 // holds (a staged edit is scanned even when the working file was changed back; an unstaged edit cannot be committed or
