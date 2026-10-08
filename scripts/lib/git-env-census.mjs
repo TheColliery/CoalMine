@@ -53,6 +53,60 @@ function findMatchingClose(text, openIdx) {
   return -1;
 }
 
+// 08c, rule (a) (main's ruling UMB-456 (2)): an ALLOWLIST env is the other safe shape. It picks NAMED keys out of process.env and
+// never spreads or copies the whole object, so no GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE a hook exports can come through. Three
+// conditions, all required, judged on the env object's text:
+//   1. no BARE process.env in it (a spread, Object.assign, the whole object): `process.env[k]` and `process.env.NAME` reads are fine;
+//   2. it carries GIT_CONFIG_NOSYSTEM: '1' (the canon sets it so the system git config is never read);
+//   3. the FILE names no GIT_* identifier beyond the three the canon uses (GIT_CONFIG_NOSYSTEM, GIT_TERMINAL_PROMPT,
+//      GIT_CEILING_DIRECTORIES, which only narrows where git searches), a line comment aside. File-wide on purpose: a key
+//      list declared above the env (const keep = [...]) is where a GIT_DIR would be smuggled in.
+// It applies to an env WRITTEN INLINE in the call (when it reads process.env and the call has no gitEnv()) and to a SHORTHAND
+// `env` property whose `const env = { ... }` sits in the same file. NOT covered, named: `env: someVariable` (the old blind spot, the
+// presence rung still accepts it), an env built by a call or declared in another file (a shorthand `env` the census cannot read
+// stays the 'carries no env:' finding), and a GIT_* key assembled at runtime from string pieces.
+const ALLOWED_GIT_NAMES = new Set(['GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', 'GIT_CEILING_DIRECTORIES']);
+const BARE_PROCESS_ENV = /\bprocess\.env\b(?!\s*\[)(?!\.[A-Za-z_$])/;
+const NOSYSTEM_ONE = /\bGIT_CONFIG_NOSYSTEM\s*:\s*['"`]1['"`]/;
+
+function findMatching(text, openIdx, open, close) {
+  let depth = 0;
+  for (let i = openIdx; i < text.length; i++) {
+    if (text[i] === open) depth++;
+    else if (text[i] === close) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+// The env object text of a call, or null when rule (a) does not apply to it.
+function allowlistEnvBody(text, callText) {
+  if (/\bgitEnv\s*\(/.test(callText)) return null;
+  const colon = /\benv\s*:\s*/.exec(callText);
+  if (colon) {
+    const at = colon.index + colon[0].length;
+    if (callText[at] !== '{') return null;
+    const end = findMatching(callText, at, '{', '}');
+    const body = end === -1 ? null : callText.slice(at, end + 1);
+    return body !== null && /\bprocess\.env\b/.test(body) ? body : null;
+  }
+  if (!/[{,]\s*env\s*(?=[,}])/.test(callText)) return null;
+  const decl = /\b(?:const|let|var)\s+env\s*=\s*\{/.exec(text);
+  if (!decl) return null;
+  const open = decl.index + decl[0].length - 1;
+  const end = findMatching(text, open, '{', '}');
+  return end === -1 ? null : text.slice(open, end + 1);
+}
+
+// A finding text for an allowlist env that breaks a condition, or null when it holds all three.
+function allowlistVerdict(text, body) {
+  if (BARE_PROCESS_ENV.test(body)) return "passes process.env without gitEnv() -- the GIT_* family is inherited (CWK-136); an allowlist env picks named keys out of process.env, it never spreads or copies the object (08c)";
+  if (!NOSYSTEM_ONE.test(body)) return "builds an allowlist env without GIT_CONFIG_NOSYSTEM: '1' -- the system git config would be read (CWK-136, 08c)";
+  for (const { m } of matches(/\bGIT_[A-Z0-9_]+\b/g, text)) {
+    if (!ALLOWED_GIT_NAMES.has(m[0])) return `has an allowlist env in a file that names ${m[0]} -- only ${[...ALLOWED_GIT_NAMES].join(', ')} may appear there (CWK-136, 08c)`;
+  }
+  return null;
+}
+
 function* matches(re, text) {
   re.lastIndex = 0;
   let m;
@@ -61,24 +115,18 @@ function* matches(re, text) {
   }
 }
 
-// R13 / CWK-174, narrowed at R14: the house secret scan arrives as byte-equal copies of the published-code template
-// (SERIES-CANON "Secret scan": a parity check measures it). The caller pair (secret-gate.mjs and its test) now spawns git
-// through a cleaned environment (canon blobs 044ec446... / a17ae233..., 08c), so it is held to the census like any other
-// file. ONE exemption remains: secret-scan.test.mjs, whose source (Bankfire's) still spawns git without a cleaned
-// environment; that is the LLM zone's unit. It is exempt ONLY while its content is exactly the pinned blob: any edit, or a
-// template re-sync that changes it, makes the entry a finding again ("re-derive"), so the exemption cannot widen or outlive
-// its reason silently. The pin is a git blob id (git hash-object <file>) against .github/templates/published-code/scripts/.
-// 05a (order 04e), re-pinned at 08c: the overlay-coal-skill scripts/release-notes.mjs (canon f8d998d8) is the second carrier. Its
-// git spawn gives an EXPLICIT allowlist env (no GIT_* inherited), the property this census guards, but not the textual form
-// it accepts (gitEnv(...) alone), so it is blob-pinned instead (measured red without the pin: "carries no 'env:'"). Any edit or
-// re-sync that changes it makes the entry a finding again.
-// 08c: the hold of scripts/release-notes.test.mjs at the previous canon blob d7e299c4 is RELEASED. The canon fixed the defective
-// assertion (its env check failed on macOS and under coverage) and the room now holds the canon test, blob 8cf7e5fd, byte for byte.
-export const EXEMPT_CARRIERS = {
-  'scripts/secret-scan.test.mjs': '4433fb56bc97d1facc3fb27804e1934c0577115f',
-  'scripts/release-notes.mjs': 'f8d998d8fe14a5972440043123398115d02fc50e',
-};
-
+// R13 / CWK-174, narrowed at R14, emptied at 08c: the house secret scan arrives as byte-equal copies of the org canon (SERIES-CANON
+// "Secret scan": scanner-parity measures it). A byte-equal org carrier whose git spawn the census cannot read could be exempted by
+// PINNING its blob id: exempt ONLY while its content is exactly the pinned blob, so any edit or re-sync makes the entry a finding
+// again ("re-derive") and the exemption cannot widen or outlive its reason silently. The pin is a git blob id (git hash-object <file>).
+// 08c: BOTH pins this table held are out. scripts/release-notes.mjs (canon f8d998d8) builds an allowlist env and now passes by rule (a)
+// above. scripts/secret-scan.test.mjs (Bankfire 4433fb56) no longer needs one: its git spawns take their env from its own gitEnv()
+// (a filter of GIT_* out of process.env, passed by name) or a cleaned copy (`env: cleanEnv`, which the presence rung accepts and the
+// "env built into a VARIABLE" blind spot above leaves unchecked: it was not verified by this census). The table and the
+// mechanism stay, empty, so the next carrier whose spawn the census cannot read is pinned the same way (the exemption tests inject
+// their own table). The 08c release of the d7e299c4 hold on scripts/release-notes.test.mjs: the canon fixed the defective assertion
+// (its env check failed on macOS and under coverage), and the room holds the canon test, blob 8cf7e5fd, byte for byte.
+export const EXEMPT_CARRIERS = {};
 // The git blob id of `text`, as `git hash-object` would print it for a file holding exactly these bytes.
 export function blobId(text) {
   const body = Buffer.from(text, 'utf8');
@@ -107,7 +155,11 @@ export function censusGitSpawns(files, exempt = EXEMPT_CARRIERS) {
       if (/\bkeepUserConfig\b/.test(callText) && !(rel === 'scripts/install.mjs' && /core\.hooksPath/.test(callText))) {
         findings.push(`${rel}:${line} ${m[1]}('git', ...) passes keepUserConfig -- only the installer's core.hooksPath read in scripts/install.mjs may (R14-N1)`);
       }
-      if (!/\benv\s*:/.test(callText)) {
+      const body = allowlistEnvBody(text, callText);
+      if (body !== null) {
+        const why = allowlistVerdict(text, body);
+        if (why) findings.push(`${rel}:${line} ${m[1]}('git', ...) ${why}`);
+      } else if (!/\benv\s*:/.test(callText)) {
         findings.push(`${rel}:${line} ${m[1]}('git', ...) carries no 'env:' -- route it through gitEnv() (CWK-133)`);
       } else if (/\bprocess\.env\b/.test(callText) && !/\bgitEnv\s*\(/.test(callText)) {
         findings.push(`${rel}:${line} ${m[1]}('git', ...) passes process.env without gitEnv() -- the GIT_* family is inherited (CWK-136)`);

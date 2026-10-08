@@ -118,13 +118,71 @@ test('census (R14 LOW-1): the installer\'s core.hooksPath read with keepUserConf
   assert.deepEqual(censusGitSpawns(collectScriptsMjs(repo)), []);
 });
 
-// 05a: the release-notes.mjs pin is load-bearing. Its allowlist-env spawn is not the textual form the census accepts, so the
-// census FAILS without the pin and PASSES with it, and an edited file is a finding again.
-test('census (05a): scripts/release-notes.mjs fails without its pin, passes with it, and an edited copy is a finding again', () => {
-  const live = collectScriptsMjs(repo).filter((f) => f.rel === 'scripts/release-notes.mjs');
-  assert.equal(live.length, 1, 'the carrier is in the walked tree');
-  assert.ok(censusGitSpawns(live, {}).length >= 1, 'red: with the pin absent the census refuses it');
-  assert.deepEqual(censusGitSpawns(live), [], 'green: with the pin it passes');
-  const edited = [{ rel: live[0].rel, text: live[0].text + '\n// edited\n' }];
-  assert.match(censusGitSpawns(edited)[0], /blob id is .*, not the pinned f8d998d8/, 'an edit makes it a finding again');
+// 08c (main's ruling UMB-456 (2)): rule (a), the ALLOWLIST env. A spawn whose env is an object built from NAMED keys of
+// process.env, never the whole object, that carries GIT_CONFIG_NOSYSTEM: '1' and names no GIT_* key beyond the three the canon
+// sets, passes without a blob pin. The fixtures are assembled so this file holds no literal spawn of its own.
+const ALLOW_KEEP = "const keep = ['PATH', 'HOME', 'GIT_CEILING_DIRECTORIES'];\n";
+const ALLOW_GOOD = "{ ...Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])), GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }";
+const allowFile = (body, keep = ALLOW_KEEP) => keep + 'const env = ' + body + ';\n' + SG + ", ['config', '--local', '--get', 'remote.origin.url'], { encoding: 'utf8', timeout: 30000, env });\n";
+const inlineFile = (body) => ALLOW_KEEP + SG + ", ['status'], { encoding: 'utf8', env: " + body + ' });\n';
+
+test('census rule (a), witness a: an allowlist env passes with NO pin, declared beside the spawn or inline in it', () => {
+  assert.deepEqual(one(allowFile(ALLOW_GOOD)), [], 'declared as const env, passed by shorthand');
+  assert.deepEqual(one(inlineFile(ALLOW_GOOD)), [], 'written inline in the call');
+  const carrier = collectScriptsMjs(repo).filter((f) => f.rel === 'scripts/release-notes.mjs');
+  assert.equal(carrier.length, 1, 'the canon release-notes.mjs is in the walked tree');
+  assert.deepEqual(censusGitSpawns(carrier, {}), [], 'the canon text itself passes with the pin table EMPTY');
+});
+
+test('census rule (a), witness b: an env that spreads the whole process.env is still refused, whatever else it carries', () => {
+  for (const body of ["{ ...process.env, GIT_CONFIG_NOSYSTEM: '1' }", "{ ...process.env }"]) {
+    for (const file of [allowFile(body), inlineFile(body)]) {
+      const f = one(file);
+      assert.equal(f.length, 1, body);
+      assert.match(f[0], /passes process\.env without gitEnv\(\)/, 'refused for the process.env, not for a missing env:');
+    }
+  }
+});
+
+test('census rule (a), witness c: Object.assign({}, process.env) is still refused', () => {
+  for (const body of ["Object.assign({}, process.env, { GIT_CONFIG_NOSYSTEM: '1' })", "Object.assign({}, process.env)"]) {
+    const f = one(inlineFile(body));
+    assert.equal(f.length, 1, body);
+    assert.match(f[0], /passes process\.env without gitEnv\(\)/);
+  }
+  const declared = one(ALLOW_KEEP + "const env = { ...Object.fromEntries(keep.map((k) => [k, process.env[k]])), ...process.env, GIT_CONFIG_NOSYSTEM: '1' };\n" + SG + ", ['x'], { env });\n");
+  assert.equal(declared.length, 1, 'a named-keys pick PLUS a whole-object spread is still a whole-object spread');
+  assert.match(declared[0], /passes process\.env without gitEnv\(\)/);
+});
+
+test('census rule (a), witness d: an allowlist without GIT_CONFIG_NOSYSTEM: 1 is refused, and so is any other value', () => {
+  const none = ALLOW_GOOD.replace("GIT_CONFIG_NOSYSTEM: '1', ", '');
+  for (const body of [none, ALLOW_GOOD.replace("GIT_CONFIG_NOSYSTEM: '1'", "GIT_CONFIG_NOSYSTEM: '0'")]) {
+    for (const file of [allowFile(body), inlineFile(body)]) {
+      const f = one(file);
+      assert.equal(f.length, 1, body);
+      assert.match(f[0], /without GIT_CONFIG_NOSYSTEM: '1'/);
+    }
+  }
+});
+
+test('census rule (a), witness e: an allowlist that names or sets a GIT_* key beyond the canon three is refused', () => {
+  const sets = ALLOW_GOOD.replace("GIT_TERMINAL_PROMPT: '0'", "GIT_TERMINAL_PROMPT: '0', GIT_DIR: '/elsewhere'");
+  const kept = allowFile(ALLOW_GOOD, "const keep = ['PATH', 'GIT_WORK_TREE'];\n");
+  for (const file of [allowFile(sets), inlineFile(sets), kept]) {
+    const f = one(file);
+    assert.equal(f.length, 1, file);
+    assert.match(f[0], /names GIT_(DIR|WORK_TREE)/);
+  }
+  assert.deepEqual(one(allowFile(ALLOW_GOOD).replace('// x', '')), [], 'control: the three canon names are allowed');
+  assert.deepEqual(one('// GIT_DIR is what a hook leaves behind\n' + allowFile(ALLOW_GOOD)), [], 'a name in a line comment is not a key');
+});
+
+test('census rule (a): a shorthand env with no declaration in the file, or declared as a call, stays a finding', () => {
+  const f = one(SG + ", ['status'], { encoding: 'utf8', env });\n");
+  assert.equal(f.length, 1);
+  assert.match(f[0], /carries no 'env:'/);
+  const call = one("const env = buildEnv();\n" + SG + ", ['status'], { env });\n");
+  assert.equal(call.length, 1, 'an env the census cannot read is never waved through');
+  assert.match(call[0], /carries no 'env:'/);
 });
