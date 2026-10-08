@@ -393,7 +393,7 @@ function envReasons(ctx, openIdx, closeIdx) {
   return [...new Set(reasons)];
 }
 
-// R13 / CWK-174, narrowed at R14, emptied at 08c: the house secret scan arrives as byte-equal copies of the org canon (SERIES-CANON
+// R13 / CWK-174, narrowed at R14, emptied at 08c, one pin again at 08d: the house secret scan arrives as byte-equal copies of the org canon (SERIES-CANON
 // "Secret scan": scanner-parity measures it). A byte-equal org carrier whose git spawn the census cannot read could be exempted by
 // PINNING its blob id: exempt ONLY while its content is exactly the pinned blob, so any edit or re-sync makes the entry a finding
 // again ("re-derive") and the exemption cannot widen or outlive its reason silently. The pin is a git blob id (git hash-object <file>).
