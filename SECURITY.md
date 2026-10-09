@@ -1,6 +1,6 @@
 # Verifying CoalMine
 
-CoalMine is verified under the same framework as **[CoalTipple](https://github.com/TheColliery/CoalTipple/blob/main/SECURITY.md)**: all execution hooks follow the [Phoenix-13 commandments](https://github.com/TheColliery/.github/blob/main/hooks-safety.md), builds are fully reproducible from source, and security scans are event-driven, not run on every release (the last scan actually verified is pinned under Independent Scanning below).
+CoalMine is verified under the same framework as **[CoalTipple](https://github.com/TheColliery/CoalTipple/blob/main/SECURITY.md)**: all execution hooks follow the [Phoenix-13 commandments](https://github.com/TheColliery/.github/blob/main/hooks-safety.md), the plugin build (`node scripts/build-plugin.mjs`) is reproducible from source byte for byte (the claude.ai ZIPs are not: filesystem entry order and stored file times differ between builds), and security scans are event-driven, not run on every release (the last scan actually verified is pinned under Independent Scanning below).
 
 ---
 

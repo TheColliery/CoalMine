@@ -15,6 +15,15 @@ The installer is not part of `plugin/`, so Claude Code plugin users are not affe
 
 **What you need to do:** nothing, unless an install prints `[refused]` for a skill folder: move your changes out of it, or remove or rename it (the only fix when the message says no file hashes are recorded), and run `node scripts/install.mjs <agent>` again. The fix is in your CoalMine checkout, so update it first (`git pull`); `claude plugin update coalmine@coalmine` and the `coalmine@claude-community` pin carry no installer change.
 
+### Changed
+- **All nine skills now link their issue-form address.** The self error-report line shared by all nine skills named the CoalMine issue form as a bare URL; it now reads `the CoalMine issue form` with the link behind it. The wording of the rule itself is unchanged. This moves `plugin/skills/*/SKILL.md` (nine files, rendered from `skills/_shared/escalation-footer.md`).
+- **SECURITY.md scopes its reproducibility claim.** "Builds are fully reproducible from source" now says the plugin build is byte-for-byte reproducible and the claude.ai ZIPs are not (filesystem entry order and stored file times differ between builds).
+
+### Internal (contributors; nothing here ships in `plugin/`)
+- **The CI test runner runs in waves with a clock per file.** `scripts/test.mjs` hands the suite to the canon wave runner, which reconciles every test file it was given against the results it read and fails a file that exits before its tests report.
+- **One git-spawn census for the flock.** `scripts/lib/git-env-census.mjs` is now the canon copy; the room keeps its two byte-pinned exemptions and one extra rule (only the installer may pass `keepUserConfig`) in `git-env-census.pins.mjs` and `git-env-census.room.test.mjs`.
+- **The canon workflow and test set are re-synced by blob id**, including `claude-ai-zips.yml`, which now carries the launch-form re-point and a check that the derive step wrote its four release files.
+
 ## [3.22.1] - 2026-10-02
 
 On macOS, the session-end scan no longer skips every edited file when the project's folder has two spellings.
