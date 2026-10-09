@@ -27,6 +27,9 @@
 // NAMED OPEN: a file whose test exits 0 AFTER another test already passed, from a timer or an async step the runner never sees finish, reports only the tests
 // that completed ("# pass 1" for the first) and is a PASS here; no TAP reader can see a test that vanished before it reported. Node 22 spells the file-level line
 // with the absolute path, which the identity check accepts; the Node 22 shape is covered by a captured sample, not by a run on Node 22.
+// NAMED OPEN (canon TODO, not built): VACUOUS covers only a file with zero tests, so a file that loses SOME tests still reads PASS; a per-file count floor or an expected-names manifest closes it.
+// NAMED OPEN (canon TODO, not built): the TAP of a PASS file is kept nowhere, so no room can compare test NAMES after the run.
+// A `not ok ... # TODO` is a known gap, not a failure: Node counts it under `# todo`, reads `# fail 0` and exits 0, and classifyFile agrees.
 //
 // Pure functions (parseTap, classifyFile, summarize, nodeOptionsWithHeap) plus runWaves(); node builtins only (Phoenix #2). Exit: 0 green, 1 red, 64 usage.
 import { execFile, spawn, spawnSync } from 'node:child_process';
@@ -75,7 +78,8 @@ export function classifyFile({ file, code, signal, stdout, killedBy = null }) {
   if (killedBy) return out(STATUS.FAIL, killedBy, null);
   if (signal) return out(STATUS.FAIL, `died by signal ${signal}`, null);
   const p = parseTap(stdout);
-  const failing = p.results.filter((r) => !r.ok).map((r) => r.name);
+  // `not ok ... # TODO` is a test its author marked as a known gap: node counts it under `# todo`, reads `# fail 0` and exits 0, and so does this reader.
+  const failing = p.results.filter((r) => !r.ok && r.directive !== 'TODO').map((r) => r.name);
   if (code !== 0) {
     const parts = [];
     if (failing.length) parts.push(`not ok: ${failing.join(', ')}`);
@@ -156,8 +160,14 @@ export async function runWaves(opts) {
   const syncEnv = withStdoutSync(env);
   const childEnv = { ...syncEnv, NODE_OPTIONS: nodeOptionsWithHeap(syncEnv.NODE_OPTIONS, heapMb) };
   delete childEnv.NODE_TEST_CONTEXT;
+  // A name is shown relative to the folder only after BOTH sides are real paths: a temp folder can be a symlink (macOS /var is /private/var), so one folder has two spellings and
+  // the lexical relative of a file named by one against a cwd spelled by the other leaves the folder. Fail closed: a path that cannot be resolved is shown as the caller wrote it.
+  let realCwd = null;
+  try { realCwd = fs.realpathSync.native(cwd); } catch { /* every name is shown as given */ }
   const display = (f) => {
-    const rel = path.relative(cwd, path.resolve(cwd, f));
+    if (realCwd === null) return f;
+    let rel;
+    try { rel = path.relative(realCwd, fs.realpathSync.native(path.resolve(cwd, f))); } catch { return f; }
     return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : f;
   };
 

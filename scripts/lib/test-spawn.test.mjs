@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { testSpawnPlan, plainSpawnPlan, OUTSIDE_WAVES, HEAP_FLAG, HEAP_MB, TEST_TIMEOUT_MS, FILE_CLOCK_MS, RUN_TIMEOUT_MS, OUTER_TIMEOUT_MS, RUN_KILL_SIGNAL, WAVE_RUN } from './test-spawn.mjs';
+import { testSpawnPlan, HEAP_MB, TEST_TIMEOUT_MS, FILE_CLOCK_MS, RUN_TIMEOUT_MS, OUTER_TIMEOUT_MS, RUN_KILL_SIGNAL, WAVE_RUN } from './test-spawn.mjs';
 
 const ROOM = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -51,29 +51,9 @@ test('test-spawn: the heap cap is wave-run\'s --heap-mb (it rides NODE_OPTIONS o
 
 test('test-spawn: scripts/test.mjs spawns its child with the plan argv, env, backstop and kill signal, and a backstop hit is a named FAIL (the wiring, not just the builder)', () => {
   const src = fs.readFileSync(path.join(ROOM, 'scripts', 'test.mjs'), 'utf8');
-  assert.match(src, /testSpawnPlan\(TESTS\.filter\(\(t\) => !OUTSIDE_WAVES\.includes\(t\)\), process\.env\)/);
+  assert.match(src, /testSpawnPlan\(TESTS, process\.env\)/);
   assert.match(src, /spawnSync\(process\.execPath, plan\.args, \{[^}]*env: plan\.env[^}]*timeout: plan\.timeout[^}]*killSignal: plan\.killSignal/);
   assert.match(src, /if \(r\.error\)[\s\S]*?console\.error\(`FAIL test runner:[\s\S]*?process\.exitCode = 1/);
-});
-
-test('test-spawn: wave-run.test.mjs runs OUTSIDE the waves, on the plain node --test line with the 08b plan (heap cap in the env, serial, force-exit, a clock per test, the deadline)', () => {
-  assert.deepEqual(OUTSIDE_WAVES, ['scripts/lib/wave-run.test.mjs']);
-  const { args, env, timeout, killSignal } = plainSpawnPlan(OUTSIDE_WAVES, { PATH: '/bin' });
-  assert.deepEqual(args, ['--test', '--test-concurrency=1', '--test-force-exit', `--test-timeout=${TEST_TIMEOUT_MS}`, 'scripts/lib/wave-run.test.mjs']);
-  assert.equal(env.NODE_OPTIONS, HEAP_FLAG);
-  assert.equal(timeout, RUN_TIMEOUT_MS);
-  assert.equal(killSignal, RUN_KILL_SIGNAL);
-  assert.deepEqual(plainSpawnPlan(['a'], { NODE_OPTIONS: '--max-old-space-size=1024 --no-warnings' }).env.NODE_OPTIONS, '--max-old-space-size=1024 --no-warnings', 'a caller heap flag is kept, never doubled');
-  assert.equal(plainSpawnPlan(['a'], { NODE_OPTIONS: '--no-warnings' }).env.NODE_OPTIONS, '--no-warnings ' + HEAP_FLAG);
-  const wave = testSpawnPlan(['x'], {});
-  assert.ok(!wave.args.includes('scripts/lib/wave-run.test.mjs'));
-});
-
-test('test-spawn: scripts/test.mjs keeps the outside-the-waves files out of the wave list and runs them on the plain line, a red in either turning the run red', () => {
-  const src = fs.readFileSync(path.join(ROOM, 'scripts', 'test.mjs'), 'utf8');
-  assert.match(src, /testSpawnPlan\(TESTS\.filter\(\(t\) => !OUTSIDE_WAVES\.includes\(t\)\), process\.env\)/);
-  assert.match(src, /plainSpawnPlan\(outside, process\.env\)/);
-  assert.match(src, /process\.exitCode = code;/);
 });
 
 // ---- end to end: the REAL test.mjs, plan and wave runner, copied into a temp tree whose roster is one planted file ----

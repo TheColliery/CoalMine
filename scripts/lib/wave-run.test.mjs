@@ -408,9 +408,17 @@ test('the stdout preload switches BOTH pipes, stdout and stderr, to blocking (a 
     '}',
     '',
   ].join(String.fromCharCode(10)));
-  const r = spawnSync(process.execPath, ['--import', pathToFileURL(rec).href, '--import', STDOUT_SYNC_URL, '-e', 'console.log(JSON.stringify(globalThis.__calls))'], { encoding: 'utf8', timeout: 30000 });
+  // K3 (08d, found by the first POSIX runs): under the canon runner every child inherits the preload through NODE_OPTIONS, and NODE_OPTIONS imports run BEFORE the command line's, so a recorder
+  // started the old way sees nothing. This child therefore gets an EMPTY NODE_OPTIONS (its heap cap rides its own argv) and loads the preload only by the flag below: the test means the same
+  // alone and under the runner, and the runner's claim that every node process of the run inherits the preload stays true (the preload is not moved onto a command line).
+  const probe = (extra, env) => spawnSync(process.execPath, ['--max-old-space-size=256', ...extra, '-e', 'console.log(JSON.stringify(globalThis.__calls))'], { encoding: 'utf8', timeout: 30000, env });
+  const r = probe(['--import', pathToFileURL(rec).href, '--import', STDOUT_SYNC_URL], { ...process.env, NODE_OPTIONS: '' });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout.trim()).sort(), ['stderr:true', 'stdout:true']);
+  // the control: the shape the runner hands a child (the preload already in NODE_OPTIONS) runs the preload first, so a recorder behind it sees no call -- why the strip above is needed
+  const inherited = probe(['--import', pathToFileURL(rec).href], withStdoutSync({ ...process.env, NODE_OPTIONS: '' }));
+  assert.equal(inherited.status, 0, inherited.stderr);
+  assert.deepEqual(JSON.parse(inherited.stdout.trim()), []);
 });
 
 test('the file clock: a file that hangs before its first test is killed at the clock of the file (FAIL naming it) and the next file still runs -- RED before the fix', async () => {
@@ -444,4 +452,60 @@ test('the command line: --file-clock-ms is accepted, shown in the usage, and kil
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stdout, /^FAIL .*hang-top\.fixture\.mjs: killed at the file clock/m);
   assert.match(r.stdout, /pass 1 · fail 1 \(hang-top\.fixture\.mjs\) · vacuous 0 · skipped 0 · not-run 0 · reconciled 2 of 2 — RED$/m);
+});
+
+// ---- item 11 of order 09f (2026-10-09): the three defects the flock's first POSIX runs found --------------------------------------------------------
+
+// K1 (CoalWash 4c6928b, the ubuntu red): a TAP `not ok ... # TODO` is a test the author marked as a known gap. Node counts it under `# todo`, reads `# fail 0` and exits 0; the runner must agree.
+const TODO_TAP = tap(['# Subtest: real check', 'ok 1 - real check', '# Subtest: known gap', 'not ok 2 - known gap # TODO the platform lacks it', '1..2', '# tests 2', '# suites 0', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 1', '# duration_ms 90']);
+fs.writeFileSync(path.join(SANDBOX, 'todo-fails.fixture.mjs'), "import { test } from 'node:test'; import assert from 'node:assert/strict';" + String.fromCharCode(10) + "test('real check', () => assert.ok(true));" + String.fromCharCode(10) + "test.todo('known gap', () => { throw new Error('not built yet'); });" + String.fromCharCode(10));
+
+test('classifyFile: a failing test marked TODO is not a failure -- a file whose only red is a TODO reads PASS, and a real failure beside it is still named alone -- RED before K1', () => {
+  const todo = classifyFile({ file: 'a.test.mjs', code: 0, signal: null, stdout: TODO_TAP });
+  assert.equal(todo.status, STATUS.PASS, todo.reason);
+  assert.deepEqual(todo.failing, []);
+  const mixed = tap(['# Subtest: real check', 'ok 1 - real check', '# Subtest: known gap', 'not ok 2 - known gap # TODO the platform lacks it', '# Subtest: bad one', 'not ok 3 - bad one', '1..3', '# tests 3', '# suites 0', '# pass 1', '# fail 1', '# cancelled 0', '# skipped 0', '# todo 1']);
+  const both = classifyFile({ file: 'a.test.mjs', code: 1, signal: null, stdout: mixed });
+  assert.equal(both.status, STATUS.FAIL);
+  assert.deepEqual(both.failing, ['bad one'], 'the TODO is not named among the failures');
+  assert.doesNotMatch(both.reason, /known gap/);
+  // only TODO excuses a not-ok: a `not ok` carrying SKIP (node never prints one) is read conservatively as a failure, and a bare `not ok` with no directive is still a failure
+  const skipNotOk = classifyFile({ file: 'a.test.mjs', code: 1, signal: null, stdout: tap(['# Subtest: x', 'not ok 1 - x # SKIP odd', '1..1', '# tests 1', '# suites 0', '# pass 0', '# fail 1', '# cancelled 0', '# skipped 0', '# todo 0']) });
+  assert.deepEqual(skipNotOk.failing, ['x']);
+  assert.equal(classifyFile({ file: 'a.test.mjs', code: 1, signal: null, stdout: tap(['# Subtest: x', 'not ok 1 - x', '1..1', '# tests 1', '# suites 0', '# pass 0', '# fail 1', '# cancelled 0', '# skipped 0', '# todo 0']) }).status, STATUS.FAIL);
+});
+
+test('a real file with a failing test.todo: node exits 0 and the runner reports PASS, the file is not red -- RED before K1', async () => {
+  const r = await runWaves({ files: fx('todo-fails'), cwd: SANDBOX, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  assert.equal(r.results[0].status, STATUS.PASS, r.results[0].reason);
+  assert.equal(r.exitCode, 0);
+});
+
+// K2 (six rooms on macOS): os.tmpdir() is /var/folders/... and a symlink to /private/var/..., while a child's cwd is the realpath. The same folder under two spellings must print as ONE relative name.
+test('display: a file named through a symlinked spelling of the folder prints as the relative name, not as the absolute path (the macOS /private class) -- RED before K2', async (t) => {
+  const link = path.join(os.tmpdir(), 'wave-run-link-' + process.pid + '-' + Date.now());
+  try { fs.symlinkSync(SANDBOX, link, 'junction'); } catch (e) { t.skip('this volume or account cannot make a link: ' + e.code); return; }
+  t.after(() => { try { fs.unlinkSync(link); } catch { /* a junction goes by rmdir on some builds */ try { fs.rmdirSync(link); } catch { /* gone */ } } });
+  const real = fs.realpathSync.native(SANDBOX);
+  const viaLink = path.join(link, 'fail.fixture.mjs');
+  const r = await runWaves({ files: [viaLink, path.join(real, 'pass.fixture.mjs')], cwd: real, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  assert.deepEqual(r.results.map((x) => x.name), ['fail.fixture.mjs', 'pass.fixture.mjs']);
+  assert.match(r.summary.line, /fail 1 \(fail\.fixture\.mjs\)/);
+  // the other spelling: the run's folder named through the link, the file through the real path
+  const other = await runWaves({ files: [path.join(real, 'fail.fixture.mjs')], cwd: link, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  assert.deepEqual(other.results.map((x) => x.name), ['fail.fixture.mjs']);
+});
+
+test('display fails closed: a file outside the folder, and a path that cannot be resolved, print as given -- never as a guessed relative name', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wave-run-outside-'));
+  try {
+    fs.copyFileSync(path.join(SANDBOX, 'pass.fixture.mjs'), path.join(outside, 'pass.fixture.mjs'));
+    const gone = path.join(SANDBOX, 'sub', '..', 'not-here.fixture.mjs');
+    const r = await runWaves({ files: [path.join(outside, 'pass.fixture.mjs'), gone], cwd: SANDBOX, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+    assert.equal(r.results[0].name, path.join(outside, 'pass.fixture.mjs'));
+    assert.equal(r.results[1].name, gone, 'an unresolvable path is shown as the caller wrote it');
+    assert.match(r.results[1].reason, /missing/);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
 });

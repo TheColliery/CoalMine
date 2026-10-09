@@ -32,26 +32,6 @@ export const OUTER_TIMEOUT_MS = RUN_TIMEOUT_MS + TEST_TIMEOUT_MS + OUTER_GRACE_M
 export const RUN_KILL_SIGNAL = 'SIGKILL';
 export const WAVE_RUN = 'scripts/lib/wave-run.mjs';
 
-// ONE FILE RUNS OUTSIDE THE WAVES (09a, a courier for the canon): wave-run.test.mjs, the wave runner's own test. Under wave-run every child gets NODE_OPTIONS=--import stdout-sync.mjs,
-// and that file's test "the stdout preload switches BOTH pipes ... (a recorder loaded first sees the two calls)" spawns a node with its own recorder AFTER that preload, so the
-// recorder sees no setBlocking call and the test fails: measured, plain node --test 34 pass 0 fail; the same file with NODE_OPTIONS=--import <stdout-sync url> 33 pass 1 fail.
-// The file is the canon's byte for byte and is not edited here, so it is run by the plain node --test line below (heap cap in the env, files serial, force-exit, a clock per test,
-// the whole-run deadline), the 08b plan unchanged. It is therefore judged by its exit code and pass count, not by wave-run's TAP-names reading; wave-run's own VACUOUS reading is
-// proven end to end in test-spawn.test.mjs, and the canon should make that test hermetic to NODE_OPTIONS (returned to the chief).
-export const OUTSIDE_WAVES = ['scripts/lib/wave-run.test.mjs'];
-export const HEAP_FLAG = '--max-old-space-size=' + HEAP_MB;
-
-export function plainSpawnPlan(tests, baseEnv) {
-  const caller = baseEnv.NODE_OPTIONS || '';
-  const nodeOptions = /(^|\s)--max-old-space-size[= ]/.test(caller) ? caller : `${caller} ${HEAP_FLAG}`.trim();
-  return {
-    args: ['--test', '--test-concurrency=1', '--test-force-exit', `--test-timeout=${TEST_TIMEOUT_MS}`, ...tests],
-    env: { ...baseEnv, NODE_OPTIONS: nodeOptions },
-    timeout: RUN_TIMEOUT_MS,
-    killSignal: RUN_KILL_SIGNAL,
-  };
-}
-
 export function testSpawnPlan(tests, baseEnv) {
   return {
     args: [WAVE_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(TEST_TIMEOUT_MS), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', ...tests],
