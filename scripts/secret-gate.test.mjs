@@ -19,35 +19,32 @@ const KEY = ['AK', 'IA', 'ABCDEFGHIJKLMNOP'].join(''); // an access-key-id shape
 const ZERO = '0'.repeat(40);
 const made = [];
 // UMB-439 ruling 3 (a): ONE sandbox of the test's own. Every fixture folder, every child's TEMP, TMP, TMPDIR, HOME and USERPROFILE live in it, and the
-// developer's global git configuration never applies (GIT_CONFIG_GLOBAL is an empty file of the sandbox, the system config is off).
+// developer's global git configuration never applies (HOME and XDG_CONFIG_HOME are the sandbox, whose own global configuration is an empty file, and the system config is off).
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-gate-sandbox-'));
-const EMPTY_GLOBAL = path.join(SANDBOX, 'empty-global-gitconfig');
-fs.writeFileSync(EMPTY_GLOBAL, '');
+fs.writeFileSync(path.join(SANDBOX, '.gitconfig'), '');
 // A hook runs with GIT_DIR, GIT_INDEX_FILE and friends set; a fixture that inherited them would write into the repository
-// the hook runs for. Every fixture git call, and the gate under test, gets an environment without them.
+// the hook runs for. So every fixture git call, and the gate under test, is handed an environment BUILT FROM NAMES, never a copy of the process's own: nothing the process
+// inherited (a GIT_ name, a token, a proxy setting) can reach it, because only the keys written out below exist in it. They are the sandbox in place of the box (TEMP, TMP,
+// TMPDIR, HOME, USERPROFILE and XDG_CONFIG_HOME point at it, so the global git config is the sandbox's own and holds none), the names git and node need to start (PATH everywhere;
+// SystemRoot, windir, ComSpec and PATHEXT on Windows, read by name and undefined, so left out of the child's environment, elsewhere) and the GIT_ names the flock allows in a
+// child git environment: GIT_CONFIG_NOSYSTEM and GIT_CEILING_DIRECTORIES.
 const gitEnv = () => ({
-  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k))),
-  TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX, HOME: SANDBOX, USERPROFILE: SANDBOX,
-  GIT_CONFIG_GLOBAL: EMPTY_GLOBAL, GIT_CONFIG_NOSYSTEM: '1',
+  PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT,
+  TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX, HOME: SANDBOX, USERPROFILE: SANDBOX, XDG_CONFIG_HOME: SANDBOX,
+  GIT_CONFIG_NOSYSTEM: '1',
   // git stops searching for a repository at the sandbox's parent: a temp folder that sits inside a repository must not make a fixture look like part of it (UMB-456 (1) vi)
   GIT_CEILING_DIRECTORIES: path.dirname(SANDBOX),
 });
 
 function git(dir, ...args) {
-  return gitWith({}, dir, ...args);
-}
-function gitWith(extra, dir, ...args) {
-  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: { ...gitEnv(), ...extra } }).trim();
+  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() }).trim();
 }
 
 // A throwaway repository holding the gate and its scanner, with one commit per entry of `commits` ({ file: text } maps;
 // a null text deletes the file).
-// `env` is laid over the sandbox environment for every git call of this fixture (the hostile-config witness passes its HOME and XDG_CONFIG_HOME this way,
-// per call, never by changing this process's own environment).
-function repo(commits, { withLib = true, env = {} } = {}) {
+function repo(commits, { withLib = true } = {}) {
   const dir = fs.mkdtempSync(path.join(SANDBOX, 'secret-gate-'));
   made.push(dir);
-  const git = (d, ...args) => gitWith(env, d, ...args);
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 'test@example.invalid');
   git(dir, 'config', 'user.name', 'test');
@@ -67,10 +64,14 @@ function repo(commits, { withLib = true, env = {} } = {}) {
   return dir;
 }
 
+// The environment of the gate under test, a NODE child and not a git call: the sandbox environment, NODE_OPTIONS by name (a heap cap and a preload of the runner must reach it), a
+// HOME of its own, and whatever the test plants on top (a GIT_DIR a hook inherited).
+const gateEnv = (dir, extraEnv = {}) => ({ ...gitEnv(), NODE_OPTIONS: process.env.NODE_OPTIONS, HOME: dir, USERPROFILE: dir, ...extraEnv });
+
 function run(dir, args = [], input = '', extraEnv = {}) {
   const r = spawnSync(process.execPath, [path.join(dir, 'scripts', 'secret-gate.mjs'), ...args], {
     cwd: dir, input, encoding: 'utf8', timeout: 60000,
-    env: { ...gitEnv(), HOME: dir, USERPROFILE: dir, ...extraEnv },
+    env: gateEnv(dir, extraEnv),
   });
   return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
 }
@@ -196,9 +197,11 @@ test('commit mode scans the STAGED blobs: a key staged and then removed from the
 test('the commit\'s own index is the one read: a GIT_INDEX_FILE a hook sets (git commit -a) is honoured while every other GIT_* is dropped', () => {
   const dir = repo([{ 'a.txt': 'clean\n' }]);
   const idx = path.join(dir, '.git', 'commit-index');
-  fs.copyFileSync(path.join(dir, '.git', 'index'), idx);
   const withKey = execFileSync('git', ['-C', dir, 'hash-object', '-w', '--stdin'], { input: `${KEY}\n`, encoding: 'utf8', timeout: 60000, env: gitEnv() }).trim();
-  gitWith({ GIT_INDEX_FILE: idx }, dir, 'update-index', '--add', '--cacheinfo', `100644,${withKey},k.txt`);
+  // the commit's own index is made from the real one with the key staged, and the real index is then put back, so the key lives only in `idx` and no git call here is handed GIT_INDEX_FILE
+  git(dir, 'update-index', '--add', '--cacheinfo', `100644,${withKey},k.txt`);
+  fs.copyFileSync(path.join(dir, '.git', 'index'), idx);
+  git(dir, 'update-index', '--force-remove', 'k.txt');
   const r = run(dir, [], '', { GIT_INDEX_FILE: idx });
   assert.strictEqual(r.code, 1, r.out + r.err);
   assert.match(r.out, /tree "k\.txt":1 aws-access-key-id/);
@@ -207,7 +210,7 @@ test('the commit\'s own index is the one read: a GIT_INDEX_FILE a hook sets (git
 
 test('a staged entry whose blob cannot be read fails the scan by count, never passes as scanned', () => {
   const dir = repo([{ 'a.txt': 'clean\n' }]);
-  gitWith({}, dir, 'update-index', '--add', '--info-only', '--cacheinfo', `100644,${'1'.repeat(40)},ghost.txt`);
+  git(dir, 'update-index', '--add', '--info-only', '--cacheinfo', `100644,${'1'.repeat(40)},ghost.txt`);
   const r = run(dir);
   assert.strictEqual(r.code, 1, r.out + r.err);
   assert.match(r.out, /FAIL SECRETS: 1 tracked file\(s\) could not be read, so were NOT scanned: "ghost\.txt"/);
@@ -226,7 +229,7 @@ test('a staged blob that is damaged on disk fails the scan by count: exit 1, nam
   const loose = path.join(dir, '.git', 'objects', sha.slice(0, 2), sha.slice(2));
   fs.chmodSync(loose, 0o644);
   fs.writeFileSync(loose, 'not a zlib stream');
-  gitWith({}, dir, 'update-index', '--add', '--cacheinfo', `100644,${sha},damaged.txt`);
+  git(dir, 'update-index', '--add', '--cacheinfo', `100644,${sha},damaged.txt`);
   const r = run(dir);
   assert.strictEqual(r.code, 1, r.out + r.err);
   assert.match(r.out, /FAIL SECRETS: 1 tracked file\(s\) could not be read, so were NOT scanned: "damaged\.txt"/);
@@ -234,7 +237,7 @@ test('a staged blob that is damaged on disk fails the scan by count: exit 1, nam
 
 // UMB-439 ruling 3 (a), from the LLM zone's patrol: the fixtures must not depend on, or write into, the developer's own machine. Every fixture
 // folder lives in ONE sandbox of the test's own, the children's TEMP, TMP and TMPDIR point at it, and the developer's global git configuration
-// (a hooks path, a signing rule, a template directory) never applies: GIT_CONFIG_GLOBAL is an empty file inside the sandbox and the system
+// (a hooks path, a signing rule, a template directory) never applies: HOME and XDG_CONFIG_HOME are the sandbox, whose global configuration is an empty file, and the system
 // config is switched off. The witness below plants a hostile global config and a hostile HOME; the fixture commits must still work.
 test('the fixtures run in the test\'s own sandbox: a hostile global git config and HOME never reach them, and the fixture folders live inside the sandbox -- RED before UMB-439', () => {
   const hostile = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-gate-hostile-'));
@@ -246,19 +249,28 @@ test('the fixtures run in the test\'s own sandbox: a hostile global git config a
   fs.writeFileSync(path.join(hostile, '.gitconfig'), hostileConfig); // read through HOME
   fs.mkdirSync(path.join(hostile, 'git'));
   fs.writeFileSync(path.join(hostile, 'git', 'config'), hostileConfig); // read through XDG_CONFIG_HOME (UMB-456 (1) v: it was planted at hostile/.gitconfig, a path XDG never reads)
-  // The hostile HOME and XDG_CONFIG_HOME are laid over the sandbox environment of each git call (not set on this process): they REACH git, so the only thing
-  // standing between them and the fixture is GIT_CONFIG_GLOBAL. Take that variable out of gitEnv() and the commit below fails under the hostile hook.
-  const hostileEnv = { HOME: hostile, USERPROFILE: hostile, XDG_CONFIG_HOME: hostile };
-  {
-    const dir = repo([{ 'a.txt': 'x\n' }], { env: hostileEnv }); // a commit under the hostile global hook would fail with exit 1
-    assert.equal(gitWith(hostileEnv, dir, 'config', '--global', '--list'), '', 'git reads no global configuration even with the hostile HOME and XDG_CONFIG_HOME in place');
+  // The hostile HOME, USERPROFILE and XDG_CONFIG_HOME are planted on THIS process (and put back): the environment of a fixture call is built from named keys, so none of them
+  // reaches git. Make gitEnv() a copy of the process's own environment and the commit below fails under the hostile hook.
+  // SECRET_GATE_TEST_PLANTED is no GIT_ name: a copy of the process's own environment, filtered or not, would carry it. NODE_OPTIONS is the one name the gate child is handed on purpose.
+  const planted = { HOME: hostile, USERPROFILE: hostile, XDG_CONFIG_HOME: hostile, SECRET_GATE_TEST_PLANTED: 'planted', NODE_OPTIONS: '--max-old-space-size=512' };
+  const saved = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, planted);
+  try {
+    const dir = repo([{ 'a.txt': 'x\n' }]); // a commit under the hostile global hook would fail with exit 1
+    assert.equal(git(dir, 'config', '--global', '--list'), '', 'git reads no global configuration even with the hostile HOME and XDG_CONFIG_HOME in place');
     assert.ok(path.resolve(dir).startsWith(path.resolve(SANDBOX) + path.sep), 'the fixture folder is inside the sandbox: ' + dir);
-    const probe = execFileSync(process.execPath, ['-e', 'const e = process.env; console.log(JSON.stringify([e.TEMP, e.TMP, e.TMPDIR, e.GIT_CONFIG_GLOBAL, e.GIT_CONFIG_NOSYSTEM]))'], { encoding: 'utf8', timeout: 60000, env: gitEnv() });
-    const [tmp, tmp2, tmpdir, global, nosys] = JSON.parse(probe);
-    assert.deepEqual([tmp, tmp2, tmpdir], [SANDBOX, SANDBOX, SANDBOX]);
-    assert.equal(path.dirname(global), SANDBOX);
-    assert.equal(fs.readFileSync(global, 'utf8'), '', 'the global config is an empty file of the sandbox');
+    const probe = execFileSync(process.execPath, ['-e', 'const e = process.env; console.log(JSON.stringify([e.TEMP, e.TMP, e.TMPDIR, e.HOME, e.XDG_CONFIG_HOME, e.GIT_CONFIG_NOSYSTEM, e.GIT_CONFIG_GLOBAL === undefined, e.SECRET_GATE_TEST_PLANTED === undefined, e.NODE_OPTIONS === undefined]))'], { encoding: 'utf8', timeout: 60000, env: gitEnv() });
+    const [tmp, tmp2, tmpdir, home, xdg, nosys, noGlobal, noMarker, noNodeOptions] = JSON.parse(probe);
+    assert.deepEqual([tmp, tmp2, tmpdir, home, xdg], [SANDBOX, SANDBOX, SANDBOX, SANDBOX, SANDBOX]);
+    assert.equal(fs.readFileSync(path.join(SANDBOX, '.gitconfig'), 'utf8'), '', 'the global config is an empty file of the sandbox');
     assert.equal(nosys, '1');
+    assert.equal(noGlobal, true, 'no GIT_CONFIG_GLOBAL is set: the canon allows only GIT_CONFIG_NOSYSTEM, GIT_TERMINAL_PROMPT and GIT_CEILING_DIRECTORIES');
+    assert.equal(noMarker, true, 'the environment is built from named keys: a name the process merely inherited is not in it');
+    assert.equal(noNodeOptions, true, 'a git call is handed no NODE_OPTIONS');
+    const gateProbe = execFileSync(process.execPath, ['-e', 'const e = process.env; console.log(JSON.stringify([e.NODE_OPTIONS, e.SECRET_GATE_TEST_PLANTED === undefined, e.HOME]))'], { encoding: 'utf8', timeout: 60000, env: gateEnv(SANDBOX) });
+    assert.deepEqual(JSON.parse(gateProbe), ['--max-old-space-size=512', true, SANDBOX], 'the gate child is handed NODE_OPTIONS by name and nothing else the process inherited');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
 

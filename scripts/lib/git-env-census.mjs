@@ -428,9 +428,9 @@ function envReasons(ctx, openIdx, closeIdx) {
 //   "binds extra as a parameter, which the census cannot follow; uses extra, which has no readable declaration". The caller's `extra`
 //   can hold any key and the census cannot read the callers. It is a byte-equal org carrier, so the file is not edited here; the
 //   finding goes upward with the 08d return. The pin holds only while the content is exactly that blob.
-export const EXEMPT_CARRIERS = {
-  'scripts/secret-gate.test.mjs': '71452210d6a6f793895bc502557fce7e1f3e890c',
-};
+// 09a: EMPTY again. The canon rewrote scripts/secret-gate.test.mjs to named keys (blob 2f066650) and it passes this census with no pin;
+// the pin paragraph above is history (it answered blob 71452210, now gone). This file is retired by the canon census at the next commit.
+export const EXEMPT_CARRIERS = {};
 
 // The git blob id of `text`, as `git hash-object` would print it for a file holding exactly these bytes.
 export function blobId(text) {

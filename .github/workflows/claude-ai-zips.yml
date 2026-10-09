@@ -1,13 +1,3 @@
-# DIVERGENCE FROM THE OVERLAY CANON (derived 2026-10-08 by diffing this file against the overlay blob
-# 276a7c6c36101c03e89e7cea2766fce76d90618d, TheColliery/.github 52edc8e, line endings ignored). EXACTLY ONE difference:
-#   this file lacks the canon step named "Check the derive step wrote its four release files (a stale release-notes.mjs
-#   stops here)", which sits between "Derive the canon Release title + body from CHANGELOG.md" and "Check the tag carries
-#   its own packaging scripts". It is the canon's guard for a room that kept an older scripts/release-notes.mjs; this room
-#   holds the canon's release-notes.mjs (blob f8d998d8, adopted 05a, re-synced 08c), so nothing it guards can happen here today. The
-#   reason it is absent is only that this file was last adopted (4dd17d7, 2026-10-02) before the canon added the step; no
-#   decision to omit it was ever taken. Adopting it is a non-comment change to this workflow, left to its own unit.
-# NOT divergences (the canon carries them too, so this file already matches): timeout-minutes, persist-credentials: false
-#   on both checkouts, and the tag input reaching the script only through env.
 name: claude-ai-zips
 
 # claude.ai installs skills as a ZIP only, and its skill-listing description cap is 200
@@ -26,8 +16,8 @@ name: claude-ai-zips
 #      A BACK-FILLED RELEASE CARRIES: ZIP assets built from the tag's own tree by the tag's OWN packaging scripts
 #      when the tag has them; none when the tag predates them, said out loud in the run. The bytes of a published
 #      version come from that version, never from a newer script run over an older tree. `launch_form` posts ONE
-#      pre-release tag as the repository's launch-form Release (prerelease: true, never Latest), and only while the
-#      repository has no Release of another tag.
+#      pre-release tag as the repository's launch-form Release (prerelease: true, never Latest), and only while the repository has no stable
+#      Release. A newer pre-release tag re-points that ONE Release (draft, empty its assets, move its tag) instead of staying tag-only.
 # A person never POSTs a Release by hand: a Release that is missing for an existing tag is posted by this machine.
 #
 # PUBLISH ORDER (common/git-workflow.md "Tags and Releases"; CWK-119; GitHub's immutable-releases rule): the Release is
@@ -43,7 +33,7 @@ on:
         required: true
         type: string
       launch_form:
-        description: "Post ONE pre-release tag (vX.Y.Z-label) as the launch-form Release (prerelease: true). Refused for a stable tag, and when the repository already has a Release of another tag."
+        description: "Post ONE pre-release tag (vX.Y.Z-label) as the launch-form Release (prerelease: true). Refused for a stable tag, and once the repository has a stable Release. A newer pre-release tag re-points the one launch-form Release."
         required: false
         type: boolean
         default: false
@@ -88,6 +78,7 @@ jobs:
           set -uo pipefail
           out() { echo "$1" >> "$GITHUB_OUTPUT"; }
           launch=false
+          repoint=''
           if [[ "${EVENT}" == "push" ]]; then
             tag="${REF_NAME}"
             if [[ "${REF_TYPE}" != "tag" ]]; then
@@ -115,16 +106,38 @@ jobs:
               if [[ "${launch}" != "true" ]]; then
                 echo "::error::${tag} is a pre-release tag -- Releases are stable-only, except the ONE launch form: run again with launch_form"; exit 1
               fi
-              others=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq "[.[] | select(.tag_name != \"${tag}\")] | length") || { echo "::error::could not list the repository's Releases"; exit 1; }
-              if [[ "${others}" != "0" ]]; then
-                echo "::error::the launch form is the repository's ONE pre-release Release, posted only while it has no Release of another tag (found ${others})"; exit 1
+              # The launch form is the repository's ONE pre-release Release. A NEWER pre-release tag takes it over (the
+              # step "Re-point the launch-form Release" below) while no stable Release exists, and the compare API must
+              # say the tag is ahead of the one the Release carries. A re-run for the tag it already carries re-points nothing.
+              if ! rels=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name' 2>/dev/null); then
+                echo "::error::could not list the repository's Releases"; exit 1
+              fi
+              others=0; stable=0; old=''
+              while IFS= read -r rel; do
+                [[ -z "${rel}" || "${rel}" == "${tag}" ]] && continue
+                others=$((others + 1)); old="${rel}"
+                [[ "${rel}" != *-* ]] && stable=$((stable + 1))
+              done <<< "${rels}"
+              if [[ "${stable}" != "0" ]]; then
+                echo "::error::a stable Release exists, so the launch form is closed: ${tag} stays tag-only"; exit 1
+              elif [[ "${others}" != "0" && "${others}" != "1" ]]; then
+                echo "::error::the launch form is the repository's ONE pre-release Release; found ${others} Releases of other tags"; exit 1
+              elif [[ "${others}" == "1" ]]; then
+                if ! [[ "${old}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*$ ]]; then
+                  echo "::error::the launch-form Release carries a tag that is not a vX.Y.Z-label pre-release tag; nothing was changed"; exit 1
+                fi
+                status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${old}...${tag}" --jq .status 2>/dev/null) || status=''
+                if [[ "${status}" != "ahead" ]]; then
+                  echo "::error::${tag} is not newer than ${old}, the tag the launch-form Release carries (compare says '${status:-unreadable}'); a Release moves forward only"; exit 1
+                fi
+                repoint="${old}"
               fi
             elif [[ "${launch}" == "true" ]]; then
               echo "::error::launch_form is for a pre-release tag; ${tag} is stable"; exit 1
             fi
           fi
-          out "post=true"; out "tag=${tag}"; out "launch=${launch}"
-          echo "posting the Release for ${tag} (launch form: ${launch})"
+          out "post=true"; out "tag=${tag}"; out "launch=${launch}"; out "repoint=${repoint}"
+          echo "posting the Release for ${tag} (launch form: ${launch}${repoint:+, taking over the Release of ${repoint}})"
 
       # `canon` = the workflow's own commit: the default branch on a dispatch, the tag on a push. Its scripts
       # derive and verify. `tag-src` = the tag's own tree: its CHANGELOG, its skills, its packaging scripts.
@@ -188,6 +201,18 @@ jobs:
         if: steps.gate.outputs.post == 'true'
         working-directory: tag-src
         run: node ../canon/scripts/release-notes.mjs
+
+      # A room that adopted this workflow without the script it runs, or kept an older copy of that script, reaches the Release step
+      # with a missing file and a gh usage dump. Stop here instead, by name, before any gh release call.
+      - name: Check the derive step wrote its four release files (a stale release-notes.mjs stops here)
+        if: steps.gate.outputs.post == 'true'
+        working-directory: tag-src
+        run: |
+          for f in release-title.txt release-body.md release-prerelease.txt release-latest.txt; do
+            if [[ ! -s "${f}" ]]; then
+              echo "::error::the derive step did not write ${f} (or wrote it empty). The scripts/release-notes.mjs this workflow ran is stale or is not the canon's: compare it with the overlay's by blob id (git hash-object scripts/release-notes.mjs) and adopt the whole overlay set (templates/overlay-coal-skill/OVERLAY-README.md). No Release call was made."; exit 1
+            fi
+          done
 
       # A tag that predates the packaging scripts (a back-fill through the dispatch path) gets a Release
       # without ZIPs, said out loud; a pushed tag that lacks them is a defect and stops the run.
@@ -264,6 +289,31 @@ jobs:
           sha256sum -- *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # BB-112 (a), CoalLedger issue 25: the launch-form Release is the repository's ONE pre-release Release, and a newer
+      # pre-release tag takes it over, so a repository whose only Release is the launch form can carry the newer tag's
+      # ZIPs. The gate found the old tag and proved the new one ahead of it. Order: back to a DRAFT, its assets deleted
+      # (the new tag's ZIPs and SHA256SUMS.txt are attached as on a first run, and an old checksum file would make the
+      # upload decision refuse), THEN the tag moved. Each call is safe to repeat, so a run that died part-way converges
+      # when it is run again. It sits after every build and check above, so a failed build leaves the old Release as it
+      # was, and it never publishes: the publish step stays last. This edits a PUBLISHED Release, a path that Immutable Releases
+      # closes once the owner switches it on (AR-71 (a1), unsigned today): the launch form is re-decided before that switch.
+      - name: Re-point the launch-form Release to this tag (draft it, empty its assets, move its tag), while no stable Release exists
+        if: steps.gate.outputs.post == 'true' && steps.gate.outputs.repoint != ''
+        working-directory: tag-src
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLD_TAG: ${{ steps.gate.outputs.repoint }}
+        run: |
+          set -uo pipefail
+          gh release edit "${OLD_TAG}" --draft=true || { echo "::error::could not turn the launch-form Release of ${OLD_TAG} back into a draft; nothing else was changed"; exit 1; }
+          assets=$(gh release view "${OLD_TAG}" --json assets --jq '.assets[].name') || { echo "::error::could not list the assets of the launch-form Release of ${OLD_TAG}"; exit 1; }
+          while IFS= read -r asset; do
+            [[ -z "${asset}" ]] && continue
+            gh release delete-asset --yes -- "${OLD_TAG}" "${asset}" || { echo "::error::could not delete ${asset} from the launch-form Release of ${OLD_TAG}"; exit 1; }
+          done <<< "${assets}"
+          gh release edit "${OLD_TAG}" --tag "${RELEASE_TAG}" --verify-tag || { echo "::error::could not move the launch-form Release from ${OLD_TAG} to ${RELEASE_TAG}"; exit 1; }
+          echo "the launch-form Release now carries ${RELEASE_TAG} (a draft until the publish step)"
+
       # This workflow is now the SOLE Release creator (UMB-162 (a)) -- a head no longer POSTs
       # a Release by hand, so the race this step used to guard against (a separate REST call
       # racing this trigger) is retired by construction. The one race that remains is a
@@ -281,10 +331,17 @@ jobs:
         working-directory: tag-src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOINTED: ${{ steps.gate.outputs.repoint }}
         run: |
-          gh release create "${RELEASE_TAG}" --verify-tag --draft --title "$(cat release-title.txt)" --notes-file release-body.md --prerelease="$(cat release-prerelease.txt)" || \
-            gh release edit "${RELEASE_TAG}" --title "$(cat release-title.txt)" --notes-file release-body.md --latest="$(cat release-latest.txt)" --prerelease="$(cat release-prerelease.txt)" || \
-            { echo "::error::release create failed AND release edit failed -- this is not the expected already-exists race" >&2; exit 1; }
+          if [[ -z "${REPOINTED}" ]]; then
+            gh release create "${RELEASE_TAG}" --verify-tag --draft --title "$(cat release-title.txt)" --notes-file release-body.md --prerelease="$(cat release-prerelease.txt)" || \
+              gh release edit "${RELEASE_TAG}" --title "$(cat release-title.txt)" --notes-file release-body.md --latest="$(cat release-latest.txt)" --prerelease="$(cat release-prerelease.txt)" || \
+              { echo "::error::release create failed AND release edit failed -- this is not the expected already-exists race" >&2; exit 1; }
+          else
+            # the re-point step left the launch-form Release carrying this tag as a draft: edit it, never create a second one
+            gh release edit "${RELEASE_TAG}" --title "$(cat release-title.txt)" --notes-file release-body.md --prerelease="$(cat release-prerelease.txt)" || \
+              { echo "::error::could not write the derived title and body onto the re-pointed launch-form Release" >&2; exit 1; }
+          fi
 
       # RELEASE-PATTERN.md "A Release body is re-read after every write", MUST -- a 200 on the
       # create/edit call above is evidence the request was well-formed, never evidence the
