@@ -43,12 +43,16 @@
 //      every such slash that has a closing slash on its line is read BOTH ways: as lexed, and again as the start of a regex, and
 //      every spawn after it, to the end of the file, is judged under either reading (a spawn found by either is counted, a
 //      finding from either is a finding). A second ambiguous slash that shows only once the first is forced is forced in turn
-//      (N26), and a file with more than MAX_READINGS (16) readings is refused as a whole (N27). What it still does not do: read the
-//      OTHER way (a head or block it recognised that is really followed by division), or read a slash with no closing slash on
-//      its line (a regex holds no newline, so such a slash is division). The cost is a false finding on genuine division that
+//      (N26), and a file with more than MAX_READINGS (16) readings is refused as a whole (N27). The other way is read too (09f): a '/' the
+//      lexer read as a REGEX after `of`, `yield` or `await` (plain names in some files) or after the '}' of a function or class written as an
+//      expression is read again as division, and a '/' after a postfix ++ or -- is read as division and again as a regex. A keyword written
+//      as a property name (o.of / 2) is a name, and `default` starts a regex (export default /x/). What it still does not do: read a head or
+//      block it recognised as a statement that is really followed by division, or read a slash with no closing slash on
+//      its line (a regex holds no newline, so such a slash is division). A // comment ends at CR, U+2028 and U+2029 as well as LF, and a file
+//      that ends inside a template, a template hole or a block comment is a finding, not a silent pass. The cost is a false finding on genuine division that
 //      is followed, later on its line, by a quote, a backtick or another slash, in a file that names a git spawn after it: a
-//      visible refusal, never a silent pass (the real tree has none: it holds no such slash, and its bare findings are the same
-//      twelve in the same four pinned files);
+//      visible refusal, never a silent pass (re-derive how many a tree holds: import scanGitSpawns and collectScriptsMjs from this file
+//      in a node -e over a clone, no pin; 09f measured none of this class in nine trees, the org repository and eight rooms);
 //   2. identifier lookups are FILE-WIDE, not scope-aware: every declaration and use of a name counts, so two
 //      functions that each build a clean `env` are both refused (route one through gitEnv());
 //   3. an imported helper is trusted only under the names gitEnv and gitTestEnv, and only when it is imported under THAT name
@@ -81,6 +85,14 @@
 //  11. a declaration is checked against the spawn by TOKEN POSITION (it must come before the spawn, and not be a var): a
 //      function that is declared above a const and called below it is judged as if the const came late, which errs toward a
 //      finding.
+//  12. a second argument of the spawn held in a variable (spawnSync('git', a, { env: gitEnv() })) is passed: node reads a non-array object there as
+//      the options and never looks at the third argument (CoalWash C6, runtime-proved), and the census cannot tell an array from an options
+//      object. The canon's own control P9 passes this idiom, so the guard is the room's own test of the helper that holds it (R6).
+//  13. a name is trusted as a helper only while the file never WRITES it (an assignment, a compound or logical assignment, ++ or --, a
+//      destructuring target) and never BINDS it again as a parameter, a catch binding or a destructured name (09f: CoalLedger F39 A5 A7,
+//      CoalBoard 126 129 NEW-b, CoalWash C5 N8). A write through Object.prototype refuses the whole file; a READ of a prototype method
+//      (Object.prototype.hasOwnProperty.call(o, k)) does not. An escaped spelling in an options key (env) is refused, because the last
+//      duplicate key wins at run time.
 //
 // scanGitSpawns() is pure (a fixture map in, { findings, files, calls, safe } out) so it is unit-tested directly,
 // red-first, without a repo clone; censusGitSpawns() is its findings-only view; collectScriptsMjs() is the real
@@ -92,7 +104,7 @@ import { createHash } from 'node:crypto';
 // BLOB-PINNED EXEMPTIONS (CWK-174). A room whose own file cannot be fixed room-side (a byte-equal copy of a source elsewhere, a test that plants GIT_DIR on purpose) passes a
 // row { rel, blob, why } to scanGitSpawns(files, pins). A row matches only while the file's git blob id (line endings normalised to LF) equals `blob`, so any edit, or a new
 // source blob, re-arms the census on that file. The canon ships NO pins of its own: the default is the empty list, and the canon's one pinned carrier (the secret gate, which
-// keeps GIT_INDEX_FILE by design) is pinned in git-env-census.test.mjs, where the reason is quoted. With the token census a file that defines its OWN gitEnv() is judged by
+// keeps GIT_INDEX_FILE by design) is a pin of the room that carries it, never of the canon: the canon test asserts that none ships. With the token census a file that defines its OWN gitEnv() is judged by
 // that body, never by the name (F42).
 export const CENSUS_EXEMPT = [];
 
@@ -106,7 +118,10 @@ export function gitBlobId(text) {
 // ---------------------------------------------------------------------------
 // The lexer.
 // ---------------------------------------------------------------------------
-const KW_BEFORE_REGEX = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+const KW_BEFORE_REGEX = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await', 'default']);
+// Words that are keywords before a regex but may also be a plain name (`const of = 4; of / 2`): a '/' after one is read both ways.
+const SOFT_KW = new Set(['of', 'yield', 'await']);
+const LINE_TERMINATORS = new Set(['\n', '\r', String.fromCharCode(0x2028), String.fromCharCode(0x2029)]);
 const PUNCTS = ['>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??=', '=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**', '<<', '>>'];
 const CTL_HEAD = new Set(['if', 'while', 'for', 'with']);
 const BLOCK_BEFORE = new Set(['else', 'do', 'try', 'finally']);
@@ -115,28 +130,69 @@ const BLOCK_BEFORE = new Set(['else', 'do', 'try', 'finally']);
 const openIsBlock = (p) => !p || (p.k === 'p' ? [')', ';', '{', '}', '=>'].includes(p.v) : p.k === 'id' ? BLOCK_BEFORE.has(p.v) || !KW_BEFORE_REGEX.has(p.v) : false);
 const isIdChar = (c) => /[\w$]/.test(c) || c.charCodeAt(0) > 127;
 
-// lex() is the token list alone. lexAmb() also returns `amb`: every '/' it read as DIVISION after a ')' or '}' that is not a block
-// head, where a regex ending on the same line could have started instead (the fail-closed reading, ceiling item 1), and takes
-// `force`, a set of offsets of such slashes to read as the start of a regex.
+// true when the '{' that follows token `prev` opens the body of a function or class written as an EXPRESSION (after an operator, a '(' or a ','), not as a statement.
+function closesExpressionBody(toks, prev) {
+  if (!prev) return false;
+  let kw = -1;
+  if (prev.k === 'p' && prev.v === ')' && typeof prev.open === 'number' && prev.open > 0) {
+    const o = prev.open;
+    const a = toks[o - 1];
+    if (a && a.k === 'id' && a.v === 'function') kw = o - 1;
+    else if (a && a.k === 'p' && a.v === '*' && toks[o - 2] && toks[o - 2].v === 'function') kw = o - 2;
+    else if (a && a.k === 'id' && toks[o - 2] && toks[o - 2].k === 'id' && toks[o - 2].v === 'function') kw = o - 2;
+    else if (a && a.k === 'id' && toks[o - 2] && toks[o - 2].v === '*' && toks[o - 3] && toks[o - 3].v === 'function') kw = o - 3;
+  }
+  if (kw < 0) {
+    for (let j = toks.length - 1; j >= 0 && j > toks.length - 40; j--) {
+      const x = toks[j];
+      if (x.k === 'p' && (x.v === ';' || x.v === '{' || x.v === '}')) break;
+      if (x.k === 'id' && x.v === 'class') { kw = j; break; }
+    }
+  }
+  if (kw < 0) return false;
+  let q = kw - 1;
+  if (toks[q] && toks[q].k === 'id' && toks[q].v === 'async') q--;
+  const before = toks[q];
+  if (!before) return false;
+  if (before.k === 'p' && (before.v === ';' || before.v === '{' || before.v === '}')) return false;
+  if (before.k === 'id' && (before.v === 'export' || before.v === 'default')) return false;
+  return true;
+}
+
+// lex() is the token list alone. lexAmb() also returns `amb`, every '/' that could be read the other way (the fail-closed reading, ceiling item 1), as
+// { i, ln, dir }: dir 're' = read as DIVISION after a ')' or '}' that is not a block head or after a postfix ++ or --, where a regex ending on the same line could have
+// started instead; dir 'div' = read as a REGEX after `of`, `yield`, `await` or the '}' of a function or class expression, where division could have been meant. It takes
+// `force`, a Map from the offset of such a slash to 're' or 'div', the reading to use there. `bad` is set when the file ends inside a template, a template hole or a block comment.
 export function lex(text) { return lexAmb(text).toks; }
 
 export function lexAmb(text, force = null) {
   const toks = [];
   const amb = [];
+  let bad = null;
   const holes = []; // brace depth at which each open template hole began
-  const parenCtl = []; // per open '(' : is it the head of if/while/for/with (a '/' after its ')' starts a regex)
-  const braceBlk = []; // per open '{' : is it a block (a '/' after its '}' starts a regex) or an object literal
+  const parenCtl = []; // per open '(' : { ctl: is it the head of if/while/for/with (a '/' after its ')' starts a regex), idx: the token index of the '(' }
+  const braceBlk = []; // per open '{' : { blk: is it a block (a '/' after its '}' starts a regex) or an object literal, soft: it closes a function or class EXPRESSION }
   let braces = 0;
   let line = 1;
   let i = 0;
-  if (text.startsWith('#!')) { while (i < text.length && text[i] !== '\n') i++; } // a shebang line is not code
+  if (text.startsWith('#!')) { while (i < text.length && !LINE_TERMINATORS.has(text[i])) i++; } // a shebang line is not code, and ends at any line terminator
   const push = (k, v, s) => toks.push({ k, v, i: s, ln: line });
   const regexAllowed = () => {
     const p = toks[toks.length - 1];
     if (!p) return true;
-    if (p.k === 'p') return p.v === ')' || p.v === '}' ? !!p.ctl : p.v !== ']';
-    if (p.k === 'id') return KW_BEFORE_REGEX.has(p.v);
+    if (p.k === 'p') return p.v === ')' || p.v === '}' ? !!p.ctl : p.v !== ']' && p.v !== '++' && p.v !== '--'; // after a postfix ++ or -- it is division (a prefix one is read the other way too, below)
+    if (p.k === 'id') {
+      const before = toks[toks.length - 2];
+      if (before && before.k === 'p' && (before.v === '.' || before.v === '?.')) return false; // a property named of / in / default ... is a name
+      return KW_BEFORE_REGEX.has(p.v);
+    }
     return p.k === 'tplopen';
+  };
+  const softRegex = () => {
+    const p = toks[toks.length - 1];
+    if (!p) return false;
+    if (p.k === 'id') return SOFT_KW.has(p.v);
+    return p.k === 'p' && p.v === '}' && p.soft === true;
   };
   const templateChunk = (from) => {
     let j = from;
@@ -150,15 +206,17 @@ export function lexAmb(text, force = null) {
     }
     push('tpl', text.slice(from), from);
     i = text.length;
+    if (bad === null) bad = { kind: 'template', i: from, ln: line };
   };
   while (i < text.length) {
     const c = text[i];
     if (c === '\n') { line++; i++; continue; }
     if (/\s/.test(c)) { i++; continue; }
-    if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++; continue; }
+    if (c === '/' && text[i + 1] === '/') { while (i < text.length && !LINE_TERMINATORS.has(text[i])) i++; continue; } // a // comment ends at CR, U+2028 and U+2029 as well as LF
     if (c === '/' && text[i + 1] === '*') {
       const e = text.indexOf('*/', i + 2);
       const stop = e === -1 ? text.length : e + 2;
+      if (e === -1 && bad === null) bad = { kind: 'block comment', i, ln: line };
       for (let j = i; j < stop; j++) if (text[j] === '\n') line++;
       i = stop;
       continue;
@@ -185,9 +243,11 @@ export function lexAmb(text, force = null) {
       continue;
     }
     if (c === '/') {
-      const allowed = regexAllowed() || (force !== null && force.has(i));
+      const forced = force !== null ? force.get(i) : undefined;
+      const allowed = forced === 're' ? true : forced === 'div' ? false : regexAllowed();
+      const soft = forced === undefined && allowed && softRegex();
       const p = toks[toks.length - 1];
-      const maybe = !allowed && !!p && p.k === 'p' && (p.v === ')' || p.v === '}');
+      const maybe = !allowed && forced === undefined && !!p && p.k === 'p' && (p.v === ')' || p.v === '}' || p.v === '++' || p.v === '--');
       if (allowed || maybe) {
         let j = i + 1;
         let inClass = false;
@@ -201,13 +261,14 @@ export function lexAmb(text, force = null) {
           j++;
         }
         if (ok && allowed) {
+          if (soft) amb.push({ i, ln: line, dir: 'div' });
           j++;
           while (j < text.length && /[a-z]/i.test(text[j])) j++;
           push('re', text.slice(i, j), i);
           i = j;
           continue;
         }
-        if (ok) amb.push({ i, ln: line });
+        if (ok && maybe) amb.push({ i, ln: line, dir: 're' });
       }
     }
     if (c === '}' && holes.length && braces === holes[holes.length - 1]) {
@@ -219,14 +280,15 @@ export function lexAmb(text, force = null) {
     const op = PUNCTS.find((p) => text.startsWith(p, i)) || c;
     const tk = { k: 'p', v: op, i, ln: line };
     const prevTok = toks[toks.length - 1];
-    if (op === '(') parenCtl.push(!!prevTok && prevTok.k === 'id' && CTL_HEAD.has(prevTok.v));
-    else if (op === ')') tk.ctl = parenCtl.pop() === true;
-    else if (op === '{') { braces++; braceBlk.push(openIsBlock(prevTok)); }
-    else if (op === '}') { braces--; tk.ctl = braceBlk.pop() === true; }
+    if (op === '(') parenCtl.push({ ctl: !!prevTok && prevTok.k === 'id' && CTL_HEAD.has(prevTok.v), idx: toks.length });
+    else if (op === ')') { const o = parenCtl.pop(); tk.ctl = !!o && o.ctl === true; tk.open = o ? o.idx : -1; }
+    else if (op === '{') { braces++; braceBlk.push({ blk: openIsBlock(prevTok), soft: closesExpressionBody(toks, prevTok) }); }
+    else if (op === '}') { braces--; const b = braceBlk.pop(); tk.ctl = !!b && b.blk === true; tk.soft = !!b && b.soft === true; }
     toks.push(tk);
     i += op.length;
   }
-  return { toks, amb };
+  if (bad === null && holes.length) bad = { kind: 'template hole', i: text.length, ln: line };
+  return { toks, amb, bad };
 }
 
 const isP = (t, v) => !!t && t.k === 'p' && t.v === v;
@@ -323,8 +385,87 @@ function collectImports(toks, m) {
   return imports;
 }
 
+// Object.prototype.NAME(...) and Object.prototype.NAME.call/apply/bind(...) read a method; every other mention of a builtin's prototype (an assignment, a defineProperty
+// argument, a bare value) may write to it, and a write reaches every env of the process.
+function protoRead(toks, n) {
+  if (!(isP(toks[n + 1], '.') && toks[n + 2] && toks[n + 2].k === 'id')) return false;
+  const after = toks[n + 3];
+  if (isP(after, '(')) return true;
+  return isP(after, '.') && toks[n + 4] && toks[n + 4].k === 'id' && ['call', 'apply', 'bind'].includes(toks[n + 4].v) && isP(toks[n + 5], '(');
+}
+
+// Every name the file BINDS other than by a plain const / let / var / function declaration: a parameter, a catch binding, a single arrow parameter, or a name inside a destructuring
+// pattern (a declaration, a for-of or for-in head). A call to a name so bound may reach another function than the one the census read. A destructure of import() or require() is the
+// form collectImports reads, so it is not counted here. Over-approximate on purpose (file-wide, ceiling item 2): a name that merely appears in a parameter list counts.
+function collectBound(toks, m) {
+  const out = new Set();
+  const add = (a, b) => {
+    for (let k = a; k < b; k++) {
+      const x = toks[k];
+      if (x.k !== 'id') continue;
+      const p = toks[k - 1];
+      const q = toks[k + 1];
+      if (isP(p, '.') || isP(p, '?.') || isP(q, '(')) continue; // a member name, or a call inside a default value
+      if ((isP(p, '{') || isP(p, ',')) && isP(q, ':')) continue; // an object-pattern key: the name it is bound to follows the colon
+      out.add(x.v);
+    }
+  };
+  for (let n = 0; n < toks.length; n++) {
+    const t = toks[n];
+    if (isP(t, '(')) {
+      const c = m.get(n);
+      if (c !== undefined && (isP(toks[c + 1], '=>') || isP(toks[c + 1], '{') || isId(toks[n - 1], 'catch'))) add(n + 1, c);
+    } else if (t.k === 'id' && isP(toks[n + 1], '=>')) out.add(t.v);
+    else if (t.k === 'id' && (t.v === 'const' || t.v === 'let' || t.v === 'var') && (isP(toks[n + 1], '{') || isP(toks[n + 1], '['))) {
+      const c = m.get(n + 1);
+      if (c === undefined) continue;
+      let k = c + 1;
+      if (isP(toks[k], '=')) {
+        k++;
+        if (isId(toks[k], 'await')) k++;
+        if ((isId(toks[k], 'import') || isId(toks[k], 'require')) && isP(toks[k + 1], '(')) continue;
+      }
+      add(n + 2, c);
+    }
+  }
+  return out;
+}
+
+// The names (of `names`) the file WRITES after declaring them: `x = ..`, `x += ..`, `x ||= ..`, `x++`, and a name inside a destructuring-assignment target or a for-in / for-of head.
+function collectWrites(toks, m, names) {
+  const out = new Set();
+  const ctx = { toks, m };
+  // the inside of a const / let / var destructuring pattern is a declaration, not a write (collectBound reads it)
+  const inPattern = new Array(toks.length).fill(false);
+  for (let n = 0; n < toks.length; n++) {
+    const d = toks[n];
+    if (d.k === 'id' && (d.v === 'const' || d.v === 'let' || d.v === 'var') && (isP(toks[n + 1], '{') || isP(toks[n + 1], '['))) {
+      const c = m.get(n + 1);
+      if (c !== undefined) for (let k = n + 1; k <= c; k++) inPattern[k] = true;
+    }
+  }
+  for (let n = 0; n < toks.length; n++) {
+    const t = toks[n];
+    if (t.k !== 'id' || !names.has(t.v) || inPattern[n]) continue;
+    const p = toks[n - 1];
+    const q = toks[n + 1];
+    if (isId(p) && ['const', 'let', 'var', 'function', 'class'].includes(p.v)) continue;
+    if (isP(p, '.') || isP(p, '?.')) continue;
+    if ((isP(p, '{') || isP(p, ',')) && isP(q, ':')) continue;
+    if ((q && q.k === 'p' && ASSIGN_OPS.has(q.v)) || (p && p.k === 'p' && (p.v === '++' || p.v === '--')) || inAssignTarget(ctx, n)) out.add(t.v);
+  }
+  return out;
+}
+
+// An escaped spelling in an object key (\u0065nv, "\u0065nv"): the lexer reads the pieces as other tokens, so the key would not be seen as env.
+function hasEscapeKey(toks, k, me) {
+  if (toks[k] && toks[k].k === 'str' && toks[k].v.includes('\\') && isP(toks[k + 1], ':')) return true;
+  for (let j = k; j < me && !isP(toks[j], ':'); j++) if (isP(toks[j], '\\')) return true;
+  return false;
+}
+
 function buildCtx(text, force = null, rel = '') {
-  const { toks, amb } = lexAmb(text, force);
+  const { toks, amb, bad } = lexAmb(text, force);
   const m = bracketMap(toks);
   const decls = new Map(); // name -> [{ n, init }]  (init = index of the first token after `=`, or -1)
   const funcs = new Map(); // name -> [index of the name token of `function NAME`]
@@ -338,7 +479,7 @@ function buildCtx(text, force = null, rel = '') {
       if (t.v === 'process' && !isP(toks[n + 1], '.')) processAlias = true;
       const p = toks[n - 1];
       if ((t.v === 'globalThis' || t.v === 'global') && !isP(p, '.')) shadowed = true;
-      if (t.v === 'prototype' && isP(p, '.') && toks[n - 2] && BUILTINS.has(toks[n - 2].v)) shadowed = true; // Object.prototype.X = ... reaches every env
+      if (t.v === 'prototype' && isP(p, '.') && toks[n - 2] && BUILTINS.has(toks[n - 2].v) && !protoRead(toks, n)) shadowed = true; // Object.prototype.X = ... reaches every env; Object.prototype.hasOwnProperty.call(o, k) is a read
       if (BUILTINS.has(t.v) && (isP(p, '{') || isP(p, ',')) && (isP(toks[n + 1], '}') || isP(toks[n + 1], ',')) && isP(toks[nearestOpener({ toks, m }, n)], '{')) shadowed = true; // an import or destructure list names it
       if (BUILTINS.has(t.v) && !isP(p, '.') && (isId(p, 'const') || isId(p, 'let') || isId(p, 'var') || isId(p, 'function') || isId(p, 'class') || isId(p, 'as') || isId(p, 'import') || isP(toks[n + 1], '='))) shadowed = true;
       if ((t.v === 'gitEnv' || t.v === 'gitTestEnv') && isP(toks[n + 1], '=') && !(isId(p, 'const') || isId(p, 'let') || isId(p, 'var'))) gitEnvAssigned = true;
@@ -357,6 +498,10 @@ function buildCtx(text, force = null, rel = '') {
   // gitEnv / gitTestEnv is BOUND as a parameter or a catch binding somewhere (F60): a bare call to it is then not the helper, whatever it is called. A call, a member name, an
   // object key and a declaration (judged by its body) are not that; anything else that mentions the name inside a parameter list (or as the one parameter of an arrow) is.
   let gitEnvParam = false;
+  const bound = collectBound(toks, m);
+  const written = collectWrites(toks, m, new Set([...TRUSTED_NAMES, ...decls.keys(), ...funcs.keys()]));
+  if (written.has('gitEnv') || written.has('gitTestEnv')) gitEnvAssigned = true;
+  if (bound.has('gitEnv') || bound.has('gitTestEnv')) gitEnvParam = true;
   for (let n = 0; n < toks.length && !gitEnvParam; n++) {
     const t = toks[n];
     if (t.k !== 'id' || (t.v !== 'gitEnv' && t.v !== 'gitTestEnv')) continue;
@@ -371,7 +516,7 @@ function buildCtx(text, force = null, rel = '') {
       if (isP(toks[o], '(') && c !== undefined && (isP(toks[c + 1], '=>') || isP(toks[c + 1], '{'))) { gitEnvParam = true; break; }
     }
   }
-  return { toks, m, decls, funcs, envImport, shadowed, gitEnvAssigned, gitEnvParam, envTainted: envImport || processAlias || shadowed, memo: new Set(), amb, rel, imports: collectImports(toks, m) };
+  return { toks, m, decls, funcs, envImport, shadowed, gitEnvAssigned, gitEnvParam, envTainted: envImport || processAlias || shadowed, memo: new Set(), amb, bad, bound, written, rel, imports: collectImports(toks, m) };
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +860,8 @@ function judgeCall(ctx, a, b, st) {
     }
     return `${name}(...) is a helper this file does not define (the census reads only same-file helpers, and trusts only gitEnv and gitTestEnv by name)`;
   }
+  if (defined && ctx.written.has(name)) return `${name} is assigned again in this file (an assignment, a logical or compound assignment, ++ or --, or a destructuring target), so the call may reach another function than the one the census read`;
+  if (defined && ctx.bound.has(name)) return `${name} is also bound as a parameter, a catch binding or a destructured name in this file, so the call may reach another function than the one the census read`;
   if (ctx.memo.has(name)) return `${name} calls itself`;
   const rets = helperReturns(ctx, name);
   if (typeof rets === 'string') return rets;
@@ -827,7 +974,7 @@ function scanOne(rel, ctx, accept) {
         let spread = false;
         for (let k = ca + 1; k < ce - 1;) {
           const me = Math.min(exprEnd(ctx, k, false), ce - 1);
-          if (isP(toks[k], '...') || isP(toks[k], '[') || ((isId(toks[k], 'get') || isId(toks[k], 'set')) && toks[k + 1] && (toks[k + 1].k === 'id' || toks[k + 1].k === 'str') && isP(toks[k + 2], '('))) spread = true;
+          if (isP(toks[k], '...') || isP(toks[k], '[') || hasEscapeKey(toks, k, me) || ((isId(toks[k], 'get') || isId(toks[k], 'set')) && toks[k + 1] && (toks[k + 1].k === 'id' || toks[k + 1].k === 'str') && isP(toks[k + 2], '('))) spread = true;
           else if ((isId(toks[k], 'env') || (toks[k] && toks[k].k === 'str' && toks[k].v === 'env')) && isP(toks[k + 1], ':')) found.push({ j: k, a: k + 2, b: me, shorthand: false });
           else if (isId(toks[k], 'env') && me - k === 1) found.push({ j: k, a: k, b: k + 1, shorthand: true });
           k = me + 1;
@@ -876,16 +1023,18 @@ export function scanGitSpawns(files, exempt = CENSUS_EXEMPT) {
     const ctx = buildCtx(text, null, rel);
     const base = scanOne(rel, ctx, () => true);
     findings.push(...base.findings);
+    // a file that ends inside a template, a template hole or a block comment is not read whole (unless an ambiguous slash before it explains the misreading: the readings below cover that)
+    if (ctx.bad && !ctx.amb.some((a) => a.i < ctx.bad.i)) findings.push(`${rel}:${ctx.bad.ln} the file ends inside an unterminated ${ctx.bad.kind}, so the census cannot read it whole`);
     const state = new Map(base.calls);
-    const queue = ctx.amb.filter((a) => hasSpawner(text, a.i)).map((a) => ({ force: [a.i], ln: a.ln }));
+    const queue = ctx.amb.filter((a) => hasSpawner(text, a.i)).map((a) => ({ force: [[a.i, a.dir]], ln: a.ln }));
     for (let r = 0; r < queue.length; r++) {
       const { force, ln } = queue[r];
       if (r >= MAX_READINGS) { findings.push(`${rel}:${ln} more than ${MAX_READINGS} ways to read the slashes that precede a spawn (a '/' after a ')' or '}' may be division or a regex) -- the census stops reading and refuses the file`); break; }
-      const alt = buildCtx(text, new Set(force), rel);
-      const res = scanOne(rel, alt, (t) => t.i > force[0]);
+      const alt = buildCtx(text, new Map(force), rel);
+      const res = scanOne(rel, alt, (t) => t.i > force[0][0]);
       for (const f of res.findings) if (!findings.includes(f)) findings.push(f);
       for (const [i, ok] of res.calls) state.set(i, (state.has(i) ? state.get(i) : true) && ok);
-      for (const a of alt.amb) if (a.i > force[force.length - 1] && hasSpawner(text, a.i)) queue.push({ force: [...force, a.i], ln });
+      for (const a of alt.amb) if (a.i > force[force.length - 1][0] && hasSpawner(text, a.i)) queue.push({ force: [...force, [a.i, a.dir]], ln });
     }
     calls += state.size;
     for (const ok of state.values()) if (ok) safe++;
@@ -898,7 +1047,7 @@ export function censusGitSpawns(files, exempt = CENSUS_EXEMPT) {
 }
 
 // Real filesystem walk of scripts/**/*.mjs, `rel` relative to `repo` so a finding names the
-// exact path the reviewer's own manual census used (`scripts/lib/...`).
+// exact path the reviewer's own manual census used (a forward-slash path under the repository's scripts folder).
 export function collectScriptsMjs(repo) {
   const scriptsDir = path.join(repo, 'scripts');
   const files = [];

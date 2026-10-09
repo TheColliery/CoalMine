@@ -1003,4 +1003,68 @@ const FROM_FACE = [
  }
 ];
 
-export const VECTORS = [...FROM_TIPPLE, ...ROUND3, ...FROM_FACE];
+// ---- order 09f (2026-10-09): the rows the eight rooms' reviewers sent back after adopting the canon census (CoalWorks chief 09a, couriers C1 C2 C7 C9, CoalLedger F39 C5b A5 A7, CoalBoard F48 NEW-e 126 129 NEW-b, CoalWash C1 C2 C3 C5 C6 N1 N2 N3 N4 N8, CoalMine the // terminators, CoalFace T6 and the Object.prototype read) ----
+const CR = String.fromCharCode(13);
+const LS = String.fromCharCode(0x2028);
+const PS = String.fromCharCode(0x2029);
+const MK = "{ PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1' }";
+const IMPORT_HELPER = "import { gitEnv } from './lib/git-env.mjs';\n";
+const SPAWN_RAW = "spawnSync('git', ['status'], { env: process.env });";
+const KEYS_ALLOW = "  const keep = ['PATH', 'HOME'];\n  const env = { ...Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])), GIT_CONFIG_NOSYSTEM: '1' };\n";
+const HEAD = "import { spawnSync } from 'node:child_process';\n";
+// the slash rows hide a spawn (or an env write) behind a `/` that is division in the file and a regex in the lexer's first reading
+const SLASH = (stmt) => `${HEAD}function f(d, o) {\n${KEYS_ALLOW}  ${stmt}\n  const r = spawnSync('git', ['status'], { env });\n  return r;\n}\n`;
+const SLASH_RAW = (stmt) => `${HEAD}function f(d, o) {\n  ${stmt} const r = ${SPAWN_RAW} const w = 1 / 1;\n  return r;\n}\n`;
+
+const FROM_09F = [
+  // a write to a local helper's name, in every form the env name already refuses (F15-F18, B2)
+  { id: 'L-C1', src: 'CoalLedger F39', expect: 'fail', texts: [`${HEAD}function mk(x) { return ${MK}; }\nmk = () => process.env;\nspawnSync('git', ['status'], { cwd: d, env: mk(d) });\n`] },
+  { id: 'B-126', src: 'CoalBoard #126', expect: 'fail', texts: [`${HEAD}let mk = (dir) => (${MK});\nmk = (dir) => process.env;\nspawnSync('git', ['status'], { env: mk(d) });\n`] },
+  { id: 'L-A5', src: 'CoalLedger A5', expect: 'fail', texts: [`${HEAD}function mk(x) { return ${MK}; }\n({ mk } = { mk: () => process.env });\nspawnSync('git', ['status'], { cwd: d, env: mk(d) });\n`, `${HEAD}let mk = () => (${MK});\n[mk] = [() => process.env];\nspawnSync('git', ['status'], { env: mk(d) });\n`] },
+  { id: 'L-A7', src: 'CoalLedger A7', expect: 'fail', texts: [`${HEAD}let mk = function () { return ${MK}; };\nmk ||= null;\nmk &&= () => process.env;\nspawnSync('git', ['status'], { cwd: d, env: mk(d) });\n`, `${HEAD}let mk = function () { return ${MK}; };\nmk ??= null;\nspawnSync('git', ['status'], { env: mk(d) });\n`] },
+  { id: 'L-A7b', src: 'CoalLedger C9', expect: 'fail', texts: [`${HEAD}${IMPORT_HELPER}gitEnv ||= () => process.env;\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`, `${HEAD}${IMPORT_HELPER}({ gitEnv } = { gitEnv: () => process.env });\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`] },
+  // a local helper (or the imported one) bound again as a parameter, a catch binding or a destructured name
+  { id: 'B-129', src: 'CoalBoard #129', expect: 'fail', texts: [`${HEAD}const mk = (dir) => ({ PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1' });\nfunction f(mk) { spawnSync('git', ['status'], { env: mk(d) }); }\nf(() => process.env);\n`] },
+  { id: 'B-129b', src: 'order 09f', expect: 'fail', texts: [`${HEAD}const mk = (dir) => (${MK});\nconst f = mk => mk(1);\nspawnSync('git', ['status'], { env: mk(d) });\n`] },
+  { id: 'B-NEW-b', src: 'CoalBoard NEW-b', expect: 'fail', texts: [`${HEAD}const mk = (dir) => ({ PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1' });\ntry { throw () => process.env; } catch (mk) { spawnSync('git', ['status'], { env: mk(d) }); }\n`] },
+  { id: 'W-C5', src: 'CoalWash C5', expect: 'fail', texts: [`${HEAD}${IMPORT_HELPER}const mods = [{ gitEnv: () => process.env }];\nconst d = '.';\nfor (const { gitEnv } of mods) spawnSync('git', ['init'], { env: gitEnv(d) });\n`] },
+  { id: 'W-N8', src: 'CoalWash N8', expect: 'fail', texts: [`${HEAD}${IMPORT_HELPER}const mods = { a: 1 };\nconst d = '.';\nfor (const [gitEnv] in mods) spawnSync('git', ['init'], { env: gitEnv(d) });\n`] },
+  { id: 'W-N5', src: 'CoalWash N5-N7', expect: 'fail', texts: [`${HEAD}${IMPORT_HELPER}const d = '.';\n{\n  const gitEnv = () => process.env;\n  spawnSync('git', ['init'], { env: gitEnv(d) });\n}\n`, `${HEAD}${IMPORT_HELPER}const mods = [{ gitEnv: () => process.env }];\nfunction f(d) {\n  let { gitEnv } = mods[0];\n  return spawnSync('git', ['init'], { env: gitEnv(d) });\n}\n`, `${HEAD}${IMPORT_HELPER}function f(d) {\n  function gitEnv() { return process.env; }\n  return spawnSync('git', ['init'], { env: gitEnv(d) });\n}\n`] },
+  // an escaped spelling of the env key: the last duplicate key wins at run time
+  { id: 'L-C2', src: 'CoalLedger C5b', expect: 'fail', texts: [`${HEAD}spawnSync('git', ['status'], { cwd: d, env: gitEnv(d), ${BS}u0065nv: process.env });\n`, `${HEAD}spawnSync('git', ['status'], { cwd: d, env: gitEnv(d), "${BS}u0065nv": process.env });\n`, `${HEAD}spawnSync('git', ['status'], { cwd: d, env: gitEnv(d), e${BS}u006ev: process.env });\n`] },
+  // `export default` and a regex, on the next line and on the same line
+  { id: 'B-F48', src: 'CoalBoard F48 NEW-e', expect: 'fail', texts: [`${HEAD}const env = { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: '1' };\nexport default\n/'/.test(''); Object.assign(env, process.env); //'\nspawnSync('git', ['status'], { env });\n`, `${HEAD}const env = { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: '1' };\nexport default /'/.test(''); Object.assign(env, process.env); //'\nspawnSync('git', ['status'], { env });\n`] },
+  // a slash the lexer reads as a regex that is division: after the name `of`, after a function or class expression, after postfix ++ and --, after a property named of
+  { id: 'W-C1', src: 'CoalWash C1', expect: 'fail', texts: [SLASH_RAW('const of = 4; const v = of / 2;')] },
+  { id: 'W-C2', src: 'CoalWash C2', expect: 'fail', texts: [SLASH('const of = 4; const v = of / 2; env.GIT_DIR = d; const w = 1 / 1;')] },
+  { id: 'W-C1b', src: 'order 09f', expect: 'fail', texts: [SLASH_RAW('var yield = 4; const v = yield / 2;'), SLASH_RAW('var await = 4; const v = await / 2;')] },
+  { id: 'W-C3', src: 'CoalWash C3', expect: 'fail', texts: [SLASH('const g = function () {} / 1; env.GIT_DIR = d; const h = 2 / 1;')] },
+  { id: 'W-N1', src: 'CoalWash N1', expect: 'fail', texts: [SLASH_RAW('let a = 1; const v = a++ / 2;')] },
+  { id: 'W-N1b', src: 'order 09f', expect: 'fail', texts: [`${HEAD}function f(o, d) {
+${KEYS_ALLOW}  ++/'/.lastIndex; Object.assign(env, process.env); //'
+  return spawnSync('git', ['status'], { env });
+}
+`] },
+  { id: 'W-N2', src: 'CoalWash N2', expect: 'fail', texts: [SLASH('let a = 1; const v = a-- / 2; env.GIT_DIR = d; const w = 1 / 1;')] },
+  { id: 'W-N3', src: 'CoalWash N3', expect: 'fail', texts: [SLASH('const c = class {} / 1; env.GIT_DIR = d; const h = 2 / 1;')] },
+  { id: 'W-N4', src: 'CoalWash N4', expect: 'fail', texts: [SLASH_RAW('const v = o.of / 2;'), SLASH_RAW('const v = o.default / 2;')] },
+  // R6, a NAMED CEILING the census passes on purpose (header item 12): a second argument held in a variable. Node reads a non-array object there as the options and never looks at the third
+  // argument (CoalWash C6, runtime-proved), but the census cannot tell an array from an options object, and the canon's own control P9 passes this idiom. The room's helper test is the guard.
+  { id: 'R6', src: 'CoalWash C6', expect: 'pass', texts: [`${HEAD}${IMPORT_HELPER}const git = (a) => spawnSync('git', a, { env: gitEnv(a) });\n`] },
+  // a // comment ends at CR, U+2028 and U+2029 too; so does the hashbang line
+  { id: 'M-CR', src: 'CoalMine', expect: 'fail', texts: [`${HEAD}// note${CR}${SPAWN_RAW}\n`, `${HEAD}// note${LS}${SPAWN_RAW}\n`, `${HEAD}// note${PS}${SPAWN_RAW}\n`, `#!/usr/bin/env node${CR}${SPAWN_RAW}\n`] },
+  // a file that ends inside a template is not read whole
+  { id: 'F-T6', src: 'CoalFace T6', expect: 'fail', texts: [`${HEAD}spawnSync('git', ['status'], { env: gitEnv(d) });\nconst t = ${BT}never closes\n`] },
+  // Object.prototype READ (the idiom) must not make a whole file untrusting; a WRITE through it still does
+  { id: 'FP-hasOwn', src: 'CoalFace link-check', expect: 'pass', texts: [`${HEAD}${IMPORT_HELPER}const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`, `${HEAD}${IMPORT_HELPER}const s = Array.prototype.slice.call(x);\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`, `${HEAD}${IMPORT_HELPER}const s = Object.prototype.toString();\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`] },
+  { id: 'FP-hasOwn-write', src: 'CoalFace link-check', expect: 'fail', texts: [`${HEAD}${IMPORT_HELPER}Object.prototype.hasOwnProperty = () => true;\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`, `${HEAD}${IMPORT_HELPER}Object.prototype.toString.call = null;\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`, `${HEAD}${IMPORT_HELPER}Object.defineProperty(Object.prototype, 'x', { value: 1 });\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`, `${HEAD}${IMPORT_HELPER}Object.assign(Object.prototype, { y: 1 });\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`] },
+  { id: 'P-09f-amb', src: 'order 09f', expect: 'pass', texts: [`${HEAD}${IMPORT_HELPER}L: {}\n/${BT}/.test(String(1));\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`] },
+  // controls: ordinary division, a regex after `of`-free code, a helper never rebound and a bound name that is not the helper
+  { id: 'P-09f', src: 'order 09f', expect: 'pass', texts: [
+    `${HEAD}${IMPORT_HELPER}function f(o, a) {\n  const v = o.of / 2; const w = a++ / 2; const x = (1 + 2) / 3; const y = [1][0] / 2; const z = function () {}.length / 2;\n  return spawnSync('git', ['status'], { env: gitEnv(o) });\n}\n`,
+    `${HEAD}${IMPORT_HELPER}const mk = (dir) => (${MK});\nfunction g(other) { return other + 1; }\ntry { g(1); } catch (err) { throw err; }\nspawnSync('git', ['status'], { env: mk(d) });\n`,
+    `${HEAD}${IMPORT_HELPER}const { a, b } = require('./x.cjs');\nfor (const [k, v] of Object.entries({})) { if (k === v) continue; }\nspawnSync('git', ['status'], { env: gitEnv(d) });\n`,
+  ] },
+];
+
+export const VECTORS = [...FROM_TIPPLE, ...ROUND3, ...FROM_FACE, ...FROM_09F];
