@@ -61,8 +61,9 @@ test('room rule (R14 LOW-1): keepUserConfig appears only in the installer and in
 // The room's second wider rule (09a INSPECT MEDIUM-1): the canon census reads spawnSync and execFileSync only (its SPAWNERS set), so a git child started by
 // async spawn, execFile, exec or execSync (a string, a template literal or a shell string such as 'git init -q') passes it unseen with `calls 0`, where the
 // retired room census refused all of them. None exists in scripts/ today, and this rule keeps it so: it refuses ANY of the four whose first argument begins
-// `git`, in the same file set the census walks. LIMIT, named: a first argument that is not a git literal (a variable, a ternary, 'git.exe') is not seen here;
-// the census cannot judge such a call by text either, and a git child belongs on spawnSync/execFileSync with gitEnv() (git-env.mjs).
+// `git`, in the same file set the census walks. LIMIT, named (09a RE-INSPECT LOW-A): it sees the CALLEE NAME as written, so two things are outside its sight: a RENAMED or WRAPPED spawner (import { spawn as run },
+// const { exec: sh } = cp, promisify(exec)), and a first argument that is not a git literal (a variable, a ternary, 'git.exe'). None exists in scripts/ today (reachability 0); the
+// census cannot judge such a call by text either, and a git child belongs on spawnSync/execFileSync with gitEnv() (git-env.mjs).
 const ASYNC_GIT = /\b(spawn|execFile|exec|execSync)\s*\(\s*(['"`])git\b/;
 function asyncGitSpawns(files) {
   return files.filter((f) => ASYNC_GIT.test(f.text)).map((f) => f.rel);
