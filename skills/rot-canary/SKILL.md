@@ -37,7 +37,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 
 **Before deciding fix mode:** read `~/.claude/.coalmine.json` then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`; project wins per key); neither present → `autoFixMode` = `interactive`.
 
-**Standing consent:** honor `.coalmine.json` `autoFixMode` as the pre-chosen option (the config IS the chosen option) — `off` = report only, no menu · `safe` = apply safe/reversible fixes automatically (still checkpoint → baseline → build/test → revert only on a new failure) · `interactive` (default) = present the menu below.
+**Standing consent:** honor `.coalmine.json` `autoFixMode` as the pre-chosen option (the config IS the chosen option) — `off` = report only, no menu · `safe` = apply safe/reversible fixes automatically (still checkpoint → baseline → build/test → revert only on a new failure) · `interactive` (default) = present the menu below. `autoFixMode` is read by you from the config files, not merged by the hooks' safer-value clamp, so a project config you did not write can set it to `safe`; read the project value as the config says, and never treat a global value as a floor on it.
 
 After any scan report where the session is interactive (a user is present) — manual run OR hook-nudged auto-scan — you **MUST** present this menu via `ask_question` (skip only when findings are zero or `autoFixMode` pre-decided above; a non-interactive hook-nudged scan is report-only, per the Hook Context rule below):
 

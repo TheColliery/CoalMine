@@ -2,6 +2,17 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+The README now records the confirmed claude.ai upload, and documents that `autoFixMode` is not clamped.
+
+### Changed
+- **claude.ai upload confirmed, 2026-10-09.** The README's badge, platform table and Option A3 no longer say the ZIP upload is unconfirmed. The owner uploaded `rot-canary.zip` (the v3.22.2 asset, one of nine ZIPs built the same way) in two accounts: claude.ai accepted it, the security scan passed, and it is listed under "Created by you" with its name and description. The synced skill reached a Claude Code session as `anthropic-skills:rot-canary` within minutes. Not tested: a lower-case `skill.md`, the 201-byte description case (`telemetry-canary`), and the other eight ZIPs.
+- **`autoFixMode` is documented as not clamped.** The README's Configure section and `rot-canary`'s `SKILL.md` now say that the agent reads `autoFixMode` itself, so a cloned repository's project `.coalmine.json` can set `safe` and `rot-canary` then applies its safe-class fixes in an interactive session without showing the menu; a global value is not a floor. The README names what does work: read a cloned repository's config before opening it, set `rotCanaryMode` to `off` or `manual` globally, or list `rot-canary` in the global `disabledCanaries`. No behaviour changed. This moves `plugin/skills/rot-canary/SKILL.md` (one sentence, rendered from `skills/rot-canary/SKILL.md`).
+- **Internal — the test runner prints a relative file name under a link-spelled temp folder.** The canon wave runner (`scripts/lib/wave-run.mjs`) re-adopted at `.github` `aea4db7` no longer prints an absolute, link-spelled name (the macOS red of the v3.22.2 push, `wave-run.test.mjs:438`), and `wave-run.test.mjs` now runs inside the waves: the room's plain-line workaround (`OUTSIDE_WAVES`, `plainSpawnPlan`) is removed, so the run reads `38 files ... reconciled 38 of 38`.
+- **Internal — the git-spawn census reads a `//` comment that ends at a lone CR, U+2028 or U+2029.** The canon census re-adopted at the same commit refuses an inheriting `spawnSync('git', ...)` hidden after such a comment terminator (it passed before). The room keeps its async/shell-spawner rule and the `keepUserConfig` rule, and its census LIMIT comment now names a renamed or wrapped spawner as unseen.
+- **Internal — the scanner test is re-copied** (`scripts/secret-scan.test.mjs`, Bankfire `a0319dcd`) and its census pin is removed.
+
 ## [3.22.2] - 2026-10-09
 
 The installer no longer clears a skill folder it cannot prove it wrote.
