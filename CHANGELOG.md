@@ -2,7 +2,7 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.22.3] - 2026-10-09
 
 claude.ai upload confirmed; autoFixMode documented as unclamped
 
