@@ -52,6 +52,8 @@ const TESTS = [
   'scripts/lib/plugin-readme.test.mjs',
   // CWK-199's class: the child spawn plan (heap cap in the env, files serial, a finite per-test clock).
   'scripts/lib/test-spawn.test.mjs',
+  // 09a (BB-87): the wave runner that runs this very list, adopted by blob id with its preload and CoalFace's machine reading; its own tests, including the TAP-names witnesses.
+  'scripts/lib/wave-run.test.mjs',
   // CWK-174 (THE HOUSE SECRET SCAN, SERIES-CANON 'Secret scan'): byte-equal copies of the published-code template's scanner and caller tests.
   'scripts/secret-scan.test.mjs',
   'scripts/secret-gate.test.mjs',
@@ -88,18 +90,30 @@ async function main() {
     return;
   }
 
-  // CWK-199's class: the plan lives in scripts/lib/test-spawn.mjs (heap cap in the env, files serial, finite clock).
+  // CWK-199's class, since 09a: the plan lives in scripts/lib/test-spawn.mjs and RUNS in scripts/lib/wave-run.mjs (one TAP child per file admitted by the live
+  // machine reading, the heap cap, a clock per test and per file, a whole-run deadline; a file that exits before its tests report is VACUOUS and the run is red).
   // Dynamic and inside the step that needs it, per node/runtime.md section 1 (a gate entry imports node builtins only at the top).
-  const { testSpawnPlan } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'test-spawn.mjs')).href);
-  const plan = testSpawnPlan(TESTS, process.env);
+  const { testSpawnPlan, plainSpawnPlan, OUTSIDE_WAVES } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'test-spawn.mjs')).href);
+  const plan = testSpawnPlan(TESTS.filter((t) => !OUTSIDE_WAVES.includes(t)), process.env);
   const r = spawnSync(process.execPath, plan.args, { cwd: repo, stdio: 'inherit', env: plan.env, timeout: plan.timeout, killSignal: plan.killSignal });
   // 08b INSPECT M-1: a whole-run deadline is a LOUD failure (a named FAIL line, non-zero), never a silent pass or an unbounded wait.
   if (r.error) {
-    console.error(`FAIL test runner: the run did not finish (${r.error.code || r.error.message}); the whole-run deadline is ${plan.timeout} ms (scripts/lib/test-spawn.mjs RUN_TIMEOUT_MS)`);
+    console.error(`FAIL test runner: the run did not finish (${r.error.code || r.error.message}); the outer backstop around the wave runner is ${plan.timeout} ms (scripts/lib/test-spawn.mjs OUTER_TIMEOUT_MS)`);
     process.exitCode = 1;
     return;
   }
-  process.exitCode = r.status ?? 1;
+  let code = r.status ?? 1;
+  // The files OUTSIDE_WAVES (test-spawn.mjs says why) run on the plain node --test line, after the waves, and a red in either turns the run red.
+  const outside = TESTS.filter((t) => OUTSIDE_WAVES.includes(t));
+  if (outside.length) {
+    const plain = plainSpawnPlan(outside, process.env);
+    const r2 = spawnSync(process.execPath, plain.args, { cwd: repo, stdio: 'inherit', env: plain.env, timeout: plain.timeout, killSignal: plain.killSignal });
+    if (r2.error) {
+      console.error(`FAIL test runner: the plain run of ${outside.join(', ')} did not finish (${r2.error.code || r2.error.message}); its whole-run deadline is ${plain.timeout} ms (scripts/lib/test-spawn.mjs RUN_TIMEOUT_MS)`);
+      code = 1;
+    } else if (r2.status !== 0) code = code || (r2.status ?? 1);
+  }
+  process.exitCode = code;
 }
 
 await main();
