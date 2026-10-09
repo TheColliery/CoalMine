@@ -356,6 +356,7 @@ try {
       ['.gitbook.yaml', 'UMB-169: three fixed keys, no comments, no pointer candidates'],
       ['SUMMARY.md', 'UMB-169: a GitBook nav list, not ship-text prose; not in DEFAULT_SURFACE_PLAN because pointerCandidates() over it returns 0 (a plan row would be vacuous), but its links ARE re-checked on every push by link-check.mjs (see .github/workflows/link-check.yml), which fails on a dead entry -- coverage lives in a live gate, not a one-time human check'],
       ['scripts/lib/r12-open-spy.cjs', 'R12: a test-only --require preload (CJS by necessity: NODE_OPTIONS --require); scripts/ is not shipped and its comments cite only fixtures and a sibling test helper by bare name'],
+      ['scripts/lib/git-env-census.mjs', '09a: the canon git-spawn census, a byte-equal copy of the overlay blob (never edited here); its only pointer-shaped text is the ellipsis example `scripts/lib/...` in the collectScriptsMjs comment (line 901 of blob 28f153a8), which names no file. Re-derive: pointerCandidates() over the file returns that one citation and nothing else'],
       ['.coderabbit.yaml', 'CWK-120 (c): a fixed-schema YAML config; its comments cite hooks-safety.md/scripts-quality.md/DOC-PATTERN.md/SKILL-REPO-PATTERN.md by bare filename (no backticks, no /) and the vendor docs by URL, so pointerCandidates() -- which reads only backtick-wrapped, /-bearing tokens -- returns 0 over it; a plan row would be vacuous'],
     ];
     const declaredOut = (f) => DECLARED_OUT.some(([pre]) => f.startsWith(pre) || f.endsWith('/' + pre));
@@ -372,7 +373,8 @@ try {
     const commentLines = (src) => src.split('\n').filter((l) => /^\s*(\/\/|\*)/.test(l)).join('\n');
     const hashComments = (src) => src.split('\n').filter((l) => /^\s*#/.test(l)).join('\n');
     const surfaces = collectSurfaces(repo, DEFAULT_SURFACE_PLAN, {
-      join: path.join, walkMd, walkSrc, read, rel, commentLines, hashComments,
+      // 09a: a source file DECLARED OUT above is not walked, as the table's own header says (it used to bind only files outside the plan's walk).
+      join: path.join, walkMd, walkSrc: (...args) => walkSrc(...args).filter((p) => !declaredOut(rel(p))), read, rel, commentLines, hashComments,
     });
 
     // AGENT INSTALL HOMES, derived from the tool's OWN TARGETS map rather than enumerated:
@@ -592,13 +594,14 @@ try {
 // worktree hook exports -- and this gate runs AS that hook. Detection lives in
 // git-env-census.mjs, dynamically imported so a missing lib is one FAIL line, never a
 // linking-time crash (node/runtime.md §1).
-console.log('git spawn census (CWK-133/136 — every git spawn under scripts/ carries env: gitEnv(...), never process.env, and none runs git through a shell string):');
+console.log('git spawn census (CWK-133/136 — every spawnSync/execFileSync git spawn under scripts/ takes gitEnv(...) or an allowlist env, never process.env; the canon census reads those two spawners only, see git-env-census.mjs):');
 try {
   const { censusGitSpawns, collectScriptsMjs } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'git-env-census.mjs')).href);
+  const { ROOM_PINS } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'git-env-census.pins.mjs')).href);
   const files = collectScriptsMjs(repo);
-  const findings = censusGitSpawns(files);
+  const findings = censusGitSpawns(files, ROOM_PINS);
   for (const f of findings) fail(`git spawn census: ${f}`);
-  if (findings.length === 0) pass(`git spawn census: every git spawn across ${files.length} scripts/**/*.mjs file(s) routes through gitEnv() and none runs git through a shell string (blind spots: git-env-census.mjs header)`);
+  if (findings.length === 0) pass(`git spawn census: every spawnSync/execFileSync git spawn across ${files.length} scripts/**/*.mjs file(s) takes gitEnv() or an allowlist env (the canon census does not read async spawn, execFile, exec or execSync of git: none exists in scripts/, and a courier for the canon is in the 09a return)`);
 } catch (e) { fail(`git spawn census crashed: ${e.message}`); }
 
 // 3. hooks present

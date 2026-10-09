@@ -43,6 +43,8 @@ const TESTS = [
   'scripts/lib/repo-fs.test.mjs',
   'scripts/lib/git-env.test.mjs',
   'scripts/lib/git-env-census.test.mjs',
+  // 09a: the canon census's own witness list runs in the line above (adopted by blob id); this room's use of it, its pins and its wider git-env rule run here.
+  'scripts/lib/git-env-census.room.test.mjs',
   'scripts/lib/markers.test.mjs',
   'scripts/lib/r14-fixes.test.mjs',
   'scripts/lib/r14-low.test.mjs',
