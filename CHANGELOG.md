@@ -18,11 +18,12 @@ The installer is not part of `plugin/`, so Claude Code plugin users are not affe
 ### Changed
 - **All nine skills now link their issue-form address.** The self error-report line shared by all nine skills named the CoalMine issue form as a bare URL; it now reads `the CoalMine issue form` with the link behind it. The wording of the rule itself is unchanged. This moves `plugin/skills/*/SKILL.md` (nine files, rendered from `skills/_shared/escalation-footer.md`).
 - **SECURITY.md scopes its reproducibility claim.** "Builds are fully reproducible from source" now says the plugin build is byte-for-byte reproducible and the claude.ai ZIPs are not (filesystem entry order and stored file times differ between builds).
+- **Internal — the CI test runner runs in waves with a clock per file**: `scripts/test.mjs` hands the suite to the canon wave runner, which reconciles every test file it was given against the results it read and fails a file that exits before its tests report.
+- **Internal — one git-spawn census for the flock**: `scripts/lib/git-env-census.mjs` is now the canon copy; the room keeps its two byte-pinned exemptions and one extra rule (only the installer may pass `keepUserConfig`) in `git-env-census.pins.mjs` and `git-env-census.room.test.mjs`.
+- **Internal — the canon workflow and test set are re-synced by blob id**: including `claude-ai-zips.yml`, which now carries the launch-form re-point and a check that the derive step wrote its four release files.
+- **Internal — the git-spawn census now also refuses a git child started by an async `spawn`, `execFile`, `exec` or `execSync`**: the canon census reads only `spawnSync` and `execFileSync`, so the room adds a rule over `scripts/**/*.mjs` in `scripts/lib/git-env-census.room.test.mjs` (six planted-control cases). None exists today.
 
-### Internal (contributors; nothing here ships in `plugin/`)
-- **The CI test runner runs in waves with a clock per file.** `scripts/test.mjs` hands the suite to the canon wave runner, which reconciles every test file it was given against the results it read and fails a file that exits before its tests report.
-- **One git-spawn census for the flock.** `scripts/lib/git-env-census.mjs` is now the canon copy; the room keeps its two byte-pinned exemptions and one extra rule (only the installer may pass `keepUserConfig`) in `git-env-census.pins.mjs` and `git-env-census.room.test.mjs`.
-- **The canon workflow and test set are re-synced by blob id**, including `claude-ai-zips.yml`, which now carries the launch-form re-point and a check that the derive step wrote its four release files.
+Nothing in the four **Internal —** lines ships in `plugin/`.
 
 ## [3.22.1] - 2026-10-02
 
