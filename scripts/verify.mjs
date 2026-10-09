@@ -594,14 +594,14 @@ try {
 // worktree hook exports -- and this gate runs AS that hook. Detection lives in
 // git-env-census.mjs, dynamically imported so a missing lib is one FAIL line, never a
 // linking-time crash (node/runtime.md §1).
-console.log('git spawn census (CWK-133/136 — every spawnSync/execFileSync git spawn under scripts/ takes gitEnv(...) or an allowlist env, never process.env; the canon census reads those two spawners only, see git-env-census.mjs):');
+console.log('git spawn census (CWK-133/136 — every spawnSync/execFileSync git spawn under scripts/ takes gitEnv(...) or an allowlist env, never process.env; the canon census reads those two spawners only, see git-env-census.mjs; a git child started by spawn, execFile, exec or execSync is refused by the room rule in scripts/lib/git-env-census.room.test.mjs, which test.mjs runs):');
 try {
   const { censusGitSpawns, collectScriptsMjs } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'git-env-census.mjs')).href);
   const { ROOM_PINS } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'git-env-census.pins.mjs')).href);
   const files = collectScriptsMjs(repo);
   const findings = censusGitSpawns(files, ROOM_PINS);
   for (const f of findings) fail(`git spawn census: ${f}`);
-  if (findings.length === 0) pass(`git spawn census: every spawnSync/execFileSync git spawn across ${files.length} scripts/**/*.mjs file(s) takes gitEnv() or an allowlist env (the canon census does not read async spawn, execFile, exec or execSync of git: none exists in scripts/, and a courier for the canon is in the 09a return)`);
+  if (findings.length === 0) pass(`git spawn census: every spawnSync/execFileSync git spawn across ${files.length} scripts/**/*.mjs file(s) takes gitEnv() or an allowlist env (the canon census reads those two spawners only; spawn, execFile, exec and execSync of git are refused by the room rule in scripts/lib/git-env-census.room.test.mjs, run by test.mjs, not asserted here)`);
 } catch (e) { fail(`git spawn census crashed: ${e.message}`); }
 
 // 3. hooks present
