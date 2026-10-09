@@ -6,13 +6,15 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 CoalMine now carries a native Antigravity plugin
 
-The plugin folder gains the two files Antigravity reads, and the Stop hook can ask Antigravity to run the scan.
+The built `plugin/` folder gains the two files Antigravity reads, and the Stop hook asks Antigravity for the scan after an edit.
 
 ### Added
 - **A native Antigravity plugin.** `plugin/plugin.json` (the plugin name) and `plugin/hooks.json` (the conductor on `PreInvocation`, the touch recorder on `PostToolUse`, the scan nudge on `Stop`, each `node hooks/<script>.js <Event>` with a 10 s timeout) are built from `plugin-src/` by `scripts/build-plugin.mjs`, and `scripts/verify.mjs` gates them (the plugin name, only Antigravity's five events, a timeout of 1 to 30, a command that names a script that ships in `plugin/`). Claude Code reads `.claude-plugin/plugin.json` and `hooks/hooks.json`, never these two paths. The plugin is the `plugin/` folder, not the repository root, whose `skills/` are the unrendered templates.
+- **What was measured, and what was not.** On agy 1.3.2 (Windows, headless `agy -p`), with `plugin/` copied to `<project>/.agents/plugins/coalmine` in a throwaway project, the conductor line reached the model (a control without the plugin received none), the nine skills were listed and `rot-canary` was read. With a global skills mirror also present, each CoalMine skill is listed twice. Not measured: `agy plugin install <git url>` (not supported, the repository root has no manifest), the interactive IDE, `PostToolUse` and `Stop` firing on a live run and AG acting on the Stop `continue`, and the `commands/` (no Antigravity surface on this route). The README's Install section, `SECURITY.md`, `platform-configs/hooks/` and the rot-canary cadence reference say so.
 
 ### Changed
-- **On Antigravity the Stop hook now asks for the scan.** After an edit it answers `{"decision":"continue","reason":...}` (the Stop output the engine documents) with the same reason Claude Code receives, once per batch: the acknowledgement marker is the loop guard, and a stop the model did not finish (`error`, `max_steps_exceeded`) or an acknowledgement that did not land answers `{}`. It answered `{}` in every case before.
+- **On Antigravity the Stop hook now asks for the scan.** After an edit it answers `{"decision":"continue","reason":...}` (the Stop output the engine documents) with the same reason Claude Code receives, once per batch: the acknowledgement marker is the loop guard, and a stop the model did not finish (`error`, `max_steps_exceeded`) or an acknowledgement that did not land answers `{}`. It answered `{}` in every case before. This moves `plugin/skills/rot-canary/references/cadence.md` (rendered from `skills/rot-canary/references/cadence.md`).
+- **Internal — tests for the Antigravity plugin.** `scripts/lib/ag-plugin.test.mjs` (10 tests) runs each shipped command from `plugin/` with Antigravity's stdin shape in a sandboxed TEMP and HOME, and exercises `verify.mjs`'s Antigravity checks; the two older Antigravity Stop tests in `hooks.test.mjs` assert the continue shape.
 
 ## [3.22.3] - 2026-10-09
 
