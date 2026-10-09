@@ -444,6 +444,14 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
   }
 });
 
+// The CHANGELOG's TOP entry is its first "## [" heading, whatever it is called: [Unreleased] between releases, a dated version from a release commit until the next
+// [Unreleased] opens. A fixture that plants into "## [Unreleased]" by name plants nothing on a released tree and its assertion fails (09a bounce 2: no release could
+// be committed). So R19 and R20 find the top entry by structure and run under BOTH headings.
+const TOP_HEADINGS = ['## [Unreleased]', '## [99.0.0] - 2026-01-01'];
+const topEntryEnd = (text) => text.indexOf(NL, text.search(/^## \[/m)) + NL.length;
+const withTopHeading = (text, heading) => text.slice(0, text.search(/^## \[/m)) + heading + NL + text.slice(topEntryEnd(text));
+const plantInTop = (text, plant) => { const end = topEntryEnd(text); return text.slice(0, end) + plant + text.slice(end); };
+
 // R19: the CHANGELOG's TOP entry is checked in full by the REAL gate (ONE FLOCK ONE COLOR with CoalFace 586e0cd). Two
 // shapes, and only the second passed before: a new [Unreleased] entry citing a gitignored scratchpad/ path (the gitignored-root
 // check already covered every entry) and one citing a path that resolves to nothing (the resolve check was skipped for the
@@ -477,35 +485,40 @@ test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FA
     git(['commit', '-q', '-m', 'baseline']);
     const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
     const chlog = path.join(tmp, 'CHANGELOG.md');
-    const base = fs.readFileSync(chlog, 'utf8');
-    const second = base.indexOf(NL + '## [', base.indexOf('## [Unreleased]') + 1);
-    assert.ok(second > 0, 'the live CHANGELOG has a top entry and at least one released entry');
-    const lines = (r) => (r.stdout.match(/^\s*FAIL CHANGELOG\.md.*$/gm) || []);
-    assert.deepEqual(lines(run()), [], 'a clean copy has no CHANGELOG finding -- otherwise the plants below prove nothing');
+    const live = fs.readFileSync(chlog, 'utf8');
+    for (const heading of TOP_HEADINGS) {
+      const base = withTopHeading(live, heading);
+      const second = base.indexOf(NL + '## [', base.search(/^## \[/m) + 1);
+      assert.ok(second > 0, heading + ': the CHANGELOG has a top entry and at least one released entry');
+      fs.writeFileSync(chlog, base);
+      git(['add', '-A']);
+      const lines = (r) => (r.stdout.match(/^\s*FAIL CHANGELOG\.md.*$/gm) || []);
+      assert.deepEqual(lines(run()), [], heading + ': a clean copy has no CHANGELOG finding -- otherwise the plants below prove nothing');
 
-    const cite = (p) => NL + 'Planted: see ' + TICK + p + TICK + '.' + NL;
-    const withTop = (p) => base.replace('## [Unreleased]' + NL, () => '## [Unreleased]' + NL + cite(p));
-    const afterHeading = base.indexOf(NL, second + 1); // end of the SECOND heading line: the plant lands INSIDE the released entry
-    const withReleased = (p) => base.slice(0, afterHeading) + NL + cite(p) + base.slice(afterHeading);
+      const cite = (p) => NL + 'Planted: see ' + TICK + p + TICK + '.' + NL;
+      const withTop = (p) => plantInTop(base, cite(p));
+      const afterHeading = base.indexOf(NL, second + 1); // end of the SECOND heading line: the plant lands INSIDE the released entry
+      const withReleased = (p) => base.slice(0, afterHeading) + NL + cite(p) + base.slice(afterHeading);
 
-    // shape 2: the dead path, top entry. Red before R19.
-    fs.writeFileSync(chlog, withTop('scripts/lib/no-such-module.mjs'));
-    git(['add', '-A']);
-    const top = lines(run());
-    assert.equal(top.length, 1, 'the top entry citing a path that resolves to nothing must FAIL, got: ' + JSON.stringify(top));
-    assert.ok(top[0].includes('scripts/lib/no-such-module.mjs') && top[0].includes('does not resolve'));
+      // shape 2: the dead path, top entry. Red before R19.
+      fs.writeFileSync(chlog, withTop('scripts/lib/no-such-module.mjs'));
+      git(['add', '-A']);
+      const top = lines(run());
+      assert.equal(top.length, 1, heading + ': the top entry citing a path that resolves to nothing must FAIL, got: ' + JSON.stringify(top));
+      assert.ok(top[0].includes('scripts/lib/no-such-module.mjs') && top[0].includes('does not resolve'));
 
-    // shape 1: a gitignored scratchpad path, top entry. Held before R19 too.
-    fs.writeFileSync(chlog, withTop('scratchpad/probe.md'));
-    git(['add', '-A']);
-    const ign = lines(run());
-    assert.equal(ign.length, 1, 'the top entry citing a gitignored path must FAIL, got: ' + JSON.stringify(ign));
-    assert.ok(ign[0].includes('gitignored'));
+      // shape 1: a gitignored scratchpad path, top entry. Held before R19 too.
+      fs.writeFileSync(chlog, withTop('scratchpad/probe.md'));
+      git(['add', '-A']);
+      const ign = lines(run());
+      assert.equal(ign.length, 1, heading + ': the top entry citing a gitignored path must FAIL, got: ' + JSON.stringify(ign));
+      assert.ok(ign[0].includes('gitignored'));
 
-    // released history: the same dead path is NOT a finding.
-    fs.writeFileSync(chlog, withReleased('scripts/lib/no-such-module.mjs'));
-    git(['add', '-A']);
-    assert.deepEqual(lines(run()), [], 'a released entry citing a dead path stays exempt');
+      // released history: the same dead path is NOT a finding.
+      fs.writeFileSync(chlog, withReleased('scripts/lib/no-such-module.mjs'));
+      git(['add', '-A']);
+      assert.deepEqual(lines(run()), [], heading + ': a released entry citing a dead path stays exempt');
+    }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -540,15 +553,20 @@ test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence 
     const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
     const lines = (r) => (r.stdout.match(/^\s*FAIL CHANGELOG\.md.*$/gm) || []);
     const chlog = path.join(tmp, 'CHANGELOG.md');
-    const base = fs.readFileSync(chlog, 'utf8');
-    assert.deepEqual(lines(run()), [], 'a clean copy has no CHANGELOG finding -- otherwise the plant below proves nothing');
-    const fence = TICK + TICK + TICK;
-    const plant = NL + fence + NL + '## [9.9.9] - quoted example' + NL + fence + NL + NL + 'Planted: see ' + TICK + 'scripts/lib/no-such-module.mjs' + TICK + '.' + NL;
-    fs.writeFileSync(chlog, base.replace('## [Unreleased]' + NL, () => '## [Unreleased]' + NL + plant));
-    git(['add', '-A']);
-    const found = lines(run());
-    assert.equal(found.length, 1, 'the dead path below the fence must FAIL, got: ' + JSON.stringify(found));
-    assert.ok(found[0].includes('scripts/lib/no-such-module.mjs') && found[0].includes('does not resolve'));
+    const live = fs.readFileSync(chlog, 'utf8');
+    for (const heading of TOP_HEADINGS) {
+      const base = withTopHeading(live, heading);
+      fs.writeFileSync(chlog, base);
+      git(['add', '-A']);
+      assert.deepEqual(lines(run()), [], heading + ': a clean copy has no CHANGELOG finding -- otherwise the plant below proves nothing');
+      const fence = TICK + TICK + TICK;
+      const plant = NL + fence + NL + '## [9.9.9] - quoted example' + NL + fence + NL + NL + 'Planted: see ' + TICK + 'scripts/lib/no-such-module.mjs' + TICK + '.' + NL;
+      fs.writeFileSync(chlog, plantInTop(base, plant));
+      git(['add', '-A']);
+      const found = lines(run());
+      assert.equal(found.length, 1, heading + ': the dead path below the fence must FAIL, got: ' + JSON.stringify(found));
+      assert.ok(found[0].includes('scripts/lib/no-such-module.mjs') && found[0].includes('does not resolve'));
+    }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
