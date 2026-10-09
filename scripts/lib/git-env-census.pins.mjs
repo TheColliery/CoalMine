@@ -7,6 +7,6 @@ export const ROOM_PINS = [
   {
     rel: 'scripts/secret-gate.mjs',
     blob: '856956a1cca6f716e5507f6c23ac90ed34cbbe5f',
-    why: "The canon gate (published-code template) builds its git env as a FILTER of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES (commit mode must read the index a hook names), which the canon census refuses by rule at lines 57 and 60: \"execFileSync('git', ...) env: holds process.env without gitEnv() -- ambient GIT_* reaches the child\". The canon pins this same file.",
+    why: "The canon gate (published-code template) builds its git env as a FILTER of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES (commit mode must read the index a hook names), which the canon census refuses by rule at lines 57 and 60: \"execFileSync('git', ...) env: holds process.env without gitEnv() -- ambient GIT_* reaches the child\". The canon ships no pins, so each room that carries the gate pins it here.",
   },
 ];

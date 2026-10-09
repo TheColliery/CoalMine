@@ -49,12 +49,17 @@ test('room census: every pin is a { rel, blob, why } row, holds the file byte fo
 
 // The room's wider rule, kept from the retired room census (R14 LOW-1, git-env.mjs header): gitEnv(..., { keepUserConfig: true }) lets the child read the
 // user's global and system git config, so ONLY the installer's core.hooksPath read may pass it. The canon trusts any gitEnv( call by its name, so it cannot see this.
+// ONE function for the live check and the control below (09b bounce 1, t35 #3): a control that re-typed the filter could stay green while the live filter broke.
+function keepUserConfigUsers(files, allowed) {
+  return files.filter((f) => f.text.includes('keep' + 'UserConfig')).map((f) => f.rel).filter((rel) => !allowed.has(rel));
+}
+
 test('room rule (R14 LOW-1): keepUserConfig appears only in the installer and in git-env.mjs with its test', () => {
   const allowed = new Set(['scripts/install.mjs', 'scripts/lib/git-env.mjs', 'scripts/lib/git-env.test.mjs', 'scripts/lib/git-env-census.room.test.mjs']);
-  const users = collectScriptsMjs(repo).filter((f) => f.text.includes('keep' + 'UserConfig')).map((f) => f.rel).filter((rel) => !allowed.has(rel));
+  const users = keepUserConfigUsers(collectScriptsMjs(repo), allowed);
   assert.deepEqual(users, [], 'keepUserConfig reached a file that may not use it');
   const planted = "import { spawnSync } from 'node:child_process';\nimport { gitEnv } from './git-env.mjs';\n" + SG + ", ['config'], { env: gitEnv('/', { keepUserConfig: true }) });\n";
-  const hits = [{ rel: 'scripts/lib/zz-planted.mjs', text: planted }].filter((f) => f.text.includes('keep' + 'UserConfig')).map((f) => f.rel).filter((rel) => !allowed.has(rel));
+  const hits = keepUserConfigUsers([{ rel: 'scripts/lib/zz-planted.mjs', text: planted }], allowed);
   assert.deepEqual(hits, ['scripts/lib/zz-planted.mjs'], 'control: the same check flags a planted use');
 });
 

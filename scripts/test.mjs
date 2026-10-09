@@ -50,7 +50,7 @@ const TESTS = [
   'scripts/lib/r14-low.test.mjs',
   'scripts/lib/r14-install.test.mjs',
   'scripts/lib/plugin-readme.test.mjs',
-  // CWK-199's class: the child spawn plan (heap cap in the env, files serial, a finite per-test clock).
+  // CWK-199's class: the child spawn plan, run by the wave runner (heap via --heap-mb, a clock per test and per file, a whole-run deadline).
   'scripts/lib/test-spawn.test.mjs',
   // 09a (BB-87): the wave runner that runs this very list, adopted by blob id with its preload and CoalFace's machine reading; its own tests, including the TAP-names witnesses.
   'scripts/lib/wave-run.test.mjs',

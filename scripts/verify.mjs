@@ -356,7 +356,6 @@ try {
       ['.gitbook.yaml', 'UMB-169: three fixed keys, no comments, no pointer candidates'],
       ['SUMMARY.md', 'UMB-169: a GitBook nav list, not ship-text prose; not in DEFAULT_SURFACE_PLAN because pointerCandidates() over it returns 0 (a plan row would be vacuous), but its links ARE re-checked on every push by link-check.mjs (see .github/workflows/link-check.yml), which fails on a dead entry -- coverage lives in a live gate, not a one-time human check'],
       ['scripts/lib/r12-open-spy.cjs', 'R12: a test-only --require preload (CJS by necessity: NODE_OPTIONS --require); scripts/ is not shipped and its comments cite only fixtures and a sibling test helper by bare name'],
-      ['scripts/lib/git-env-census.mjs', '09a: the canon git-spawn census, a byte-equal copy of the overlay blob (never edited here); its only pointer-shaped text is the ellipsis example `scripts/lib/...` in the collectScriptsMjs comment (line 901 of blob 28f153a8), which names no file. Re-derive: pointerCandidates() over the file returns that one citation and nothing else'],
       ['.coderabbit.yaml', 'CWK-120 (c): a fixed-schema YAML config; its comments cite hooks-safety.md/scripts-quality.md/DOC-PATTERN.md/SKILL-REPO-PATTERN.md by bare filename (no backticks, no /) and the vendor docs by URL, so pointerCandidates() -- which reads only backtick-wrapped, /-bearing tokens -- returns 0 over it; a plan row would be vacuous'],
     ];
     const declaredOut = (f) => DECLARED_OUT.some(([pre]) => f.startsWith(pre) || f.endsWith('/' + pre));
