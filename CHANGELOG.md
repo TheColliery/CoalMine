@@ -4,6 +4,8 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+claude.ai upload confirmed; autoFixMode documented as unclamped
+
 The README now records the confirmed claude.ai upload, and documents that `autoFixMode` is not clamped.
 
 ### Changed
@@ -12,6 +14,7 @@ The README now records the confirmed claude.ai upload, and documents that `autoF
 - **Internal — the test runner prints a relative file name under a link-spelled temp folder.** The canon wave runner (`scripts/lib/wave-run.mjs`) re-adopted at `.github` `aea4db7` no longer prints an absolute, link-spelled name (the macOS red of the v3.22.2 push, `wave-run.test.mjs:438`), and `wave-run.test.mjs` now runs inside the waves: the room's plain-line workaround (`OUTSIDE_WAVES`, `plainSpawnPlan`) is removed, so the run reads `38 files ... reconciled 38 of 38`.
 - **Internal — the git-spawn census reads a `//` comment that ends at a lone CR, U+2028 or U+2029.** The canon census re-adopted at the same commit refuses an inheriting `spawnSync('git', ...)` hidden after such a comment terminator (it passed before). The room keeps its async/shell-spawner rule and the `keepUserConfig` rule, and its census LIMIT comment now names a renamed or wrapped spawner as unseen.
 - **Internal — the scanner test is re-copied** (`scripts/secret-scan.test.mjs`, Bankfire `a0319dcd`) and its census pin is removed.
+- **Internal — the `keepUserConfig` control calls the live filter.** The room census test's planted control now runs the same function as the live check (`keepUserConfigUsers`), so a typo in the filter fails the test (the mutant survived before and is killed now); the `secret-gate.mjs` pin's reason says each room that carries the gate pins it, the roster comment in `scripts/test.mjs` names the wave runner, and a stale `DECLARED_OUT` exemption for `scripts/lib/git-env-census.mjs` is removed from `scripts/verify.mjs` (coder `5eb474d`).
 
 ## [3.22.2] - 2026-10-09
 
