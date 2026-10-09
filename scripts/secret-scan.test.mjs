@@ -66,7 +66,7 @@ test('the generic rule cannot fire on hashes, SHAs, UUIDs, references or low-ent
   ]) assert.deepStrictEqual(scanLine(line), [], line);
 });
 
-// LWK-264. Two shapes false-alarmed the generic rule on real repositories, both found by their MASKED shape (no value was ever
+// Two shapes false-alarmed the generic rule on real repositories, both found by their MASKED shape (no value was ever
 // printed). Every fixture below is synthetic: a made-up identifier or token, never a value from any real file. Each new
 // shape is paired with a REAL-secret-shaped fixture on the same left side that must STILL fire, because the repair may
 // never be a wider hole: the answer is a better boundary, not an exclusion, an acknowledgement or a higher floor.
@@ -104,7 +104,7 @@ test('a long identifier on the right of a secret-named left side is code, not a 
   assert.deepStrictEqual(scanLine('path' + `_key = ${id}(x) api` + `_key=${RAND264}`), G264, 'a real key behind a call');
 });
 
-// LWK-264, round 2. The repair may widen nothing: a real, machine-generated secret that the rule caught before must still be
+// Round 2. The repair may widen nothing: a real, machine-generated secret that the rule caught before must still be
 // caught. Some generators draw from an alphabet that holds `(` or `[` (a default web-framework secret key; a password manager
 // with symbols), so a bare real secret CAN start with an identifier-looking run followed by `(`. Each fixture below is a
 // synthetic key of that kind, placed ON one edge of the guard that reads a bare value as code: where the code charset ends,
@@ -162,7 +162,7 @@ test('a real machine-generated secret on an edge of the code-value guard still f
   ]) assert.deepStrictEqual(scanLine(line), G264, label);
 });
 
-// LWK-277. A constant that NAMES an environment variable (`SECRET_ENV = 'CLOUDFLARE_…_TENANT'`) is not a secret: the value is an
+// A constant that NAMES an environment variable (`SECRET_ENV = 'CLOUDFLARE_…_TENANT'`) is not a secret: the value is an
 // all-caps snake_case NAME, and the left side says so (`…_ENV`, `…_VAR`, `…_NAME`, `envVar`). Three conditions, all required, so the
 // quiet case stays far from any real secret: a pointer-style left name, a value of word-like all-caps segments joined by `_`, AND a
 // value that itself holds a secret word (U4-A: a passphrase with a short token but no secret word must fire). Each
@@ -212,7 +212,7 @@ test('the pointer-name quiet case is narrow: a plain secret name, or a real secr
   ]) assert.deepStrictEqual(scanLine(line), G264, label);
 });
 
-// LWK-269. GitHub's stateless App installation tokens are `ghs_APPID_JWT`, about 520 characters (the vendor's changelogs of
+// GitHub's stateless App installation tokens are `ghs_APPID_JWT`, about 520 characters (the vendor's changelogs of
 // 2026-10-02 and 2026-05-15, its 2026-04-24 notice and its installation-token docs, read 2026-10-04). The `_` after the app id and
 // the dots of the JWT fall outside the 36-255 character class, so no provider rule matched. Every fixture is synthetic: a made-up
 // app id and a generated body in the JWT's alphabet, never an issued token.
@@ -301,7 +301,7 @@ test('a ghs_ body of 99 characters is not a hit, and one of exactly 100 is: the 
   }
 });
 
-// ONE MATCH MAY NEVER HIDE ANOTHER ON THE SAME LINE (LWK-212 round 2). Every value on a line is a
+// ONE MATCH MAY NEVER HIDE ANOTHER ON THE SAME LINE (a second-round rule). Every value on a line is a
 // hit of its own with its own fingerprint, so neither a failed check nor an acknowledgment of one
 // value can silence a different value beside it.
 test('a decoy that fails a pattern check cannot hide a real value later on the same line', () => {
@@ -393,7 +393,7 @@ test('rangeArgs: deletion skips, new branch and unknown remote scan against all 
   assert.deepStrictEqual(rangeArgs(ref(a, b2), () => true, 'origin'), [`${b2}..${a}`]);
 });
 
-// ------------------------------------------------------------ ROUND 3 (LWK-212 INSPECT bounce 1)
+// ------------------------------------------------------------ ROUND 3 (the first INSPECT bounce)
 const BS = cc(92);
 
 // F1. A regex runs synchronously, so an in-process test timeout cannot interrupt a hung scan. The
@@ -472,7 +472,7 @@ test('a 200k-character line dense with key-like names scans in linear work (no c
     'console.log(JSON.stringify(out));',
   ].join('\n');
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-    encoding: 'utf8', timeout: 15000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=512' },
+    encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, NODE_OPTIONS: '--max-old-space-size=512' },
   });
   assert.strictEqual(r.status, 0, `every scan must finish inside the kill timeout; status ${r.status}, signal ${r.signal}\n${r.stderr}`);
   const { __reread: reread, ...counts } = JSON.parse(r.stdout);
@@ -523,23 +523,24 @@ test('a provider key right after a literal backslash-n/r/t or a %XX escape is st
 const GITCFG = ['-c', 'user.name=scan-test', '-c', 'user.email=scan-test@example.invalid', '-c', 'commit.gpgsign=false',
   '-c', 'tag.gpgsign=false', '-c', 'core.autocrlf=false'];
 const ZERO40 = '0'.repeat(40);
-// THE SANDBOX (LWK-278). The fixtures must not depend on the developer's own machine: every fixture repository lives in ONE sandbox of
+// THE SANDBOX. The fixtures must not depend on the developer's own machine: every fixture repository lives in ONE sandbox of
 // this test's own, and the developer's global git configuration (a hooks path, a signing rule, a template directory) never applies to
-// a fixture call. The `GIT_*` filter below closes the inherited-environment half (LWK-258); the sandbox closes the configuration half.
+// a fixture call. The named-keys environment below closes the inherited-environment half; the sandbox closes the configuration half.
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-scan-sandbox-'));
 after(() => {
   assert.ok(path.resolve(SANDBOX).startsWith(path.resolve(os.tmpdir())) && path.basename(SANDBOX).startsWith('secret-scan-sandbox-'), 'refusing to delete outside the temp dir');
   fs.rmSync(SANDBOX, { recursive: true, force: true });
 });
 // A git hook runs with GIT_DIR, GIT_INDEX_FILE and friends set; a fixture that inherited them would act on the repository the
-// hook runs for. Every fixture git call gets an environment without them, read at call time so a test can plant them, and with the
-// sandbox in place of the box: TEMP, TMP, TMPDIR, HOME, USERPROFILE and XDG_CONFIG_HOME point at it (so the global git config is the
-// sandbox's own and holds none), and the system config is off. The only GIT_ name set is GIT_CONFIG_NOSYSTEM: the flock allows that name,
-// GIT_TERMINAL_PROMPT and GIT_CEILING_DIRECTORIES in a child git environment and refuses every other (assertGitEnv).
-const withoutGit = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
-let envSeen = null; // the last environment gitEnv() built: the witness of what a fixture call was handed
-const gitEnv = () => (envSeen = {
-  ...withoutGit(),
+// hook runs for. So a fixture git call is handed an environment BUILT FROM NAMES, never a copy of the process's own: nothing the process
+// inherited (a GIT_ name, a token, a proxy setting) can reach it, because only the keys written out below exist in it. They are the sandbox
+// in place of the box (TEMP, TMP, TMPDIR, HOME, USERPROFILE and XDG_CONFIG_HOME point at it, so the global git config is the sandbox's own
+// and holds none), the names git and node need to start (PATH everywhere; SystemRoot, windir, ComSpec and PATHEXT on Windows, where they
+// are read by name and are undefined, so left out of the child's environment, elsewhere), and the one GIT_ name set, GIT_CONFIG_NOSYSTEM,
+// which turns the system config off. The flock allows that name, GIT_TERMINAL_PROMPT and GIT_CEILING_DIRECTORIES in a child git
+// environment and refuses every other (assertGitEnv).
+const gitEnv = () => ({
+  PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT,
   TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX, HOME: SANDBOX, USERPROFILE: SANDBOX, XDG_CONFIG_HOME: SANDBOX,
   GIT_CONFIG_NOSYSTEM: '1',
 });
@@ -553,12 +554,17 @@ const sameDir = (a, b) => fs.realpathSync.native(a) === fs.realpathSync.native(b
 // The 8.3 short form of an existing path, or null where there is none to find: another OS, or a volume that makes no short names. cmd.exe
 // is asked through a script FILE of the sandbox, never an inline command line, whose quoting would change the path.
 let shortSeq = 0;
+// The absolute path of cmd.exe where the system folder is known: a bare name resolves from the working folder first, so a planted file there would run instead.
+const CMD = process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32', 'cmd.exe') : 'cmd.exe';
 function shortForm(p) {
   if (process.platform !== 'win32') return null;
   const script = path.join(SANDBOX, `short-name-${++shortSeq}.cmd`);
   fs.writeFileSync(script, ['@echo off', `for %%I in ("${p}") do @echo %%~sI`, ''].join(cc(13, 10)));
   try {
-    const r = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', script], { encoding: 'utf8', timeout: 30000, windowsHide: true, env: withoutGit() });
+    const r = spawnSync(CMD, ['/d', '/c', script], {
+      encoding: 'utf8', timeout: 30000, windowsHide: true,
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT, TEMP: SANDBOX, TMP: SANDBOX },
+    });
     const short = r.status === 0 ? r.stdout.trim() : '';
     return short !== '' && short.includes('~') && short.toLowerCase() !== p.toLowerCase() ? short : null;
   } finally { fs.rmSync(script, { force: true }); }
@@ -599,7 +605,7 @@ function commitIn(d, files, msg = 'c') {
 const refLine = (local, remote, ref = 'refs/heads/main') => `${ref} ${local} ${ref} ${remote}\n`;
 const where = (hits) => hits.map((h) => `${h.kind}:${h.file}:${h.pattern}`).sort();
 
-// LWK-258. A git hook runs with GIT_DIR, GIT_INDEX_FILE and friends set, and node inherits them. A fixture git call that
+// A git hook runs with GIT_DIR, GIT_INDEX_FILE and friends set, and node inherits them. A fixture git call that
 // inherited them would act on the repository the hook runs for, not on the throwaway one: this suite would read (and, for
 // init/add/commit, WRITE) the wrong repository. The plant below is process-wide for the length of this one synchronous test.
 test('a GIT_DIR and GIT_INDEX_FILE a hook inherited are dropped: every fixture git call acts on its own repository', () => {
@@ -618,11 +624,23 @@ test('a GIT_DIR and GIT_INDEX_FILE a hook inherited are dropped: every fixture g
       for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     }
     assert.match(own, /^[0-9a-f]{40}$/, 'the commit must land in the fixture repository');
-    envSeen = null;
-    const decoyHead = gitStatus(decoy, ['rev-parse', '--verify', '-q', 'HEAD']);
-    assert.notStrictEqual(decoyHead.status, 0, 'the decoy repository must stay empty: a commit in it means a fixture call followed GIT_DIR');
-    assert.notStrictEqual(envSeen, null, 'the decoy call took its environment from the sandbox (gitEnv), not from a copy of its own');
-    assertGitEnv(envSeen, 'the decoy call');
+    assert.notStrictEqual(gitStatus(decoy, ['rev-parse', '--verify', '-q', 'HEAD']).status, 0, 'the decoy repository must stay empty: a commit in it means a fixture call followed GIT_DIR');
+    // The witness that no GIT_DIR from the process environment reaches a status call: ask the decoy for its HEAD while a GIT_DIR naming the
+    // fixture, which has a commit, is planted. A call that inherited the process's environment would read the fixture's HEAD (exit 0); one built
+    // from named keys has no GIT_DIR, reads the decoy, which is empty, and fails. The positive control comes first, through the CLI flag so the
+    // environment stays clean: the path being planted really names a repository with a commit, or the witness below proves nothing.
+    const aimed = { GIT_DIR: path.join(root, 'own', '.git') };
+    assert.strictEqual(gitStatus(decoy, ['--git-dir', aimed.GIT_DIR, 'rev-parse', '--verify', '-q', 'HEAD']).status, 0, 'the planted GIT_DIR names a repository with a commit');
+    const aimedSaved = Object.fromEntries(Object.keys(aimed).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, aimed);
+    let decoyHead;
+    try {
+      decoyHead = gitStatus(decoy, ['rev-parse', '--verify', '-q', 'HEAD']);
+    } finally {
+      for (const [k, v] of Object.entries(aimedSaved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+    assert.notStrictEqual(decoyHead.status, 0, 'the decoy call reads the decoy, not the repository a planted GIT_DIR names: no GIT_DIR from the process environment reached it');
+    assertGitEnv(gitEnv(), 'a fixture call');
   });
 });
 
@@ -676,6 +694,7 @@ test('a fixture call is handed GIT_CONFIG_NOSYSTEM and no other GIT_ name beyond
   const planted = {
     GIT_SSH_COMMAND: 'planted', GIT_ALTERNATE_OBJECT_DIRECTORIES: 'planted', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath',
     GIT_CONFIG_VALUE_0: 'planted', GIT_CONFIG_GLOBAL: 'planted', git_template_dir: 'planted', GIT_CONFIG_NOSYSTEM: '0',
+    SCAN_TEST_PLANTED_MARKER: 'planted', // not a GIT_ name: a copy of the process's own environment, filtered or not, would carry it
   };
   const saved = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
   Object.assign(process.env, planted);
@@ -683,12 +702,25 @@ test('a fixture call is handed GIT_CONFIG_NOSYSTEM and no other GIT_ name beyond
     const env = gitEnv();
     assertGitEnv(env, 'a fixture call');
     assert.ok(!Object.values(env).includes('planted'), 'no planted value reaches the call');
+    assert.ok(!('SCAN_TEST_PLANTED_MARKER' in env), 'the environment is built from named keys: a name the process merely inherited is not in it');
+    assert.ok(!Object.values(env).includes('undefined'), 'a name that is unset here is left out, never the string "undefined"');
+    assert.strictEqual(env.PATH, process.env.PATH, 'PATH, which git and node need to start, is carried by name');
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
 
-// LWK-278. The witness for the sandbox: it plants a hostile global git configuration (an executable hooks path whose pre-commit hook
+// The named-keys environment reads a name that this OS may not have (SystemRoot on Linux). The claim in gitEnv's comment is that such a key is
+// left out of the child's environment and never becomes the string "undefined"; this proves it of the node running the suite, through a real child.
+test('a named environment key whose value is undefined is left out of a child\'s environment, never passed as the string "undefined"', () => {
+  const r = spawnSync(process.execPath, ['-p', "'SCAN_TEST_UNSET' in process.env"], {
+    encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, SCAN_TEST_UNSET: undefined },
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout.trim(), 'false');
+});
+
+// The witness for the sandbox: it plants a hostile global git configuration (an executable hooks path whose pre-commit hook
 // exits 1) and a hostile HOME in the test process itself, then builds a fixture. Without the sandbox the fixture commit fails with the
 // hostile hook's exit 1, the fixture folder is outside the sandbox, and the child environment holds the box's own HOME. The system
 // configuration cannot be planted from a test, so GIT_CONFIG_NOSYSTEM is asserted on the environment the fixture calls receive.
