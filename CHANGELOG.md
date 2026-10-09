@@ -2,6 +2,18 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+CoalMine now carries a native Antigravity plugin
+
+The plugin folder gains the two files Antigravity reads, and the Stop hook can ask Antigravity to run the scan.
+
+### Added
+- **A native Antigravity plugin.** `plugin/plugin.json` (the plugin name) and `plugin/hooks.json` (the conductor on `PreInvocation`, the touch recorder on `PostToolUse`, the scan nudge on `Stop`, each `node hooks/<script>.js <Event>` with a 10 s timeout) are built from `plugin-src/` by `scripts/build-plugin.mjs`, and `scripts/verify.mjs` gates them (the plugin name, only Antigravity's five events, a timeout of 1 to 30, a command that names a script that ships in `plugin/`). Claude Code reads `.claude-plugin/plugin.json` and `hooks/hooks.json`, never these two paths. The plugin is the `plugin/` folder, not the repository root, whose `skills/` are the unrendered templates.
+
+### Changed
+- **On Antigravity the Stop hook now asks for the scan.** After an edit it answers `{"decision":"continue","reason":...}` (the Stop output the engine documents) with the same reason Claude Code receives, once per batch: the acknowledgement marker is the loop guard, and a stop the model did not finish (`error`, `max_steps_exceeded`) or an acknowledgement that did not land answers `{}`. It answered `{}` in every case before.
+
 ## [3.22.3] - 2026-10-09
 
 claude.ai upload confirmed; autoFixMode documented as unclamped

@@ -1292,18 +1292,32 @@ function main() {
 
   // Acknowledgement marker — store the mtime of .touched when we started the check
   // (so a later stop in this batch re-surfaces neither the scan nor the drift note).
-  try {
-    // wx temp + rename inside the owner-only marker dir (R14, CSV-4): a symlink planted at .scanned is REPLACED,
-    // never written through, and the file is created 0o600 each batch (the CWK-043 N1 residual for a pre-existing
-    // looser file no longer applies to a rewrite).
-    writeMarkerAtomic(scanned, String(touchedMtime));
-  } catch {}
+  // CWK-202 (AG): a stop the engine did not reach by the model finishing (terminationReason error or max_steps_exceeded) neither nudges nor acknowledges the batch,
+  // so the next ordinary stop still surfaces it; and the AG continue below is emitted only when the ack really landed (writeMarkerAtomic reports failure by returning false).
+  const agStop = !!process.argv[2];
+  const agWhy = input.terminationReason;
+  const engineFinished = agWhy === undefined || agWhy === null || agWhy === '' || agWhy === 'model_stop';
+  let acked = false;
+  if (!agStop || engineFinished) {
+    try {
+      // wx temp + rename inside the owner-only marker dir (R14, CSV-4): a symlink planted at .scanned is REPLACED,
+      // never written through, and the file is created 0o600 each batch (the CWK-043 N1 residual for a pre-existing
+      // looser file no longer applies to a rewrite).
+      acked = writeMarkerAtomic(scanned, String(touchedMtime)) === true;
+    } catch {}
+  }
 
-  // Emit. AG mode (an event-name argv — ONLY the Antigravity template passes one):
-  // the current AG engine (re-derived 2026-07-23) documents NO Stop-output inject
-  // channel, so emit the explicit no-op `{}` (the side effects above still ran; AG
-  // users reach findings via the manual /rot-canary path — CoalMine never blocks on
-  // AG). On CC: the scan report rides the loud blocking `reason`; the memory-drift
+  // Emit. AG mode (an event-name argv, ONLY the Antigravity template passes one). CWK-202 (09b): the AG engine's own hooks doc
+  // (agy-customizations/docs/hooks.md, agy 1.3.x) gives Stop a documented output, {"decision":"continue","reason":...}: "continue" blocks the stop
+  // and re-enters the loop with `reason` injected as a system message, the AG twin of Claude Code's decision:block below, so the same loud scan
+  // reason rides it. The earlier (2026-07-23) reading, that the engine had NO Stop inject channel, is superseded by that doc. The explicit no-op {}
+  // stays for every case where the nudge must not fire: no scan reason (a drift-only stop: AG has no quiet channel for the memory-drift note), a
+  // stop the engine did not reach by the model finishing (terminationReason error or max_steps_exceeded: forcing a re-entry there fights the
+  // engine), and an ack marker that did not land (without it the next stop would nudge the same batch again: fail closed, no loop). AG's Stop
+  // payload carries no stop_hook_active, so the ack marker written above IS the loop guard: the second stop of a batch finds .scanned >= .touched
+  // and returns before this point. That the engine honours the field in a headless `-p` run is NOT measured (an edit cannot be made under the
+  // junior pool's no-write wall); the unit tests pin the shape the doc names.
+  // On CC (no argv): the scan report rides the loud blocking `reason`; the memory-drift
   // reminder rides `systemMessage` (board #82, 2026-08-08 — a Stop hook returning
   // `hookSpecificOutput.additionalContext` forces the platform into a phantom second
   // turn that DISCARDS a `-p --output-format json` session's `result` field; a plain
@@ -1329,7 +1343,11 @@ function main() {
   // "When using --print, --output-format=stream-json requires --verbose") keeps the
   // pre-hook answer as its own `assistant` event, delivers this `reason` as a `user` event,
   // and marks the blocked turn `system`/`post_turn_summary` `status_category:"blocked"`.
-  if (process.argv[2]) { process.stdout.write('{}\n'); return; }
+  if (agStop) {
+    if (reason && acked && engineFinished) process.stdout.write(JSON.stringify({ decision: 'continue', reason }) + '\n');
+    else process.stdout.write('{}\n');
+    return;
+  }
   const out = {};
   if (reason) { out.decision = 'block'; out.reason = reason; }
   // Both quiet notes share the one sanctioned `systemMessage` channel. Suppression first:

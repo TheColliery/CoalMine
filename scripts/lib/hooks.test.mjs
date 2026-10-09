@@ -1854,7 +1854,7 @@ test('AG touch: toolCall.args payload (camelCase) records the edited file', () =
   }
 });
 
-test('AG stop: emits the explicit no-op {} (no Stop inject channel in the current engine; never decision:block)', () => {
+test('AG stop: after an edit emits {"decision":"continue","reason":<scan nudge>} (the AG Stop contract of agy-customizations/docs/hooks.md); never the CC block shape', () => {
   const tmp = mkTmp();
   try {
     const real = path.join(tmp, 'edited-c.js');
@@ -1862,10 +1862,12 @@ test('AG stop: emits the explicit no-op {} (no Stop inject channel in the curren
     fs.writeFileSync(path.join(tmp, 'coalmine', 'rot-canary-AGS1.touched'), real + '\n');
     const r = runHook(STOP, JSON.stringify({ session_id: 'AGS1' }), tmp, ['Stop']);
     assert.equal(r.status, 0);
-    // Contract re-derived 2026-07-23: the engine documents NO Stop-output inject
-    // channel; the pilot-era additionalContext key is a dead letter. The valid
-    // output is the explicit no-op {} — never the dead key, never decision:block.
-    assert.equal(r.stdout.trim(), '{}', 'AG Stop output is the explicit empty object');
+    // CWK-202 (09b): the engine's Stop contract is {decision:'continue', reason}; the pilot-era additionalContext key stays a dead letter and CC's
+    // decision:block is not the AG shape. The ack marker is the loop guard (its test: scripts/lib/ag-plugin.test.mjs).
+    const out = JSON.parse(r.stdout);
+    assert.deepEqual(Object.keys(out).sort(), ['decision', 'reason']);
+    assert.equal(out.decision, 'continue');
+    assert.match(out.reason, /rot-canary/);
     assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-AGS1.scanned')), 'the scan side effects (ack marker) still ran');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -1893,7 +1895,7 @@ test('AG touch+stop pair on the current-spec payload: conversationId keys the sh
 
     const r = runHook(STOP, JSON.stringify({ conversationId: 'AGCONV2' }), tmp, ['Stop']);
     assert.equal(r.status, 0);
-    assert.equal(r.stdout.trim(), '{}', 'AG Stop no-op output');
+    assert.equal(JSON.parse(r.stdout).decision, 'continue', 'AG Stop continue output');
     assert.ok(fs.existsSync(path.join(tmp, 'coalmine', 'rot-canary-AGCONV2.scanned')), 'stop read the conversationId-keyed state (one chain across the pair)');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

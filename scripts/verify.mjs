@@ -352,6 +352,8 @@ try {
       ['NOTICE', 'legal text, not ours to edit'],
       ['hooks/hooks.json', 'JSON carries no comments'],
       ['hooks/settings.snippet.json', 'JSON carries no comments'],
+      ['plugin-src/plugin.json', 'CWK-202: the Antigravity plugin manifest, a bare name; JSON, no comments (built into plugin/plugin.json and gated by the Antigravity block)'],
+      ['plugin-src/hooks.json', 'CWK-202: the Antigravity hooks, JSON, no comments (built into plugin/hooks.json and gated by the Antigravity block)'],
       ['skill-meta.json', 'three intent strings per skill; JSON, no comments'],
       ['.gitbook.yaml', 'UMB-169: three fixed keys, no comments, no pointer candidates'],
       ['SUMMARY.md', 'UMB-169: a GitBook nav list, not ship-text prose; not in DEFAULT_SURFACE_PLAN because pointerCandidates() over it returns 0 (a plan row would be vacuous), but its links ARE re-checked on every push by link-check.mjs (see .github/workflows/link-check.yml), which fails on a dead entry -- coverage lives in a live gate, not a one-time human check'],
@@ -715,7 +717,7 @@ if (!fs.existsSync(pluginDir)) {
         if (!['skills', 'hooks', '.claude-plugin', 'agents', 'commands'].includes(e.name)) {
           fail(`plugin/${e.name} is an orphan directory — run: node scripts/build-plugin.mjs`);
         }
-      } else if (e.name !== 'README.md') {
+      } else if (!['README.md', 'plugin.json', 'hooks.json'].includes(e.name)) { // plugin.json + hooks.json: the Antigravity plugin files (CWK-202), authored at plugin-src/
         fail(`plugin/${e.name} is an orphan file — run: node scripts/build-plugin.mjs`);
       }
     }
@@ -785,6 +787,50 @@ if (!fs.existsSync(pluginDir)) {
     else if (fs.readFileSync(readmeDist, 'utf8').split(/\s+/).filter(Boolean).length < 40) fail('plugin/README.md is under 40 words (the directory minimum)');
     else pass('plugin/README.md in sync (>= 40 words)');
   } catch (e) { fail(`plugin/README.md check failed: ${e.message}`); }
+  // CWK-202 (09b): the native Antigravity plugin. plugin/plugin.json + plugin/hooks.json ship from plugin-src/ (build-plugin.mjs copies them) and AG runs a hook command from
+  // the directory holding hooks.json, so every command is `node <path relative to plugin/> <Event>` naming a script that SHIPS there. A hooks.json naming a missing script
+  // would load on AG and fail on every model call, so it is gated here, in both directions (stale or missing against the source, and the shape itself).
+  console.log('Antigravity plugin (plugin/plugin.json + plugin/hooks.json):');
+  try {
+    const AG_EVENTS = ['PreToolUse', 'PostToolUse', 'PreInvocation', 'PostInvocation', 'Stop'];
+    for (const f of ['plugin.json', 'hooks.json']) {
+      const srcF = path.join(repo, 'plugin-src', f);
+      const distF = path.join(pluginDir, f);
+      if (!fs.existsSync(srcF)) { fail(`plugin-src/${f} missing - the plugin folder ships it for Antigravity`); continue; }
+      if (!fs.existsSync(distF)) { fail(`plugin/${f} missing - run: node scripts/build-plugin.mjs`); continue; }
+      if (fs.readFileSync(srcF, 'utf8').replace(/\r\n/g, '\n') !== fs.readFileSync(distF, 'utf8').replace(/\r\n/g, '\n')) fail(`plugin/${f} STALE vs plugin-src/${f} - run: node scripts/build-plugin.mjs`);
+      else pass(`plugin/${f} in sync`);
+    }
+    if (fs.existsSync(path.join(pluginDir, 'plugin.json'))) {
+      const am = JSON.parse(fs.readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8'));
+      if (am.name === 'coalmine') pass("plugin/plugin.json name = 'coalmine'"); else fail(`plugin/plugin.json name = '${am.name}' (want 'coalmine')`);
+    }
+    if (fs.existsSync(path.join(pluginDir, 'hooks.json'))) {
+      const ah = JSON.parse(fs.readFileSync(path.join(pluginDir, 'hooks.json'), 'utf8'));
+      let handlers = 0;
+      for (const [hookName, spec] of Object.entries(ah)) {
+        for (const [event, entries] of Object.entries(spec)) {
+          if (event === 'enabled') continue;
+          if (!AG_EVENTS.includes(event)) { fail(`plugin/hooks.json ${hookName}.${event} is not one of AG's five events`); continue; }
+          for (const entry of Array.isArray(entries) ? entries : []) {
+            const hs = (event === 'PreToolUse' || event === 'PostToolUse') ? (entry.hooks || []) : [entry];
+            for (const h of hs) {
+              handlers++;
+              const parts = String(h.command || '').split(' ');
+              const script = parts[1];
+              if (h.type !== 'command') fail(`plugin/hooks.json ${event}: handler type '${h.type}' (AG supports only command)`);
+              else if (!(Number.isInteger(h.timeout) && h.timeout > 0 && h.timeout <= 30)) fail(`plugin/hooks.json ${event}: timeout '${h.timeout}' (want an integer 1-30, AG's default is 30)`);
+              else if (parts[0] !== 'node' || !script || path.isAbsolute(script) || script.includes('..') || script.includes('\\')) fail(`plugin/hooks.json ${event}: command '${h.command}' is not 'node <path relative to plugin/>'`);
+              else if (parts[2] !== event) fail(`plugin/hooks.json ${event}: the trailing argument '${parts[2]}' is not the event name (it switches the hook to AG mode)`);
+              else if (!fs.existsSync(path.join(pluginDir, script))) fail(`plugin/hooks.json ${event}: ${script} does not exist (the command names a missing script)`);
+              else pass(`plugin/hooks.json ${event} -> ${script}`);
+            }
+          }
+        }
+      }
+      if (handlers === 0) fail('plugin/hooks.json declares no handler');
+    }
+  } catch (e) { fail(`Antigravity plugin check failed: ${e.message}`); }
   for (const f of ['hooks/hooks.json', 'hooks/rot-canary-touch.js', 'hooks/rot-canary-stop.js', 'hooks/coalmine-conductor.js', '.claude-plugin/plugin.json']) {
     const distFile = path.join(pluginDir, f);
     if (!fs.existsSync(distFile)) { fail(`plugin/${f} missing — run: node scripts/build-plugin.mjs`); continue; }
