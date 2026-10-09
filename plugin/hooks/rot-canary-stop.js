@@ -1314,8 +1314,10 @@ function main() {
   // stays for every case where the nudge must not fire: no scan reason (a drift-only stop: AG has no quiet channel for the memory-drift note), a
   // stop the engine did not reach by the model finishing (terminationReason error or max_steps_exceeded: forcing a re-entry there fights the
   // engine), and an ack marker that did not land (without it the next stop would nudge the same batch again: fail closed, no loop). AG's Stop
-  // payload carries no stop_hook_active, so the ack marker written above IS the loop guard: the second stop of a batch finds .scanned >= .touched
-  // and returns before this point. That the engine honours the field in a headless `-p` run is NOT measured (an edit cannot be made under the
+  // payload carries no stop_hook_active, so the ack marker written above is a per-BATCH guard, not a per-round one: the second stop of a batch finds
+  // .scanned >= .touched and returns before this point, but a fix round that edits again writes a newer .touched and earns another continue. The
+  // loop is bounded by the model ceasing to edit, or by the engine's max_steps_exceeded (a stop this branch answers with {}); no marker is added
+  // (the head's ruling, 09b INSPECT LOW-1: the residual is named, not closed). That the engine honours the field in a headless `-p` run is NOT measured (an edit cannot be made under the
   // junior pool's no-write wall); the unit tests pin the shape the doc names.
   // On CC (no argv): the scan report rides the loud blocking `reason`; the memory-drift
   // reminder rides `systemMessage` (board #82, 2026-08-08 — a Stop hook returning

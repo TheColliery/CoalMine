@@ -37,10 +37,23 @@ const mkSandbox = (t) => {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 };
-// The shipped command line, run the way AG runs it: via the shell with cwd = the directory holding hooks.json, AG's stdin on the pipe.
-function runShipped(command, stdin, sandbox) {
+// 09b INSPECT HIGH-1: a hook finds its project by walking up from its cwd, so a cwd inside the repo made a result depend on untracked files (the gitignored root MEMORY.md):
+// green in the working tree, red on a clean checkout. Every shipped command therefore runs from a copy of plugin/ inside a project the test owns, laid out the way AG discovers it.
+function ownProject(t, { memory = false } = {}) {
+  const proj = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-agproj-'));
+  t.after(() => fs.rmSync(proj, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(proj, '.git')); // a git root of its own: the walk-up stops here
+  if (memory) fs.writeFileSync(path.join(proj, 'MEMORY.md'), '# MEMORY\n');
+  const plug = path.join(proj, '.agents', 'plugins', 'coalmine');
+  fs.mkdirSync(path.dirname(plug), { recursive: true });
+  fs.cpSync(PLUGIN, plug, { recursive: true });
+  return { proj, plug };
+}
+// The shipped command line, run the way AG runs it: via the shell with cwd = the directory holding hooks.json (the owned copy), AG's stdin on the pipe.
+function runShipped(command, stdin, sandbox, cwd) {
+  assert.ok(cwd && cwd !== PLUGIN && !cwd.startsWith(PLUGIN + path.sep), 'run the shipped command from an owned plugin copy, never from the repo');
   const r = spawnSync(command, {
-    shell: true, cwd: PLUGIN, input: JSON.stringify(stdin), encoding: 'utf8', timeout: 30000,
+    shell: true, cwd, input: JSON.stringify(stdin), encoding: 'utf8', timeout: 30000,
     env: { ...process.env, TEMP: sandbox, TMP: sandbox, TMPDIR: sandbox, USERPROFILE: sandbox, HOME: sandbox },
   });
   return r;
@@ -80,12 +93,11 @@ test('AG plugin: plugin/hooks.json is the build of plugin-src/hooks.json, one na
 
 test('AG plugin: the PreInvocation command, run from plugin/ with AG\'s stdin, injects the conductor line ONCE per conversation as an ephemeralMessage and writes nothing under plugin/', (t) => {
   const sb = mkSandbox(t);
-  const proj = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-agproj-'));
-  t.after(() => fs.rmSync(proj, { recursive: true, force: true }));
-  const before = fs.readdirSync(PLUGIN, { recursive: true }).length;
+  const { proj, plug } = ownProject(t);
+  const before = fs.readdirSync(plug, { recursive: true }).length;
   const cmd = cmdFor(readJson(path.join(PLUGIN, 'hooks.json')), 'PreInvocation');
   const stdin = { ...common(proj, 'conv-pre-1'), invocationNum: 1, initialNumSteps: 0 };
-  const first = runShipped(cmd, stdin, sb);
+  const first = runShipped(cmd, stdin, sb, plug);
   assert.equal(first.status, 0);
   assert.equal(first.stderr, '', 'no stderr (Phoenix #13)');
   const out = JSON.parse(first.stdout);
@@ -94,18 +106,17 @@ test('AG plugin: the PreInvocation command, run from plugin/ with AG\'s stdin, i
   assert.deepEqual(Object.keys(out.injectSteps[0]), ['ephemeralMessage']);
   assert.ok(out.injectSteps[0].ephemeralMessage.includes('[CoalMine]'));
   assert.ok(fs.readdirSync(path.join(sb, 'coalmine')).some((f) => f.startsWith('ag-conductor-') && f.endsWith('.marker')), 'the once-per-conversation marker is in the sandbox tmp');
-  const second = runShipped(cmd, { ...stdin, invocationNum: 2 }, sb);
+  const second = runShipped(cmd, { ...stdin, invocationNum: 2 }, sb, plug);
   assert.equal(second.stdout, '', 'PreInvocation fires on every model call: the marker silences the repeats');
-  assert.equal(fs.readdirSync(PLUGIN, { recursive: true }).length, before, 'nothing is written under the plugin folder');
+  assert.equal(fs.readdirSync(plug, { recursive: true }).length, before, 'nothing is written under the plugin folder');
 });
 
 test('AG plugin: the PostToolUse command records an AG edit (toolCall.args.TargetFile, relative to workspacePaths[0]) under the conversation id', (t) => {
   const sb = mkSandbox(t);
-  const proj = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-agproj-'));
-  t.after(() => fs.rmSync(proj, { recursive: true, force: true }));
+  const { proj, plug } = ownProject(t);
   fs.writeFileSync(path.join(proj, 'edited.js'), 'x');
   const cmd = cmdFor(readJson(path.join(PLUGIN, 'hooks.json')), 'PostToolUse');
-  const r = runShipped(cmd, { ...common(proj, 'conv-touch-1'), stepIdx: 5, toolCall: { name: 'write_to_file', args: { TargetFile: 'edited.js' } } }, sb);
+  const r = runShipped(cmd, { ...common(proj, 'conv-touch-1'), stepIdx: 5, toolCall: { name: 'write_to_file', args: { TargetFile: 'edited.js' } } }, sb, plug);
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '', 'touch stays silent');
   const touched = path.join(sb, 'coalmine', 'rot-canary-conv-touch-1.touched');
@@ -114,21 +125,21 @@ test('AG plugin: the PostToolUse command records an AG edit (toolCall.args.Targe
 });
 
 // The Stop scan adapter. Setup = the same two shipped commands run in turn, so the state chain (touch -> stop) is the real one.
-function touchThen(t, conv, fileName = 'edited.js') {
+function touchThen(t, conv, { memory = false, fileName = 'edited.js' } = {}) {
   const sb = mkSandbox(t);
-  const proj = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-agproj-'));
-  t.after(() => fs.rmSync(proj, { recursive: true, force: true }));
+  const { proj, plug } = ownProject(t, { memory });
   fs.writeFileSync(path.join(proj, fileName), 'x');
   const hooks = readJson(path.join(PLUGIN, 'hooks.json'));
-  const touch = runShipped(cmdFor(hooks, 'PostToolUse'), { ...common(proj, conv), stepIdx: 1, toolCall: { name: 'write_to_file', args: { TargetFile: fileName } } }, sb);
-  assert.equal(touch.status, 0);
-  return { sb, proj, stopCmd: cmdFor(hooks, 'Stop') };
+  const touchCmd = cmdFor(hooks, 'PostToolUse');
+  const touch = (stepIdx) => runShipped(touchCmd, { ...common(proj, conv), stepIdx, toolCall: { name: 'write_to_file', args: { TargetFile: fileName } } }, sb, plug);
+  assert.equal(touch(1).status, 0);
+  return { sb, proj, plug, touch, stopCmd: cmdFor(hooks, 'Stop') };
 }
 const stopStdin = (proj, conv, extra = {}) => ({ ...common(proj, conv), executionNum: 1, terminationReason: 'model_stop', error: '', fullyIdle: true, ...extra });
 
-test('AG plugin Stop adapter: after an edit the Stop command emits {"decision":"continue","reason":<the scan nudge>} once; the next stop of the batch is silent (the ack marker is the loop guard)', (t) => {
-  const { sb, proj, stopCmd } = touchThen(t, 'conv-stop-1');
-  const first = runShipped(stopCmd, stopStdin(proj, 'conv-stop-1'), sb);
+test('AG plugin Stop adapter: after an edit the Stop command emits {"decision":"continue","reason":<the scan nudge>} once; the next stop of the batch is silent (the ack marker is a per-batch guard)', (t) => {
+  const { sb, proj, plug, stopCmd } = touchThen(t, 'conv-stop-1');
+  const first = runShipped(stopCmd, stopStdin(proj, 'conv-stop-1'), sb, plug);
   assert.equal(first.status, 0);
   assert.equal(first.stderr, '');
   const out = JSON.parse(first.stdout);
@@ -137,34 +148,57 @@ test('AG plugin Stop adapter: after an edit the Stop command emits {"decision":"
   assert.match(out.reason, /rot-canary/);
   assert.ok(out.reason.includes('edited.js'), 'the nudge names the touched file');
   assert.ok(fs.existsSync(path.join(sb, 'coalmine', 'rot-canary-conv-stop-1.scanned')), 'the ack marker landed');
-  const second = runShipped(stopCmd, stopStdin(proj, 'conv-stop-1', { executionNum: 2 }), sb);
-  assert.equal(second.stdout, '', 'an acknowledged batch emits nothing, so AG cannot be held in the loop');
+  const second = runShipped(stopCmd, stopStdin(proj, 'conv-stop-1', { executionNum: 2 }), sb, plug);
+  assert.equal(second.stdout, '', 'an acknowledged batch emits nothing');
+});
+
+// LOW-1 (09b INSPECT; the head's ruling: name the residual, add no marker). AG's Stop payload carries no stop_hook_active, so the ack marker guards one BATCH of edits, not a fix round:
+// an edit made after a continue is a new batch and earns another continue. The loop ends when the model stops editing, or at AG's max_steps_exceeded.
+test('AG plugin Stop adapter (named residual): an edit made after a continue is a new batch and earns another continue; an unedited stop stays silent', (t) => {
+  const { sb, proj, plug, touch, stopCmd } = touchThen(t, 'conv-stop-5');
+  assert.equal(JSON.parse(runShipped(stopCmd, stopStdin(proj, 'conv-stop-5'), sb, plug).stdout).decision, 'continue');
+  assert.equal(runShipped(stopCmd, stopStdin(proj, 'conv-stop-5', { executionNum: 2 }), sb, plug).stdout, '', 'no edit since the ack: silent');
+  const touched = path.join(sb, 'coalmine', 'rot-canary-conv-stop-5.touched');
+  const later = new Date(Date.now() + 5000);
+  assert.equal(touch(2).status, 0); // the model edits again in the re-entered turn
+  fs.utimesSync(touched, later, later); // a newer mtime than the ack, whatever the filesystem's timestamp grain
+  const again = runShipped(stopCmd, stopStdin(proj, 'conv-stop-5', { executionNum: 3 }), sb, plug);
+  assert.equal(JSON.parse(again.stdout).decision, 'continue', 'the new batch earns another continue');
 });
 
 test('AG plugin Stop adapter: a stop the engine did not reach by the model finishing (error, max_steps_exceeded) emits the no-op {} and does NOT consume the batch', (t) => {
-  const { sb, proj, stopCmd } = touchThen(t, 'conv-stop-2');
+  const { sb, proj, plug, stopCmd } = touchThen(t, 'conv-stop-2');
+  const ack = path.join(sb, 'coalmine', 'rot-canary-conv-stop-2.scanned');
   for (const why of ['error', 'max_steps_exceeded']) {
-    const r = runShipped(stopCmd, stopStdin(proj, 'conv-stop-2', { terminationReason: why }), sb);
+    const r = runShipped(stopCmd, stopStdin(proj, 'conv-stop-2', { terminationReason: why }), sb, plug);
     assert.equal(r.status, 0);
     assert.equal(r.stdout.trim(), '{}', why);
+    assert.ok(!fs.existsSync(ack), `${why}: the batch is not consumed (no ack marker written)`);
   }
+  const fin = runShipped(stopCmd, stopStdin(proj, 'conv-stop-2'), sb, plug);
+  assert.equal(JSON.parse(fin.stdout).decision, 'continue', 'the batch is still owed its scan when the model finally stops');
+  assert.ok(fs.existsSync(ack), 'the finished stop acknowledges it');
 });
 
 test('AG plugin Stop adapter: when the ack marker cannot land the Stop emits {} (fail closed: no continue that the next stop would repeat)', (t) => {
-  const { sb, proj, stopCmd } = touchThen(t, 'conv-stop-3');
+  const { sb, proj, plug, stopCmd } = touchThen(t, 'conv-stop-3');
   // A directory where the ack file belongs makes the atomic replace fail on every platform.
   fs.mkdirSync(path.join(sb, 'coalmine', 'rot-canary-conv-stop-3.scanned'));
-  const r = runShipped(stopCmd, stopStdin(proj, 'conv-stop-3'), sb);
+  const r = runShipped(stopCmd, stopStdin(proj, 'conv-stop-3'), sb, plug);
   assert.equal(r.status, 0);
   assert.equal(r.stdout.trim(), '{}');
 });
 
-test('AG plugin Stop adapter: a drift-only stop (the edited file is gone) has no scan reason and emits {}, never a continue', (t) => {
-  const { sb, proj, stopCmd } = touchThen(t, 'conv-stop-4');
-  fs.rmSync(path.join(proj, 'edited.js'));
-  const r = runShipped(stopCmd, stopStdin(proj, 'conv-stop-4'), sb);
-  assert.equal(r.status, 0);
-  assert.equal(r.stdout.trim(), '{}');
+// HIGH-1: both outcomes of a drift-only stop (the edited file is gone, so no scan reason) are fixed by a project the test owns: a root MEMORY.md there makes the drift note
+// fire, which AG mode answers with {} (no continue); with none the hook stays silent. Neither depends on the repo's gitignored MEMORY.md.
+test('AG plugin Stop adapter: a drift-only stop emits {} (never a continue) where the project has a root MEMORY.md, and nothing where it has none', (t) => {
+  for (const [conv, memory, want] of [['conv-stop-4a', true, '{}'], ['conv-stop-4b', false, '']]) {
+    const { sb, proj, plug, stopCmd } = touchThen(t, conv, { memory });
+    fs.rmSync(path.join(proj, 'edited.js'));
+    const r = runShipped(stopCmd, stopStdin(proj, conv), sb, plug);
+    assert.equal(r.status, 0, conv);
+    assert.equal(r.stdout.trim(), want, `${conv} (MEMORY.md ${memory ? 'present' : 'absent'})`);
+  }
 });
 
 // verify.mjs gates the AG files. Each case copies the tree (without .git and scratch) and breaks one thing.
@@ -173,8 +207,9 @@ function verifyCopy(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const skip = new Set(['.git', 'scratchpad', '.claude', 'node_modules', 'dist-claude-ai']);
   fs.cpSync(repo, dir, { recursive: true, filter: (src) => !skip.has(path.basename(src)) });
+  // LOW-2: HOME and USERPROFILE are sandboxed with the temp folders, so verify.mjs reads no global config of the operator's (the copy has no .git and no scratch either).
   const run = () => spawnSync(process.execPath, [path.join(dir, 'scripts', 'verify.mjs')], {
-    cwd: dir, encoding: 'utf8', timeout: 100000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=2048', TEMP: dir, TMP: dir, TMPDIR: dir },
+    cwd: dir, encoding: 'utf8', timeout: 100000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=2048', TEMP: dir, TMP: dir, TMPDIR: dir, HOME: dir, USERPROFILE: dir },
   });
   return { dir, run };
 }
