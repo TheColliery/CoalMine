@@ -92,6 +92,15 @@ console.log('  copied hooks/ (hooks.json + rot-canary touch/stop + coalmine-cond
 fs.copyFileSync(path.join(repo, 'plugin-src', 'README.md'), path.join(pluginDir, 'README.md'));
 console.log('  copied plugin-src/README.md -> plugin/README.md');
 
+// CWK-202 (09b): the native Antigravity plugin. AG registers a FOLDER holding plugin.json (+ hooks.json) at its root (agy-customizations/docs/plugins.md) and runs a
+// hook command from the directory holding hooks.json (docs/hooks.md), so plugin/ IS that folder: the two files sit beside the rendered skills/ and the hooks/ the
+// commands run. They are authored at plugin-src/, never at the repo root, whose skills/ are the UNRENDERED templates (an AG plugin rooted there would load them raw).
+// Claude Code reads .claude-plugin/plugin.json and hooks/hooks.json, never these two paths.
+for (const f of ['plugin.json', 'hooks.json']) {
+  fs.copyFileSync(path.join(repo, 'plugin-src', f), path.join(pluginDir, f));
+  console.log(`  copied plugin-src/${f} -> plugin/${f}`);
+}
+
 // Bundled extras Claude Code auto-discovers at plugin root. Recursive copy:
 // same EISDIR class as installSkillDir — never assume flat.
 for (const extra of ['agents', 'commands']) {

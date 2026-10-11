@@ -1,119 +1,85 @@
-// CWK-133 + CWK-136 -- the git-spawn census, both rungs, red-first on fixture text.
+// git-env-census.test.mjs -- the canon git-spawn census against the WITNESS LIST (08d, merged 2026-10-09): one leg per vector, each fixture run through scanGitSpawns with NO pins.
+// A refused fixture must also be a COUNTED spawn, so a vector that hides the spawn itself cannot read as clean; a passing fixture must read clean with no pin and be counted
+// safe. Hermetic: the fixtures are strings in git-env-census.vectors.mjs, written nowhere. Portable: a room that adopts the census by blob id adopts this file with it and adds
+// its own pins and its own spawns in a test of its own (this file names no path outside scripts/lib/).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { censusGitSpawns, collectScriptsMjs, blobId, EXEMPT_CARRIERS } from './git-env-census.mjs';
+import { scanGitSpawns, censusGitSpawns, collectScriptsMjs, gitBlobId, lex, CENSUS_EXEMPT } from './git-env-census.mjs';
+import { VECTORS, CEILINGS, COVERS } from './git-env-census.vectors.mjs';
 
-const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const one = (text) => censusGitSpawns([{ rel: 'scripts/x.mjs', text }]);
-// The fixture calls are assembled from pieces so this file never holds the literal call
-// shape itself -- the census scans scripts/**, this file included (the last test).
-const SG = 'spawn' + "Sync('git'";
-const EG = 'execFile' + "Sync('git'";
+const scan = (text, pins = []) => scanGitSpawns([{ rel: 'fixture.mjs', text }], pins);
 
-test('census rung 1 (CWK-133): a git spawn with NO env: is a finding, naming file and line', () => {
-  const f = one("const a = 1;\n" + SG + ", ['init', '-q', '.'], { cwd: dir });\n");
-  assert.equal(f.length, 1);
-  assert.match(f[0], /^scripts\/x\.mjs:2 spawnSync\('git', \.\.\.\) carries no 'env:'/);
+for (const v of VECTORS) {
+  test(`witness ${v.id}${v.src ? ` [${v.src}]` : ''}: ${v.expect === 'fail' ? 'every fixture is a counted spawn WITH a finding' : 'every fixture is a counted spawn with NO finding and no pin'} (${v.texts.length} fixture${v.texts.length === 1 ? '' : 's'})`, () => {
+    v.texts.forEach((text, k) => {
+      const r = scan(text);
+      if (!v.noCount) assert.ok(r.calls >= 1, `${v.id}[${k}] was not counted as a git spawn:\n${text}`);
+      if (v.expect === 'fail') assert.ok(r.findings.length >= 1, `${v.id}[${k}] passed the census:\n${text}`);
+      else {
+        assert.deepEqual(r.findings, [], `${v.id}[${k}] was refused:\n${text}`);
+        assert.equal(r.safe, r.calls, `${v.id}[${k}] was counted but not safe`);
+      }
+    });
+  });
+}
+
+// The loop above asserts nothing about WHICH vectors exist, so a deleted row or an emptied list would shrink it without a sound. Every id of the list is carried by a row.
+test('every id of the witness list is carried by a row: F1-F60 and R1-R3 by a vector, R4 and R5 by a named ceiling, P3-P7 by a vector, and P1 and P2 by the canon carriers', () => {
+  const have = new Set(VECTORS.map((v) => v.id.split(' ')[0]));
+  const ceilings = new Set(CEILINGS.map((c) => c.id));
+  const carriers = new Set(['P1', 'P2']); // the canon release-notes.mjs and its test, checked where those files live (the .github repository's own tests)
+  const missing = [];
+  const want = [...Array.from({ length: 60 }, (_, i) => `F${i + 1}`), 'R1', 'R2', 'R3', 'R4', 'R5', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'];
+  for (const id of want) {
+    const carried = have.has(id) || ceilings.has(id) || carriers.has(id) || (COVERS[id] && COVERS[id].length > 0 && COVERS[id].every((x) => have.has(x)));
+    if (!carried) missing.push(id);
+  }
+  assert.deepEqual(missing, [], 'witness ids with no row');
+  for (const [id, rows] of Object.entries(COVERS)) assert.ok(rows.every((x) => have.has(x)), `${id} points at a row that does not exist`);
+  assert.ok(VECTORS.length >= 150, `the corpus shrank to ${VECTORS.length} rows`);
 });
 
-test('census rung 2 (CWK-136): env: process.env is REFUSED -- presence is not safety', () => {
-  const f = one(SG + ", ['init'], { cwd: dir, env: process.env });\n");
-  assert.equal(f.length, 1);
-  assert.match(f[0], /passes process\.env without gitEnv\(\)/);
+test('the named ceilings are what they say: R4 (a spawner named with a unicode escape) and R5 (a command built by concatenation) are NOT counted, each with its reason', () => {
+  assert.deepEqual(CEILINGS.map((c) => c.id), ['R4', 'R5']);
+  for (const c of CEILINGS) {
+    assert.ok(c.why && c.why.length > 20, `${c.id} carries its reason`);
+    for (const text of c.texts) assert.equal(scan(text).calls, 0, `${c.id} is counted now: close the ceiling in the census header and move the row to the vectors`);
+  }
 });
 
-test('census rung 2 (CWK-136): a spread of process.env is REFUSED the same way', () => {
-  const f = one(SG + ", ['init'], { cwd: dir, env: { ...process.env, GIT_CEILING_DIRECTORIES: base } });\n");
-  assert.equal(f.length, 1);
-  assert.match(f[0], /CWK-136/);
+test('no pin ships with the canon, and a pin matches only the bytes it names: any edit re-arms the census on that file', () => {
+  assert.deepEqual(CENSUS_EXEMPT, []);
+  const dirty = "import { spawnSync } from 'node:child_process';\nspawnSync('git', ['status'], { env: process.env });\n";
+  assert.ok(scan(dirty).findings.length >= 1);
+  const pin = { rel: 'fixture.mjs', blob: gitBlobId(dirty), why: 'a test' };
+  const pinned = scan(dirty, [pin]);
+  assert.deepEqual([pinned.findings, pinned.exempted, pinned.calls], [[], 1, 0], 'a pin hides the file from the census and says so (exempted 1)');
+  assert.ok(scan(dirty + '// edited\n', [pin]).findings.length >= 1, 'one edited byte spends the pin');
+  assert.ok(scan(dirty, [{ ...pin, rel: 'other.mjs' }]).findings.length >= 1, 'a pin names its file');
+  assert.equal(gitBlobId('a\r\nb\r\n'), gitBlobId('a\nb\n'), 'line endings are normalised, so a Windows checkout of the same file reads the same blob');
 });
 
-test('census: env: gitEnv(...) passes both rungs, on one line or across lines', () => {
-  assert.deepEqual(one(SG + ", ['init'], { cwd: dir, env: gitEnv(path.dirname(dir)) });\n"), []);
-  assert.deepEqual(one(EG + ",\n  ['status'],\n  { cwd: dir, env: gitEnv(base), encoding: 'utf8' });\n"), []);
-  assert.deepEqual(one(SG + ", ['x'], { env: { ...gitEnv(b), LANG: process.env.LANG } });\n"), [], 'a process.env READ beside gitEnv() is not the hazard');
+test('censusGitSpawns is the findings-only view, and collectScriptsMjs walks scripts/**/*.mjs of a repository with forward-slash names', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-env-census-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'scripts', 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'scripts', 'a.mjs'), "import { spawnSync } from 'node:child_process';\nspawnSync('git', ['status'], { env: process.env });\n");
+    fs.writeFileSync(path.join(dir, 'scripts', 'lib', 'b.mjs'), 'export const x = 1;\n');
+    fs.writeFileSync(path.join(dir, 'scripts', 'notes.txt'), 'not code');
+    const files = collectScriptsMjs(dir);
+    assert.deepEqual(files.map((f) => f.rel).sort(), ['scripts/a.mjs', 'scripts/lib/b.mjs']);
+    const findings = censusGitSpawns(files);
+    assert.equal(findings.length, 1);
+    assert.match(findings[0], /^scripts\/a\.mjs:2 /);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('census: a call inside a line comment is not code', () => {
-  assert.deepEqual(one("// e.g. " + SG + ", ['init'], { cwd: dir })\n"), []);
-});
-
-test('census: this room itself is clean -- every git spawn under scripts/ passes both rungs', () => {
-  assert.deepEqual(censusGitSpawns(collectScriptsMjs(repo)), []);
-});
-
-// R8 INSPECT LOW-2: the census was blind to four call forms that reach git just as well.
-// Two widenings, each red-first against the pre-widening CALL_RE: the async/argv forms
-// ride the same two env rungs, and a git run through a SHELL string gets its own rung.
-const SPA = 'spawn' + "('git'";
-const EFA = 'execFile' + "('git'";
-const EXS = 'execSync' + "('git";
-const EXA = 'exec' + "(`git";
-
-test('census widened (R8 LOW-2): async spawn and execFile ride rung 1 -- no env: is a finding', () => {
-  const a = one(SPA + ", ['fetch'], { cwd: dir });\n");
-  assert.equal(a.length, 1);
-  assert.match(a[0], /spawn\('git', \.\.\.\) carries no 'env:'/);
-  const b = one(EFA + ", ['status'], (err, out) => {});\n");
-  assert.equal(b.length, 1);
-  assert.match(b[0], /execFile\('git', \.\.\.\) carries no 'env:'/);
-});
-
-test('census widened (R8 LOW-2): async spawn with process.env is refused by rung 2, and passes with gitEnv()', () => {
-  assert.match(one(SPA + ", ['fetch'], { env: process.env });\n")[0] || '', /passes process\.env without gitEnv\(\)/);
-  assert.deepEqual(one(SPA + ", ['fetch'], { env: gitEnv(base) });\n"), []);
-});
-
-test('census shell rung (R8 LOW-2): git run through a shell string is refused, even with gitEnv()', () => {
-  const a = one(EXS + " init -q', { cwd: dir });\n");
-  assert.equal(a.length, 1);
-  assert.match(a[0], /execSync\('git \.\.\.'\) runs git through a shell string/);
-  const b = one(EXA + " status`, { env: gitEnv(base) }, cb);\n");
-  assert.equal(b.length, 1, 'gitEnv() does not make a shell string safe');
-  assert.match(b[0], /exec\('git \.\.\.'\)/);
-});
-
-test('census shell rung: a shell string for another program whose name starts with "git" is not git', () => {
-  assert.deepEqual(one('execSync' + "('gitleaks detect', { cwd: dir });\n"), []);
-  assert.deepEqual(one('spawn' + "('github-cli', ['x']);\n"), []);
-});
-
-// CWK-174: a byte-equal org carrier is exempt ONLY while its content is exactly the pinned blob.
-const CARRIER = SPA + ", ['fetch'], { cwd: dir });\n";
-test('census exemption (CWK-174): a pinned byte-equal carrier is skipped, an edited one is a finding again', () => {
-  const pinned = { 'scripts/carrier.mjs': blobId(CARRIER) };
-  assert.equal(censusGitSpawns([{ rel: 'scripts/carrier.mjs', text: CARRIER }]).length, 1, 'control: not exempt, the spawn is a finding');
-  assert.deepEqual(censusGitSpawns([{ rel: 'scripts/carrier.mjs', text: CARRIER }], pinned), [], 'pinned content passes');
-  const edited = censusGitSpawns([{ rel: 'scripts/carrier.mjs', text: CARRIER + '// edited\n' }], pinned);
-  assert.equal(edited.length, 1, 'any edit re-opens it');
-  assert.match(edited[0], /exempt byte-equal org carrier but its blob id is/);
-  assert.equal(censusGitSpawns([{ rel: 'scripts/other.mjs', text: CARRIER }], pinned).length, 1, 'the exemption is per path, not per content');
-});
-
-test('census exemption (CWK-174): blobId equals `git hash-object` for the same bytes, and the live carriers match their pins', () => {
-  assert.equal(blobId(''), 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', 'git\'s empty-blob id');
-  assert.equal(blobId('hello\n'), 'ce013625030ba8dba906f756967f9e9ca394464a', 'git hash-object of "hello" + LF');
-  const live = collectScriptsMjs(repo).filter((f) => Object.hasOwn(EXEMPT_CARRIERS, f.rel));
-  assert.equal(live.length, Object.keys(EXEMPT_CARRIERS).length, 'every pinned path exists in the tree (a stale pin is a finding, not silence)');
-  assert.deepEqual(censusGitSpawns(live), [], 'and each is byte-equal to its pin');
-});
-
-// R14 bounce LOW-1: keepUserConfig (GIT_CONFIG_* pass-through) is allowed for ONE spawn, the installer's core.hooksPath read.
-const KEEP = "{ keepUserConfig: " + "true }";
-test('census (R14 LOW-1): a spawn that passes keepUserConfig is a finding anywhere but the installer\'s core.hooksPath read', () => {
-  const planted = SG + ", ['init', '-q'], { cwd: dir, env: gitEnv('/', " + KEEP + ") });\n";
-  const f = censusGitSpawns([{ rel: 'scripts/lib/some.test.mjs', text: planted }]);
-  assert.equal(f.length, 1, 'a fixture spawn asking for the user git config is refused');
-  assert.match(f[0], /keepUserConfig/);
-  const inInstaller = censusGitSpawns([{ rel: 'scripts/install.mjs', text: planted }]);
-  assert.equal(inInstaller.length, 1, 'inside install.mjs too, unless it is the core.hooksPath read');
-});
-
-test('census (R14 LOW-1): the installer\'s core.hooksPath read with keepUserConfig passes, and the live tree is clean', () => {
-  const read = SG + ", ['config', '--type=path', '--get', 'core.hooksPath'], { cwd: d, env: gitEnv(p, " + KEEP + ") });\n";
-  assert.deepEqual(censusGitSpawns([{ rel: 'scripts/install.mjs', text: read }]), []);
-  assert.equal(censusGitSpawns([{ rel: 'scripts/other.mjs', text: read }]).length, 1, 'the same read elsewhere is refused');
-  assert.deepEqual(censusGitSpawns(collectScriptsMjs(repo)), []);
+test('the lexer reads a quote inside a regex and a backtick inside a template without losing the line (F41), and a shebang is not code', () => {
+  const toks = lex("#!/usr/bin/env node\nconst r = /['\"]/g; const t = `a ${'b'} c`; marker('git');\n");
+  assert.ok(toks.some((t) => t.k === 're'), 'a regex literal is one token');
+  assert.ok(toks.some((t) => t.k === 'id' && t.v === 'marker'), 'the call after them is still seen');
+  assert.ok(!toks.some((t) => t.v === 'usr'), 'the shebang line is skipped');
 });

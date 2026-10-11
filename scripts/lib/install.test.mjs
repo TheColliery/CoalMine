@@ -836,3 +836,393 @@ test('CWK-137: a copilot-instructions.md symlink to a home dotfile is REFUSED --
   assert.notEqual(res.status, 0, `a refused write must fail loud:\n${res.stdout}${res.stderr}`);
   assert.equal(fs.readFileSync(bashrc, 'utf8'), SECRET, 'the fake ~/.bashrc is untouched');
 });
+
+// R18 / CodeRabbit PR 36 (install.mjs:618): the item-7 proof covered ORPHANS only. A manifest that names a
+// CURRENT skill (rot-canary) let isForeignSkillDir return false and installSkillDir clear the folder, so a cloned
+// repo's planted manifest, or a user's own file added inside an installed skill, was deleted without a word.
+const CURRENT_SKILL = 'rot-canary';
+
+test('R18: a planted manifest naming a CURRENT skill over foreign content keeps the content and reports the refusal', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-planted-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, CURRENT_SKILL), { recursive: true });
+    fs.writeFileSync(path.join(target, CURRENT_SKILL, 'notes.txt'), 'the users own data', 'utf8');
+    plantManifestNaming(target, [CURRENT_SKILL]);
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'notes.txt')), 'the foreign content survives the install');
+    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/, 'and the refusal is reported');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18: a file the user added inside an installed skill survives a re-install, and the message says the folder was EDITED, not foreign', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-edited-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'the added file survives the re-install');
+    const out = res.stdout + res.stderr;
+    assert.match(out, /\[refused\].*rot-canary/, 'the refusal is reported');
+    assert.match(out, /differ from what CoalMine wrote/, 'and says the contents were edited');
+    assert.doesNotMatch(out, /rot-canary holds non-CoalMine files/, 'not the foreign-folder wording, which is false here');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18: a real earlier install (the manifest hashes match) re-installs cleanly', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-reinstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'first install');
+    const res = runInstall(target, proj);
+    assert.equal(res.status, 0, `re-install must pass:\n${res.stdout}${res.stderr}`);
+    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/, 'nothing is refused');
+    assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'SKILL.md')), 'and the skill is there');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R18b (INSPECT HIGH-1): the refusal must hold on the run AFTER the refusing run. The first R18 fix rewrote the
+// manifest without the refused skill, so run 3 fell back to the skill-meta.json marker and cleared the user's file.
+test('R18b: the refusal holds on the run after it -- an added file survives runs 2 and 3, and the skill stays in the manifest', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-added-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    const r3 = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'run 3 keeps the added file');
+    assert.match(r3.stdout + r3.stderr, /\[refused\].*rot-canary/, 'and refuses again, out loud');
+    assert.notEqual(r3.status, 0, 'with a non-zero exit');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.ok(m.skills.includes(CURRENT_SKILL), 'the refused skill is carried forward in the manifest');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18b: an EDIT inside an installed skill survives runs 2 and 3 too', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-edit-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const skill = path.join(target, CURRENT_SKILL, 'SKILL.md');
+    fs.appendFileSync(skill, '\nUSER-EDIT-MARKER\n', 'utf8');
+    runInstall(target, proj);
+    const r3 = runInstall(target, proj);
+    assert.ok(fs.readFileSync(skill, 'utf8').includes('USER-EDIT-MARKER'), 'run 3 keeps the edit');
+    assert.notEqual(r3.status, 0);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18b: once the user moves the change aside, the carried-forward skill re-installs cleanly (the refusal does not wedge)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-recover-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    fs.rmSync(mine);
+    const res = runInstall(target, proj);
+    assert.equal(res.status, 0, `after the file is gone the install must pass:\n${res.stdout}${res.stderr}`);
+    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R18b: uninstall after a refusal keeps the user-edited skill folder and says so', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-uninstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    const un = runInstall(target, proj, ['--uninstall']);
+    assert.ok(fs.existsSync(mine), 'the user file survives the uninstall');
+    assert.match(un.stdout + un.stderr, /\[kept\].*rot-canary/, 'and the keep is reported');
+    // HIGH-2: the run AFTER the uninstall. The kept folder must still be refused, never cleared as "unmanifested".
+    const again = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'the user file survives the install that follows the uninstall');
+    assert.notEqual(again.status, 0, 'and that install refuses');
+    assert.match(again.stdout + again.stderr, /\[refused\].*rot-canary/, 'and says so');
+    // Recovery: the user moves the file aside, the next install is clean.
+    fs.rmSync(mine);
+    assert.equal(runInstall(target, proj).status, 0, 'once the file is gone the install is clean');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R18b bounce 2, LOW-A: a hashless legacy manifest over a folder with no skill-meta.json can never be proven, so the
+// refusal names what unblocks it (remove or rename the folder), carries no unprovable entry, and holds on the next run.
+test('R18b: a hashless manifest over a marker-less folder says to remove or rename the folder, and still refuses next run', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-hashless-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.rmSync(path.join(dir, 'skill-meta.json'));
+    const mine = path.join(dir, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    delete m.hashes;
+    fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(m), 'utf8');
+    const r1 = runInstall(target, proj);
+    assert.notEqual(r1.status, 0, 'refused');
+    assert.match(r1.stdout + r1.stderr, /remove or rename the folder/, 'and the message names what unblocks it');
+    assert.ok(fs.existsSync(mine), 'the user file is untouched');
+    const m2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.ok(!m2.skills.includes(CURRENT_SKILL), 'no unprovable entry is carried into the rewritten manifest');
+    const r2 = runInstall(target, proj);
+    assert.notEqual(r2.status, 0, 'the refusal holds on the next run');
+    assert.ok(fs.existsSync(mine), 'and the file survives it');
+    fs.renameSync(dir, path.join(target, CURRENT_SKILL + '-mine'));
+    assert.equal(runInstall(target, proj).status, 0, 'renaming the folder unblocks the install');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// INSPECT LOW-2: a skill folder that is a link gets its own true wording, not "edited, added or unrecorded file".
+test('R18b: a skill folder that is a link is refused with link wording, and what it points at survives', (t) => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-link-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const outside = path.join(proj, 'outside');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'data.txt'), 'outside data', 'utf8');
+    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    try { fs.symlinkSync(outside, path.join(target, CURRENT_SKILL), 'junction'); } catch (e) { t.skip(`cannot make a link here: ${e.code}`); return; }
+    const res = runInstall(target, proj);
+    const out = res.stdout + res.stderr;
+    assert.ok(fs.existsSync(path.join(outside, 'data.txt')), 'what the link points at survives');
+    assert.match(out, /\[refused\].*rot-canary.*is a link/, 'the refusal says it is a link');
+    assert.doesNotMatch(out, /edited, added or unrecorded|changed, added or unrecorded/, 'not the edited-file wording');
+    assert.notEqual(res.status, 0);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// INSPECT fourth LOW: the proof hashed a user file whole. A file over the bound is not one CoalMine wrote (no shipped
+// skill file comes near it), so it is unproven and refused, even when the manifest records its exact hash.
+test('R18b: a file over the size bound is unproven and refused even when the manifest records its hash, and is not read whole', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-big-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const big = path.join(target, CURRENT_SKILL, 'big.bin');
+    fs.writeFileSync(big, Buffer.alloc(4 * 1024 * 1024 + 1, 1));
+    const mpath = path.join(target, MANIFEST);
+    const m = JSON.parse(fs.readFileSync(mpath, 'utf8'));
+    m.hashes[CURRENT_SKILL + '/big.bin'] = hashFile(big);
+    fs.writeFileSync(mpath, JSON.stringify(m), 'utf8');
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(big), 'the oversized file survives');
+    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/);
+    assert.notEqual(res.status, 0);
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R19 LOW-C: the hashless refusal repeated only on the first run. The manifest that run rewrites no longer names the
+// folder, so later runs fell to the older "holds non-CoalMine files" wording. One true wording now covers both.
+test('R19 LOW-C: a folder nothing proves is CoalMine\'s is refused with the SAME true message on every run', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowc-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.rmSync(path.join(dir, 'skill-meta.json'));
+    const mine = path.join(dir, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    delete m.hashes;
+    fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(m), 'utf8');
+    for (let run = 1; run <= 3; run++) {
+      const r = runInstall(target, proj);
+      const out = r.stdout + r.stderr;
+      assert.notEqual(r.status, 0, 'run ' + run + ' refuses');
+      assert.match(out, /\[refused\].*rot-canary.*nothing proves it is CoalMine's/, 'run ' + run + ' says why');
+      assert.match(out, /remove or rename the folder/, 'run ' + run + ' says what unblocks it');
+      assert.doesNotMatch(out, /holds non-CoalMine files/, 'run ' + run + ' does not fall back to the older wording');
+      assert.ok(fs.existsSync(mine), 'run ' + run + ' leaves the user file');
+    }
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R19 LOW-D: isForeignSkillDir read ANY readdir error as "absent", so a plain FILE named like a skill (ENOTDIR) was
+// deleted by install with exit 0 and no message. Only ENOENT means absent now; anything else is refused and kept.
+function plantFileAtSkill(target, text) {
+  const p = path.join(target, CURRENT_SKILL);
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(p, text, 'utf8');
+  return p;
+}
+
+test('R19 LOW-D: install keeps a plain file named like a skill, says so, and exits non-zero', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowd-install-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    const f = plantFileAtSkill(target, 'the users own file');
+    const r = runInstall(target, proj);
+    assert.ok(fs.existsSync(f) && fs.statSync(f).isFile(), 'the file is still a file');
+    assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'with its content');
+    assert.notEqual(r.status, 0, 'loudly');
+    assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'and the message is true: it is a file');
+    assert.ok(fs.existsSync(path.join(target, 'drift-canary', 'SKILL.md')), 'the other skills still install');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R19 LOW-D: a refresh keeps it too -- a clean install, the folder replaced by a file, then install again', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowd-refresh-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    const f = plantFileAtSkill(target, 'the users own file');
+    for (let run = 1; run <= 2; run++) {
+      const r = runInstall(target, proj);
+      assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'run ' + run + ' keeps the file');
+      assert.notEqual(r.status, 0, 'run ' + run + ' refuses');
+      assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'run ' + run + ' says so');
+    }
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R19 LOW-D: uninstall keeps it with no manifest, and with a manifest that names it', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowd-uninstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    // no manifest at all
+    const f = plantFileAtSkill(target, 'the users own file');
+    runInstall(target, proj, ['--uninstall']);
+    assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'no manifest: the file survives the uninstall');
+    fs.rmSync(f);
+    // a manifest that names it
+    assert.equal(runInstall(target, proj).status, 0);
+    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    plantFileAtSkill(target, 'the users own file');
+    const un = runInstall(target, proj, ['--uninstall']);
+    assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'manifest names it: the file survives the uninstall');
+    assert.match(un.stdout + un.stderr, /\[kept\].*rot-canary/, 'and the keep is reported');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R20 LOW-E: a skill folder the installer cannot read is kept safely, but the message named a wrong cause ("contents
+// differ" when the manifest named it, "no skill-meta.json marker and no recorded hashes" when not). The read failure
+// is made on every volume the house way: a --require preload patches the node:fs default export in the CHILD
+// (chmod is a no-op on NTFS), so install.mjs's readdirSync of that one folder throws EACCES.
+function runInstallUnreadable(target, cwd, unreadableDir, method = 'readdirSync') {
+  const preload = path.join(cwd, 'eacces-preload.cjs');
+  fs.writeFileSync(preload, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const real = fs." + method + ";",
+    "const bad = path.resolve(process.env.R20_EACCES_DIR);",
+    "fs." + method + " = function (p, ...rest) {",
+    "  if (path.resolve(String(p)) === bad) { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }",
+    "  return real.call(this, p, ...rest);",
+    "};",
+  ].join('\n'), 'utf8');
+  const saved = { opts: process.env.NODE_OPTIONS, dir: process.env.R20_EACCES_DIR };
+  process.env.NODE_OPTIONS = '--require "' + preload.split(path.sep).join('/') + '"';
+  process.env.R20_EACCES_DIR = unreadableDir;
+  try { return runInstall(target, cwd); }
+  finally {
+    if (saved.opts === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved.opts;
+    if (saved.dir === undefined) delete process.env.R20_EACCES_DIR; else process.env.R20_EACCES_DIR = saved.dir;
+  }
+}
+
+test('R20 LOW-E: an unreadable skill folder the manifest names is refused for the true reason, and nothing is changed', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowe-named-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    const before = fs.readdirSync(dir).sort();
+    const r = runInstallUnreadable(target, proj, dir);
+    const out = r.stdout + r.stderr;
+    assert.notEqual(r.status, 0, 'refused loudly');
+    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.doesNotMatch(out, /contents differ/, 'and does not blame its contents');
+    assert.doesNotMatch(out, /nothing proves/, 'nor the missing proof');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+test('R20 LOW-E: an unreadable skill folder with no manifest is refused for the true reason too, even though it holds the marker', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowe-unnamed-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skill-meta.json'), '{}', 'utf8');
+    fs.writeFileSync(path.join(dir, 'mine.txt'), 'user file', 'utf8');
+    const r = runInstallUnreadable(target, proj, dir);
+    const out = r.stdout + r.stderr;
+    assert.notEqual(r.status, 0, 'refused loudly');
+    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.doesNotMatch(out, /nothing proves/, 'it does not claim the marker is missing');
+    assert.ok(fs.existsSync(path.join(dir, 'mine.txt')), 'the user file is untouched');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});
+
+// R20 bounce 1, LOW-G: the same true message when it is lstat (the folder cannot even be searched) that fails, not only readdir.
+test('R20 LOW-G: a skill folder whose lstat fails (not ENOENT) is refused as unreadable too, manifest or not', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowg-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    // named by a manifest
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    const before = fs.readdirSync(dir).sort();
+    const named = runInstallUnreadable(target, proj, dir, 'lstatSync');
+    const outNamed = named.stdout + named.stderr;
+    assert.notEqual(named.status, 0, 'refused loudly');
+    assert.match(outNamed, /\[refused\].*rot-canary.*could not be read/, 'named: the message says it could not be read');
+    assert.doesNotMatch(outNamed, /contents differ/, 'and does not blame its contents');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
+    // no manifest at all
+    fs.rmSync(path.join(target, '.coalmine-manifest.json'), { force: true });
+    const bare = runInstallUnreadable(target, proj, dir, 'lstatSync');
+    const outBare = bare.stdout + bare.stderr;
+    assert.notEqual(bare.status, 0, 'refused loudly');
+    assert.match(outBare, /\[refused\].*rot-canary.*could not be read/, 'unnamed: the message says it could not be read');
+    assert.doesNotMatch(outBare, /nothing proves/, 'and does not claim the proof is missing');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'still exactly as it was');
+  } finally {
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+});

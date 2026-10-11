@@ -34,6 +34,29 @@
 // glued keys are missed overall, but some it found are now missed: this walk reaches the class
 // from more places. A provider-shaped key is found anywhere on the line.
 //
+// Also for the generic rule only: a BARE (unquoted) value that reads as code is not judged (the
+// five conditions are at CODE_VALUE below), so a bare secret that is itself words and brackets AND
+// joined by `_`, `.` or camelCase humps, for example `Alpha_beta(gamma`, escapes; a quoted one is
+// always judged, and so is a passphrase of plain words joined by `(` or `[` (it has no `_`, `.` or
+// hump). Random keys do not read as code: of 100,000 per named generator, none did.
+// A value also stops at a closing tag, `</name>`, so a secret that itself contains one is judged
+// only up to it.
+//
+// Also for the generic rule only (LWK-277): a constant that NAMES the environment variable of a secret is not judged. Three
+// conditions, all required: a left name that says it holds a name (it ends in `_ENV`, `_VAR`, `_VARIABLE`, `_ENVIRONMENT`, `_NAME`,
+// `_ENVVAR`, or is camelCase `…Env`, `…Var`, `…Name`); a value of at least two all-caps segments joined by `_`, each a short token (up
+// to three characters, a letter first: `R2`, `ID`, `KEY`) or a pronounceable word of four or more capitals with a vowel, the whole at
+// most 100 characters, at least three quarters of it inside words; AND the value itself is secret-named (it holds `SECRET`, `TOKEN`,
+// `PASSWORD`, `KEY` and the rest of the name list above), since the name of a secret's variable says so. Why that is far from a real
+// secret: a machine-generated secret is random, and random capitals-and-digits seldom split into pronounceable word segments that
+// also hold a secret word (measured, 10,000 lines per carrier: 0 of 58,296 random 20-character keys over A-Z, 0-9 and `_` went
+// quiet on a left name of this kind, and none of every other random generator swept). A human passphrase is the one real secret of
+// this shape, and its residue is stated, not hidden: a passphrase of capitalised words joined by `_` that holds a short
+// letter-and-digit token (`R2`) AND a word that is itself secret-named (`PASSWORD`, `TOKEN`), assigned to a left name that ends in
+// one of those words, is not found. A passphrase without a secret word is found, short token or not. The price runs the other
+// way: an environment-variable name with no secret word in it (`AWS_S3_BUCKET_NAME_V2`) on such a left name is judged as it was
+// before, so it can false-alarm; it never escapes.
+//
 // ⚠️ NO SECRET-SHAPED LITERAL APPEARS IN THIS FILE. Every pattern is assembled from fragments at
 // load time, so a gate that scans its own tree scans this file and passes because nothing here
 // matches, never because this file is skipped.
@@ -58,7 +81,14 @@ const L = b`(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))`;
 
 export const PATTERNS = Object.freeze([
   { name: 'aws-access-key-id', re: new RegExp(L + b`(?:AK` + b`IA|AS` + b`IA)[0-9A-Z]{16}\b`) },
-  { name: 'github-token', re: new RegExp(L + b`gh[pousr]` + b`_[A-Za-z0-9]{36,255}\b`) },
+  // Two shapes. The classic token: a prefix and 36-255 base62 characters. The stateless App installation token: `ghs_APPID_JWT`,
+  // about 520 characters (GitHub's changelogs of 2026-10-02 and 2026-05-15, its 2026-04-24 notice and its installation-token docs,
+  // read 2026-10-04). None of those pages says what APPID is, and the vendor's own recommended pattern, `ghs_[A-Za-z0-9\.\-_]{36,}`,
+  // constrains nothing after the prefix. So this asks only for `ghs_` and a run of the JWT's alphabet (letters, digits, `_`, `.`,
+  // `-`) with a floor of 100, far above the 40-character legacy form; it never asks for an APPID alphabet. The cost: a snake_case
+  // identifier of 100 or more characters right after `ghs_` also fires. The run is open-ended on purpose (no `\b`, no upper bound): a
+  // bound would let a longer token through, and a match starts only at the prefix, so the cost stays linear.
+  { name: 'github-token', re: new RegExp(L + b`gh` + b`(?:[pousr]_[A-Za-z0-9]{36,255}\b|s_[A-Za-z0-9_.-]{100,})`) },
   { name: 'github-fine-grained-pat', re: new RegExp(L + b`github` + b`_pat_[A-Za-z0-9_]{50,255}\b`) },
   { name: 'gitlab-pat', re: new RegExp(L + b`gl` + b`pat-[A-Za-z0-9_-]{20,}`) },
   { name: 'sendgrid-api-key', re: new RegExp(L + b`S` + b`G\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b`) },
@@ -118,7 +148,57 @@ const NAME = String.raw`(?:secret|token|passw(?:or)?d|passwd|pwd|credential|api[
 // start position (cubic time, a hung push); bounding the runs stopped that but missed a key token
 // deep in a long snake_case name, the commonest env-var shape.
 const NAME_OP = new RegExp(String.raw`(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)["']?\s*(?::=|=>|[:=])\s*["'\x60]?`, 'g');
-const VALUE_END = new RegExp(String.raw`[\s"'\x60,;)&]`, 'g');
+// A closing markup tag (`</name>`) also ends a value: it is not part of the text before it. In an
+// XML or ResX element `...PublicKeyToken=<16 hex></value>`, the tag made a hex-only token read as
+// mixed content. Only a tag that closes the value ends it: it must be followed by the end of the
+// line, whitespace or the next `<`, so a `<`, a `</`, or a tag-shaped piece with more value after
+// it stays in the value (2 of 100,000 random printable-ASCII passwords held a tag-shaped piece).
+const VALUE_END = new RegExp(String.raw`[\s"'\x60,;)&]|<\/[A-Za-z][\w.:-]*>(?=$|[\s<])`, 'g');
+// A BARE (unquoted) value that READS AS CODE is not judged: `path_key = str(load_state_file_v2(`,
+// `let pad_token_id = f(0)`, `token_ids: ids[1..]`. It reads as code only if ALL five hold:
+// (1) it opens with an identifier path followed at once by `(` or `[`;
+// (2) the WHOLE value holds nothing but letters, digits, `_`, `.`, `(`, `[` and `]`, so one `*`,
+//     `#`, `!`, `-` or `=` ends the claim;
+// (3) at least CODE_WORD_SHARE of its characters, brackets not counted, sit in runs of six or more
+//     of letters, `_` and `.`, and vowels are at least CODE_VOWEL_SHARE of the letters in those
+//     runs, as in the words of an identifier and not in a random string;
+// (4) at most CODE_UPPER_SHARE of its letters are upper case: camelCase humps and acronyms, not a
+//     random mix of cases;
+// (5) it holds `_`, `.` or a camelCase hump, as code names do: plain lower-case words joined by a
+//     bracket (a passphrase such as `word1(word2(word3`) are not code.
+// The three numbers are ours, set by measurement and not taken from any vendor. Of 100,000 random
+// keys per generator and carrier (a .env line, a YAML line, quoted, followed by a call), none read
+// as code for a default web-framework key (50 characters, 49 symbols), a 24-character symbol
+// password or a 24-character printable-ASCII password. A generator whose alphabet is exactly the
+// code characters, which no tool is known to use, read as code for none of 20,000. Code written as one
+// heavy-hump or digit-laden identifier may fail (3) or (4), and an all-lower-case call chain with
+// no `_`, `.` or hump fails (5); each is then judged like any other value, which is the old behaviour.
+// A QUOTED value is a literal whatever it looks like, and is judged as before. Cost: the sticky
+// test stops at the first character outside its class, an operator character is outside it, and the next
+// name starts after an operator, so the runs of successive starts are disjoint and the line stays
+// linear.
+const CODE_VALUE = new RegExp(String.raw`[A-Za-z_][A-Za-z0-9_.]*[(\[][A-Za-z0-9_.(\[\]]*`, 'y');
+const CODE_WORD_RUN = /[A-Za-z_.]{6,}/g;
+const CODE_WORD_SHARE = 0.75;
+const CODE_VOWEL_SHARE = 0.28;
+const CODE_UPPER_SHARE = 0.3;
+function readsAsCode(line, start, end) {
+  CODE_VALUE.lastIndex = start;
+  if (!CODE_VALUE.test(line) || CODE_VALUE.lastIndex !== end) return false;
+  const v = line.slice(start, end);
+  let inRuns = 0;
+  let runLetters = 0;
+  let runVowels = 0;
+  for (const m of v.matchAll(CODE_WORD_RUN)) {
+    inRuns += m[0].length;
+    for (const c of m[0]) if (/[A-Za-z]/.test(c)) { runLetters++; if ('aeiouAEIOU'.includes(c)) runVowels++; }
+  }
+  const bodyLength = v.length - (v.match(/[([\]]/g) || []).length; // the brackets are syntax, not part of the words
+  if (inRuns < CODE_WORD_SHARE * bodyLength || runVowels < CODE_VOWEL_SHARE * runLetters) return false;
+  const letters = v.replace(/[^A-Za-z]/g, '');
+  if ((letters.match(/[A-Z]/g) || []).length > CODE_UPPER_SHARE * letters.length) return false;
+  return /[_.]|[a-z][A-Z]/.test(v); // code names are joined by `_`, `.` or a camelCase hump; plain words are not
+}
 // NAME's bare `key` alternative matches only at the start of a run that opens the line, as it
 // always has: `key = ...` at the top of a file is a key, `map(key => value)` is not.
 const NAME_RE = new RegExp(NAME, 'i');
@@ -133,6 +213,34 @@ export function shannon(s) {
   for (const k of counts.values()) { const p = k / n; h -= p * Math.log2(p); }
   return h;
 }
+
+// LWK-277: a constant that NAMES an environment variable holds a name, not a secret. The left name must end in a word that says so
+// (`SECRET_ENV`, `token_env_name`, camelCase `secretEnvVar`, `apiKeyName`), and the value must be an environment-variable name:
+// two or more `_`-joined all-caps segments, each a short token (up to three characters, a letter first: R2, ID, KEY) or a word of
+// four or more capitals that pronounce (a quarter of them vowels, Y counted, and no run of four consonants), with at least three
+// quarters of the characters inside words, the whole at most ENV_NAME_MAX characters. A longer value is never read this way, so
+// the check costs nothing on a long line. The hook adds a third condition: the value itself names a secret (NAME_RE).
+const ENV_NAME_MAX = 100;
+const POINTER_SNAKE = /[_.-](?:env|envvar|var|variable|environment|name)$/i;
+const POINTER_CAMEL = /[a-z](?:Env|EnvVar|Var|Variable|Environment|Name)$/;
+const ENV_SHORT = /^[A-Z][A-Z0-9]{0,2}$/;
+const ENV_WORD = /^[A-Z]{4,}$/;
+const ENV_WORD_SHARE = 0.75;
+const ENV_VOWEL_SHARE = 0.25;
+const isWord = (s) => ENV_WORD.test(s) && (s.match(/[AEIOUY]/g) || []).length >= ENV_VOWEL_SHARE * s.length && !/[^AEIOUY]{4}/.test(s);
+const isEnvName = (v) => {
+  if (v.length > ENV_NAME_MAX) return false;
+  const segments = v.split('_');
+  if (segments.length < 2) return false;
+  let inWords = 0;
+  for (const s of segments) {
+    if (isWord(s)) inWords += s.length;
+    else if (!ENV_SHORT.test(s)) return false;
+  }
+  // at least three quarters of the characters must sit in real words: a short token is allowed, a run of them is not
+  return inWords >= ENV_WORD_SHARE * (v.length - (segments.length - 1));
+};
+const isPointerName = (name) => POINTER_SNAKE.test(name) || POINTER_CAMEL.test(name);
 
 // Every qualifying value on the line, with its [start, end) span.
 // See THREE STEPS above for what is consumed and what is walked again.
@@ -156,10 +264,12 @@ function genericValues(line) {
     const start = nameOp.lastIndex;
     const end = endOf(start);
     if (end - start < ENTROPY_MIN_LENGTH || /^[$<%{[]/.test(line[start])) continue; // cheap skip: walk on inside it
+    if (!/["'\x60]/.test(line[start - 1]) && readsAsCode(line, start, end)) continue; // a bare code value: walk on inside it
     nameOp.lastIndex = end; // judged on content from here: consumed, hit or not
     const v = line.slice(start, end);
     if (!/[0-9]/.test(v) || !/[A-Za-z]/.test(v)) continue;
     if (/^[0-9a-f-]+$/i.test(v)) continue;
+    if (isEnvName(v) && isPointerName(m[1]) && NAME_RE.test(v)) continue; // a constant that names a secret's environment variable holds a name (LWK-277)
     if (shannon(v) < ENTROPY_THRESHOLD) continue;
     out.push({ value: v, start, end });
   }

@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -43,11 +43,19 @@ const TESTS = [
   'scripts/lib/repo-fs.test.mjs',
   'scripts/lib/git-env.test.mjs',
   'scripts/lib/git-env-census.test.mjs',
+  // 09a: the canon census's own witness list runs in the line above (adopted by blob id); this room's use of it, its pins and its wider git-env rule run here.
+  'scripts/lib/git-env-census.room.test.mjs',
   'scripts/lib/markers.test.mjs',
   'scripts/lib/r14-fixes.test.mjs',
   'scripts/lib/r14-low.test.mjs',
   'scripts/lib/r14-install.test.mjs',
   'scripts/lib/plugin-readme.test.mjs',
+  // CWK-202 (09b): the native Antigravity plugin (plugin/plugin.json + plugin/hooks.json), each shipped hook command run from plugin/ with AG's stdin, the Stop adapter, verify's gate over them.
+  'scripts/lib/ag-plugin.test.mjs',
+  // CWK-199's class: the child spawn plan, run by the wave runner (heap via --heap-mb, a clock per test and per file, a whole-run deadline).
+  'scripts/lib/test-spawn.test.mjs',
+  // 09a (BB-87): the wave runner that runs this very list, adopted by blob id with its preload and CoalFace's machine reading; its own tests, including the TAP-names witnesses.
+  'scripts/lib/wave-run.test.mjs',
   // CWK-174 (THE HOUSE SECRET SCAN, SERIES-CANON 'Secret scan'): byte-equal copies of the published-code template's scanner and caller tests.
   'scripts/secret-scan.test.mjs',
   'scripts/secret-gate.test.mjs',
@@ -65,7 +73,7 @@ const TESTS = [
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the
 // spawnSync entirely -- `process.exitCode = 1` alone does not stop execution the
 // way `process.exit()` did.
-function main() {
+async function main() {
   const missing = TESTS.filter((t) => !fs.existsSync(path.join(repo, t)));
   if (missing.length) {
     console.error(`test runner: ${missing.length} listed test file(s) MISSING — ${missing.join(', ')}`);
@@ -84,8 +92,19 @@ function main() {
     return;
   }
 
-  const r = spawnSync(process.execPath, ['--test', ...TESTS], { cwd: repo, stdio: 'inherit' });
+  // CWK-199's class, since 09a: the plan lives in scripts/lib/test-spawn.mjs and RUNS in scripts/lib/wave-run.mjs (one TAP child per file admitted by the live
+  // machine reading, the heap cap, a clock per test and per file, a whole-run deadline; a file that exits before its tests report is VACUOUS and the run is red).
+  // Dynamic and inside the step that needs it, per node/runtime.md section 1 (a gate entry imports node builtins only at the top).
+  const { testSpawnPlan } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'test-spawn.mjs')).href);
+  const plan = testSpawnPlan(TESTS, process.env);
+  const r = spawnSync(process.execPath, plan.args, { cwd: repo, stdio: 'inherit', env: plan.env, timeout: plan.timeout, killSignal: plan.killSignal });
+  // 08b INSPECT M-1: a whole-run deadline is a LOUD failure (a named FAIL line, non-zero), never a silent pass or an unbounded wait.
+  if (r.error) {
+    console.error(`FAIL test runner: the run did not finish (${r.error.code || r.error.message}); the outer backstop around the wave runner is ${plan.timeout} ms (scripts/lib/test-spawn.mjs OUTER_TIMEOUT_MS)`);
+    process.exitCode = 1;
+    return;
+  }
   process.exitCode = r.status ?? 1;
 }
 
-main();
+await main();
