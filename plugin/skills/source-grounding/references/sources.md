@@ -1,4 +1,4 @@
-<!-- coalmine: verified 2026-06-12 · revalidate 90d · definition file for source-grounding -->
+<!-- coalmine: verified 2026-10-14 · revalidate 90d · definition file for source-grounding -->
 # Source-grounding — authoritative source map
 
 ## Why the source hierarchy ranks this way

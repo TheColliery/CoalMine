@@ -2,6 +2,16 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+Reference files re-verified; SkillSpector scan is v3.23.0
+
+Seven rule reference files were re-checked against their sources instead of re-dated, and the `SECURITY.md` scan section now describes the v3.23.0 scan. `plugin/` moved: the rendered copies of the reference files (the shared escalation file renders into every canary).
+
+### Changed
+- **Reference files re-verified on 2026-10-14.** Each version-sensitive claim in the seven past-due files was read against its primary source. Corrections: `rot-canary`'s tooling table no longer lists `depcheck` as a live tool (the project is archived and recommends `knip`); the shared escalation list says Cursor's Max Mode now exists only on legacy request-based plans. Claims no source settled carry a `⚠️ unverified: check <source>` mark: the 16-agent figure for Claude Code workflows, the Amp and Goose subagent levers, and the per-platform hook event names in the `rot-canary` cadence reference. The freshness stamps moved to 2026-10-14 only because every claim is now settled or marked.
+- **`SECURITY.md`'s SkillSpector section describes the v3.23.0 scan** (SkillSpector v2.12.0 pinned at `2226747`, 27 findings, 44 of 49 files covered, all adjudicated), replacing the v3.20.2 scan text.
+
 ## [3.23.0] - 2026-10-09
 
 CoalMine now carries a native Antigravity plugin

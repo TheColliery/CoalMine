@@ -1,4 +1,4 @@
-<!-- coalmine: verified 2026-07-23 · revalidate 30d · shared escalation detail for all canaries -->
+<!-- coalmine: verified 2026-10-14 · revalidate 30d · shared escalation detail for all canaries -->
 # Heavy-tier escalation — per-platform levers & durability
 
 Read this only before a **Heavy** run (deep fan-out). Light/Standard never need it.
@@ -6,12 +6,12 @@ Read this only before a **Heavy** run (deep fan-out). Light/Standard never need 
 ## Per-platform Heavy lever
 Use your host's, if it has concurrent fan-out:
 
-- **Claude Code** → Dynamic Workflows / `ultracode` (≤16 concurrent agents)
+- **Claude Code** → Dynamic Workflows / `ultracode` (≤16 concurrent agents — ⚠️ unverified: check code.claude.com/docs/en/workflows, which names dynamic workflows and `/effort ultracode` but gives no 16 figure)
 - **OpenAI Codex** → `xhigh` + subagents + Cloud `--attempts`
-- **Cursor** → Max Mode + parallel Cloud Agents
-- **Amp** → Oracle + subagents
+- **Cursor** → parallel Cloud Agents (Max Mode is now only on legacy request-based plans, cursor.com/docs/models-and-pricing)
+- **Amp** → Oracle + subagents (⚠️ unverified: check ampcode.com/manual, which named neither on 2026-10-14)
 - **GitHub Copilot** → `/fleet` (Copilot CLI) + Cloud agent
-- **Goose** → subagents
+- **Goose** → subagents (⚠️ unverified: check the Goose docs on subagents; the page tried returned 404)
 - **JetBrains** → Junie CLI
 - **Gemini CLI (business-tier product; individual tiers ended 2026-06-18 → Antigravity CLI) / Cline (read-only) / Devin Desktop (ex-Windsurf)** → subagents
 

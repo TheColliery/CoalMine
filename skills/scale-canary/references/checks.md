@@ -1,4 +1,4 @@
-<!-- coalmine: verified 2026-06-12 · revalidate 90d · definition file for scale-canary -->
+<!-- coalmine: verified 2026-10-14 · revalidate 90d · definition file for scale-canary -->
 # Scale canary — concrete detection procedures
 
 ## 1. O(N²) on growable data
