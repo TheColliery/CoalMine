@@ -6,7 +6,7 @@ Read this only before a **Heavy** run (deep fan-out). Light/Standard never need 
 ## Per-platform Heavy lever
 Use your host's, if it has concurrent fan-out:
 
-- **Claude Code** → Dynamic Workflows / `ultracode` (≤16 concurrent agents — ⚠️ unverified: check code.claude.com/docs/en/workflows, which names dynamic workflows and `/effort ultracode` but gives no 16 figure)
+- **Claude Code** → Dynamic Workflows / `ultracode` (up to 16 concurrent agents by default, fewer on a machine with fewer CPUs — code.claude.com/docs/en/workflows, re-read 2026-10-15)
 - **OpenAI Codex** → `xhigh` + subagents + Cloud `--attempts`
 - **Cursor** → parallel Cloud Agents (Max Mode is now only on legacy request-based plans, cursor.com/docs/models-and-pricing)
 - **Amp** → Oracle + subagents (⚠️ unverified: check ampcode.com/manual, which named neither on 2026-10-14)
