@@ -49,6 +49,7 @@ const TESTS = [
   'scripts/lib/r14-fixes.test.mjs',
   'scripts/lib/r14-low.test.mjs',
   'scripts/lib/r14-install.test.mjs',
+  'scripts/lib/install-lowthree.test.mjs',
   'scripts/lib/plugin-readme.test.mjs',
   // CWK-202 (09b): the native Antigravity plugin (plugin/plugin.json + plugin/hooks.json), each shipped hook command run from plugin/ with AG's stdin, the Stop adapter, verify's gate over them.
   'scripts/lib/ag-plugin.test.mjs',
