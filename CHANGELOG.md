@@ -2,6 +2,16 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+Installer writes a skill folder whole or not at all
+
+A killed first install no longer leaves a half-written skill folder that later installs refuse. No byte under `plugin/` moved, so this entry rides the next release.
+
+### Fixed
+- **A killed install left a partial skill folder.** `installSkillDir` wrote the final folder in place, so a kill part-way through a first install left a partial folder under the skill's name, and a killed reinstall left the skill partial. It now builds the tree in a work folder beside the target (`.<skill>.coalmine-tmp-<pid>`, with the marker `.coalmine-installing`), proves the file set complete, moves a previous folder aside, renames the new one into place (both renames inside one parent) and removes the work folder in `finally`. A failed rename puts the old folder back and surfaces the error, with no in-place fallback; if the restore itself fails the work folder is kept and the message names it. Every install and uninstall first removes a leftover work folder, only when it is a real directory (a link is never followed), sits directly inside the same parent, carries the marker and its pid is not alive. The refusal and ownership checks (manifest hashes, tracked hooks, links) are unchanged. Known residual: a kill between the move-aside and the rename leaves the old copy inside the work folder, and the next install reinstalls the skill.
+- **Internal —** `scripts/lib/install-lowthree.test.mjs` (real SIGKILL on the Nth file copy, link and liveness guards) joins the suite: 40 files, 40 passing.
+
 ## [3.23.1] - 2026-10-15
 
 Reference files re-verified; SkillSpector scan is v3.23.0
