@@ -26,6 +26,8 @@ function sandbox(t) {
     'const N = Number(process.env.KILL_AT || 0);',
     'if (N > 0) { const real = fs.copyFileSync; let n = 0; fs.copyFileSync = function (...a) { if (++n === N) process.kill(process.pid, "SIGKILL"); return real.apply(this, a); }; }',
     'if (process.env.KILL_AT_SKILLMD === "1") { const real = fs.writeFileSync; fs.writeFileSync = function (f, ...a) { if (String(f).endsWith("SKILL.md")) process.kill(process.pid, "SIGKILL"); return real.call(this, f, ...a); }; }',
+    'if (process.env.KILL_BEFORE_MARKER === "1") { const real = fs.writeFileSync; fs.writeFileSync = function (f, ...a) { if (String(f).endsWith(".coalmine-installing")) process.kill(process.pid, "SIGKILL"); return real.call(this, f, ...a); }; }',
+    'if (process.env.KILL_BEFORE_MANIFEST_RENAME === "1") { const real = fs.renameSync; fs.renameSync = function (a, b) { if (String(b).endsWith(".coalmine-manifest.json")) process.kill(process.pid, "SIGKILL"); return real.call(this, a, b); }; }',
     '',
   ].join('\n'));
   return { dir, pre: pathToFileURL(pre).href };
@@ -62,7 +64,7 @@ function assertComplete(dest, ref, why) {
   for (const s of Object.keys(ref)) assert.deepEqual(files(path.join(dest, s)), ref[s], `${why}: ${s} is whole`);
 }
 
-for (const [label, env] of [['copy 1', { KILL_AT: '1' }], ['copy 3', { KILL_AT: '3' }], ['the SKILL.md write', { KILL_AT_SKILLMD: '1' }]]) {
+for (const [label, env] of [['copy 1', { KILL_AT: '1' }], ['copy 3', { KILL_AT: '3' }], ['the SKILL.md write', { KILL_AT_SKILLMD: '1' }], ['the work folder marker write (15b: the folder exists, its marker does not)', { KILL_BEFORE_MARKER: '1' }], ['the manifest rename (15b LOW-1: its temp file exists)', { KILL_BEFORE_MANIFEST_RENAME: '1' }]]) {
   test(`LOW-3: a FIRST install killed at ${label} leaves no PARTIAL skill folder, and the next install completes with exit 0 and every skill`, (t) => {
     const sb = sandbox(t);
     const ref = reference(sb);
@@ -72,7 +74,8 @@ for (const [label, env] of [['copy 1', { KILL_AT: '1' }], ['copy 3', { KILL_AT: 
     assert.ok(wasKilled(killed), 'control: the installer really was killed before its summary line');
     // Skills finished before the kill are whole (a copy-1 kill lands in the first skill, so none exist); the one in flight lives only in the work folder.
     for (const s of skillDirs(dest)) assert.deepEqual(files(path.join(dest, s)), ref[s], `${s} is whole or absent, never partial`);
-    assert.ok(skillDirs(dest).length < Object.keys(ref).length, 'control: the kill really cut the run short');
+    // The manifest kill lands after every skill is in place, so only the skill-phase kills cut the skill set short.
+    if (!env.KILL_BEFORE_MANIFEST_RENAME) assert.ok(skillDirs(dest).length < Object.keys(ref).length, 'control: the kill really cut the run short');
     const again = install(sb, proj, [dest]);
     assert.equal(again.status, 0, again.stdout + again.stderr);
     assert.doesNotMatch(again.stdout + again.stderr, /\[refused\]/);
@@ -221,4 +224,67 @@ test('LOW-3: the copy is proven complete before the rename -- a missing source f
   try { assert.throws(() => render.installSkillDir(from, to, shared), /incomplete/i); } finally { fs.copyFileSync = real; }
   assert.deepEqual(files(to), ['old.md']);
   assert.deepEqual(fs.readdirSync(path.join(sb.dir, 'skills')), ['sk']);
+});
+
+// ---- 15b: the two kill windows INSPECT 14a found (MEDIUM-1 the unmarked work folder, LOW-1 the manifest temp file) ----
+for (const [label, env, what] of [['the work folder marker write', { KILL_BEFORE_MARKER: '1' }, '.coalmine-tmp-'], ['the manifest rename', { KILL_BEFORE_MANIFEST_RENAME: '1' }, '.coalmine-manifest.json.coalmine-tmp-']]) {
+  test(`15b: a first install killed at ${label} leaves a litter the next UNINSTALL removes`, (t) => {
+    const sb = sandbox(t);
+    const proj = path.join(sb.dir, 'p'); fs.mkdirSync(proj);
+    const dest = path.join(proj, 'skills');
+    assert.ok(wasKilled(install(sb, proj, [dest], env)), 'control: killed');
+    assert.ok(dotEntries(dest).some((n) => n.includes(what)), `control: the kill left the litter this window leaves (${what})`);
+    const un = install(sb, proj, ['--uninstall', dest]);
+    assert.equal(un.status, 0, un.stdout + un.stderr);
+    assert.deepEqual(fs.readdirSync(dest).filter((n) => n.includes('.coalmine-tmp-')), [], 'the uninstall took the dead installer litter');
+  });
+}
+
+test('15b sweep: an EMPTY work folder with the installer exact name and a dead pid is removed (the kill landed before the marker write)', (t) => {
+  const sb = sandbox(t);
+  const parent = path.join(sb.dir, 'skills'); fs.mkdirSync(parent);
+  fs.mkdirSync(path.join(parent, `.rot-canary.coalmine-tmp-${PID_DEAD}`));
+  assert.deepEqual(render.sweepInstallLeftovers(parent), ['.rot-canary.coalmine-tmp-' + PID_DEAD]);
+  assert.deepEqual(fs.readdirSync(parent), []);
+});
+
+test('15b sweep: an empty work folder whose installer is alive is kept, and an UNMARKED folder with any content is kept (only emptiness is proof without the marker)', (t) => {
+  const sb = sandbox(t);
+  const parent = path.join(sb.dir, 'skills'); fs.mkdirSync(parent);
+  fs.mkdirSync(path.join(parent, `.a.coalmine-tmp-${process.pid}`));
+  const full = path.join(parent, `.b.coalmine-tmp-${PID_DEAD}`); fs.mkdirSync(full); fs.writeFileSync(path.join(full, 'user.txt'), 'mine');
+  assert.deepEqual(render.sweepInstallLeftovers(parent), []);
+  assert.ok(fs.existsSync(path.join(full, 'user.txt')));
+  assert.ok(fs.existsSync(path.join(parent, `.a.coalmine-tmp-${process.pid}`)));
+});
+
+test('15b sweep: the manifest temp FILE of a dead installer is removed; a live pid, a user file with a similar name, a non-numeric suffix and a link are kept', (t) => {
+  const sb = sandbox(t);
+  const parent = path.join(sb.dir, 'skills'); fs.mkdirSync(parent);
+  const M = '.coalmine-manifest.json';
+  fs.writeFileSync(path.join(parent, `${M}.coalmine-tmp-${PID_DEAD}`), '{"half');
+  fs.writeFileSync(path.join(parent, `${M}.coalmine-tmp-${process.pid}`), 'mine-alive');
+  fs.writeFileSync(path.join(parent, `notes.txt.coalmine-tmp-${PID_DEAD}`), 'user file');
+  fs.writeFileSync(path.join(parent, `${M}.coalmine-tmp-notapid`), 'x');
+  const outside = path.join(sb.dir, 'outside.txt'); fs.writeFileSync(outside, 'precious');
+  try { fs.symlinkSync(outside, path.join(parent, `${M}.coalmine-tmp-${PID_DEAD + 1}`), 'file'); } catch { t.diagnostic('file-symlink leg not run: no privilege on this box (read on CI)'); }
+  assert.deepEqual(render.sweepInstallLeftovers(parent), [`${M}.coalmine-tmp-${PID_DEAD}`]);
+  assert.ok(fs.existsSync(path.join(parent, `${M}.coalmine-tmp-${process.pid}`)));
+  assert.ok(fs.existsSync(path.join(parent, `notes.txt.coalmine-tmp-${PID_DEAD}`)));
+  assert.ok(fs.existsSync(path.join(parent, `${M}.coalmine-tmp-notapid`)));
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'precious');
+});
+
+// A REAL other live process (not this one): a child that sleeps until the test ends. Its pid must keep both kinds of litter.
+test('15b sweep: a work folder and a manifest temp file named with ANOTHER live process pid are both kept', async (t) => {
+  const { spawn } = await import('node:child_process');
+  const sb = sandbox(t);
+  const parent = path.join(sb.dir, 'skills'); fs.mkdirSync(parent);
+  const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' });
+  t.after(() => { try { child.kill(); } catch { /* gone */ } });
+  assert.ok(Number.isInteger(child.pid) && child.pid !== process.pid, 'control: a second live pid');
+  const w = leftover(parent, 'a-skill', child.pid);
+  const f = path.join(parent, `.coalmine-manifest.json.coalmine-tmp-${child.pid}`); fs.writeFileSync(f, '{"half');
+  assert.deepEqual(render.sweepInstallLeftovers(parent), []);
+  assert.ok(fs.existsSync(path.join(w, 'new', 'half.md')) && fs.existsSync(f), 'both litters of a live installer are untouched');
 });

@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded } from './repo-fs.mjs';
+import { MANIFEST_NAME } from './manifest.mjs';
 
 // The single shared reference every skill ships in references/escalation.md.
 // It holds the on-demand Heavy-tier detail (per-platform levers + durability)
@@ -88,13 +89,19 @@ const WORK_RE = /^\.(.+)\.coalmine-tmp-(\d+)$/;
 
 const lexists = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
 
-// A work folder is removed only when it is a real directory (never a link) that carries the marker file.
+// A work folder is removed only when it is a real directory (never a link) that carries the marker file, or is EMPTY.
+// 15b (INSPECT 14a MEDIUM-1): the folder exists a moment before its marker does, and a kill in that gap left an
+// unmarked folder the marker rule refused to remove (18 of 116 kill points). An empty directory holds nothing to lose and
+// fs.rmdirSync cannot delete content by construction, so it is the one unmarked shape the sweep may take; a folder with
+// any content and no marker stays untouched.
 function removeWork(work) {
   try {
     if (!fs.lstatSync(work).isDirectory()) return false;
-    if (!fs.lstatSync(path.join(work, WORK_MARK)).isFile()) return false;
-    fs.rmSync(work, { recursive: true, force: true });
-    return true;
+    let marked = false;
+    try { marked = fs.lstatSync(path.join(work, WORK_MARK)).isFile(); } catch { /* no marker */ }
+    if (marked) { fs.rmSync(work, { recursive: true, force: true }); return true; }
+    if (fs.readdirSync(work).length === 0) { fs.rmdirSync(work); return true; }
+    return false;
   } catch { return false; }
 }
 
@@ -166,6 +173,21 @@ export function sweepInstallLeftovers(parent) {
   let parentReal;
   try { entries = fs.readdirSync(parent, { withFileTypes: true }); parentReal = fs.realpathSync.native(parent); } catch { return removed; }
   for (const e of entries) {
+    // 15b (INSPECT 14a LOW-1, the same pattern): writeRepoFile's temp `<manifest>.coalmine-tmp-<pid>` is a FILE a kill between its
+    // write and its rename leaves behind. Same narrow rule: the installer's exact manifest-temp name, a regular file (a link reads
+    // isSymbolicLink, so never), a dead pid, a realpath directly inside the parent; one unlink per file.
+    const mt = e.isFile() && e.name.startsWith(MANIFEST_NAME + '.coalmine-tmp-') ? e.name.slice((MANIFEST_NAME + '.coalmine-tmp-').length) : null;
+    if (mt !== null) {
+      const mpid = /^\d+$/.test(mt) ? Number(mt) : 0;
+      if (mpid === 0 || mpid === process.pid || pidMayBeAlive(mpid)) continue;
+      const mp = path.join(parent, e.name);
+      try {
+        if (path.dirname(fs.realpathSync.native(mp)) !== parentReal) continue;
+        fs.unlinkSync(mp);
+        removed.push(e.name);
+      } catch { /* unreadable: left alone */ }
+      continue;
+    }
     const m = WORK_RE.exec(e.name);
     if (!m || !e.isDirectory()) continue; // a link reads isSymbolicLink, not isDirectory
     const pid = Number(m[2]);
