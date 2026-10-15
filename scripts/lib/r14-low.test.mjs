@@ -108,7 +108,7 @@ test('every shipped command hook declares a timeout (B-u1-L18)', () => {
       for (const g of groups) {
         for (const h of g.hooks) {
           n++;
-          assert.ok(Number.isInteger(h.timeout) && h.timeout > 0 && h.timeout <= 60, `${f}: ${h.command} has a bounded timeout`);
+          assert.ok(Number.isInteger(h.timeout) && h.timeout > 0 && h.timeout <= 60, `${f}: ${h.args} has a bounded timeout`);
         }
       }
     }

@@ -22,7 +22,7 @@ test('the plugin README names every shipped hook, at least three example uses, t
   const md = fs.readFileSync(path.join(repo, 'plugin', 'README.md'), 'utf8');
   const hooks = JSON.parse(fs.readFileSync(path.join(repo, 'hooks', 'hooks.json'), 'utf8'));
   const names = new Set();
-  for (const groups of Object.values(hooks.hooks)) for (const g of groups) for (const h of g.hooks) names.add(/hooks\/([a-z-]+)\.js/.exec(h.command)[1]);
+  for (const groups of Object.values(hooks.hooks)) for (const g of groups) for (const h of g.hooks) names.add(/hooks\/([a-z-]+)\.js/.exec(h.args[0])[1]);
   assert.equal(names.size, 3);
   for (const n of names) assert.ok(md.includes('`' + n + '`'), `names the ${n} hook`);
   const examples = md.split('## Example uses')[1].split('\n## ')[0].split('\n').filter((l) => /^\d+\. /.test(l));
