@@ -2,7 +2,7 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.23.2] - 2026-10-15
 
 Hooks run in exec form; installer cleans every kill point
 
