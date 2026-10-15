@@ -113,6 +113,8 @@
 /plugin install coalmine@coalmine
 ```
 
+The plugin's hooks need Claude Code 2.1.139 or later (the exec form).
+
 > 🔧 **Maintainers:** `plugin/` is generated output. After edits in `skills/`, `skills/_shared/`, `hooks/`, or `.claude-plugin/plugin.json`, run `node scripts/build-plugin.mjs`.
 
 ### Option A2 — skills.sh (One line)
