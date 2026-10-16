@@ -1,6 +1,6 @@
 # CoalMine Privacy Policy
 
-**CoalMine collects nothing and phones nowhere.**
+**CoalMine collects nothing. Its only network request is the optional update check described below.**
 
 - **No telemetry.** No usage data, analytics, or identifiers are collected, stored, or transmitted — by the skills, the hooks, the installer, or any bundled component.
 - **No network calls from hooks.** The bundled hooks (`coalmine-conductor`, `rot-canary-touch`, `rot-canary-stop`) are offline by design (Phoenix Commandment #7). They write only to a `coalmine/` folder inside your OS temp directory (session markers, self-cleaned) and, under `~/.claude/`, a local update-check date stamp (`coal/coalmine/update-check` — migrated 2026-08-08 from the pre-campaign root `.coalmine-update-check`, which is still read as a fallback and deleted on the next write) and the mode/opt-out files you set (e.g. `.rot-canary-mode`) — all local, none transmitted.
