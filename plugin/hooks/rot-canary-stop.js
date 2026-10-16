@@ -677,7 +677,7 @@ function writeMarkerAtomic(file, text) { // wx temp in the same dir, then rename
 // env locale, then regional characters in project docs (per hooks-safety.md section 5).
 function detectLang() {
   try {
-    const cfg = loadCfg();
+    const cfg = loadCfg(AG_BASE);
     if (cfg && typeof cfg.language === 'string' && Object.hasOwn(TRANSLATIONS, cfg.language.toLowerCase())) { // R14 / B-u1-L4: own keys only, so 'constructor' is not a language
       return cfg.language.toLowerCase();
     }
@@ -689,7 +689,7 @@ function detectLang() {
     if (langEnv.includes('zh') || langEnv.includes('cn')) return 'zh';
     if (langEnv.includes('es')) return 'es';
 
-    const root = findGitRoot(process.cwd());
+    const root = findGitRoot(projBase());
     for (const file of ['README.md', 'MEMORY.md', 'AGENTS.md']) {
       const p = path.join(root, file);
       if (fs.existsSync(p)) {
@@ -715,7 +715,7 @@ function cleanupSession(base) {
 }
 function getTempSweepStaleDays() {
   try {
-    const cfg = loadCfg();
+    const cfg = loadCfg(AG_BASE);
     // Clamp at read time to a positive integer (floor 1, not 0) — the schema bound
     // (min:1) is enforced only by verify.mjs over the factory config, never at hook
     // read time. A raw 0 pushes the cutoff to "now": sweepStale() runs BEFORE this
@@ -975,14 +975,14 @@ function sweepStale(canaryActive) {
 //   touch hook never wrote to `.touched`.
 function scanEverythingOn() {
   try {
-    const cfg = loadCfg();
+    const cfg = loadCfg(AG_BASE);
     return !!(cfg && cfg.scanEverything === true); // strict: only a real boolean true arms it
   } catch { return false; }
 }
 function getScanExcludePaths() {
   try {
     if (scanEverythingOn()) return []; // no fragments = the filter below never runs, skippedCount stays 0
-    const cfg = loadCfg();
+    const cfg = loadCfg(AG_BASE);
     if (cfg && Array.isArray(cfg.scanExcludePaths)) {
       return cfg.scanExcludePaths.filter((x) => typeof x === 'string' && x);
     }
@@ -1028,7 +1028,7 @@ function matchesFragment(path, frag) {
 // Unresolvable = the lexical pair (never half of each); with two spellings that pair can still climb out and fall back to the absolute path below (reach: an existing file whose realpath fails; the all-skipped notice still prints).
 function projectRelative(filePath) {
   try {
-    let root = findGitRoot(process.cwd());
+    let root = findGitRoot(projBase());
     let file = filePath;
     try {
       const realRoot = fs.realpathSync.native(root);
@@ -1129,7 +1129,7 @@ function autoFixLine(cfg) {
 // override the mode for the project (principle 9 - calibrate, never assume).
 function projectOverride() {
   try {
-    const cfg = loadCfg();
+    const cfg = loadCfg(AG_BASE);
     if (!cfg) return null;
     const disabled = cfg.disabledCanaries !== undefined ? cfg.disabledCanaries : cfg.disable; // legacy key honored
     if (Array.isArray(disabled) && (disabled.includes('rot-canary') || disabled.includes('all'))) return 'off';
@@ -1139,7 +1139,24 @@ function projectOverride() {
   return null;
 }
 
+// 16f row 22 (CWK2-044, PR #36 thread): in Antigravity mode (the event name arrives as argv[2]) the engine runs this hook with its own cwd (the hooks.json folder), so the project
+// must come from the payload's workspacePaths[0], the field the touch hook and the conductor already read. A plugin folder OUTSIDE the project made the stop hook read the plugin
+// folder's project instead. Claude Code never passes argv[2]: its path is unchanged (cwd).
+let AG_BASE; // undefined = the process cwd (Claude Code, and Antigravity when the payload names no workspace)
+function projBase() { return AG_BASE === undefined ? process.cwd() : AG_BASE; }
+let PRE_RAW = null; // the stdin text, when it had to be read before the mode gates (Antigravity only)
+function agBaseFromStdin() {
+  if (!process.argv[2]) return;
+  try {
+    PRE_RAW = fs.readFileSync(0, 'utf8');
+    const pi = JSON.parse(PRE_RAW.trim());
+    const ws = pi && Array.isArray(pi.workspacePaths) ? pi.workspacePaths[0] : undefined;
+    if (typeof ws === 'string' && ws) AG_BASE = ws;
+  } catch {}
+}
+
 function main() {
+  agBaseFromStdin();
   // The sweep runs on EVERY stop, BEFORE the mode gates — but what it may touch
   // is ownership-split (see sweepStale): the CONDUCTOR's once-per-session
   // markers are always collected (their only collector is this hook; gating
@@ -1155,7 +1172,7 @@ function main() {
   if (!canaryActive) return;
 
   let raw = '';
-  try { raw = fs.readFileSync(0, 'utf8'); } catch { return; }
+  try { raw = PRE_RAW !== null ? PRE_RAW : fs.readFileSync(0, 'utf8'); } catch { return; }
   if (!raw) return;
 
   let input;
@@ -1243,10 +1260,10 @@ function main() {
   // repo satisfies the drift check for a code edit in another.
   let driftText = '';
   try {
-    const cfg = loadCfg();
+    const cfg = loadCfg(AG_BASE);
     if (!(cfg && cfg.memoryDriftNudge === false)
         && !markerExists(base + '.memmoved')
-        && fs.existsSync(path.join(findGitRoot(process.cwd()), 'MEMORY.md'))) {
+        && fs.existsSync(path.join(findGitRoot(projBase()), 'MEMORY.md'))) {
       driftText = t.memoryDrift || TRANSLATIONS.en.memoryDrift;
     }
   } catch {}
@@ -1301,7 +1318,7 @@ function main() {
     let fileCap = 10;
     let fileCapSlice = 5;
     try {
-      const cfg = loadCfg();
+      const cfg = loadCfg(AG_BASE);
       // Clamp at read time to a positive integer — the schema bound (min:1) is enforced
       // only by verify.mjs over the factory config, never at hook read time. Without this,
       // {0} emits an empty-list nudge and {-1}/non-int silently drops the last touched file.
@@ -1350,7 +1367,7 @@ function main() {
     const list = scan.map((x) => '  - ' + x).join('\n');
     // 16f row 17: the effective autoFixMode rides the scan report the agent acts on, only when a config sets the key.
     let autoFixText = '';
-    try { const af = autoFixLine(loadCfg()); if (af) autoFixText = '\n\n' + af; } catch {}
+    try { const af = autoFixLine(loadCfg(AG_BASE)); if (af) autoFixText = '\n\n' + af; } catch {}
     reason = t.reason(list, smellText) + capNoticeText + skipNoticeText + autoFixText;
   }
 

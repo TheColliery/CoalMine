@@ -201,6 +201,33 @@ test('AG plugin Stop adapter: a drift-only stop emits {} (never a continue) wher
   }
 });
 
+// 16f row 22 (CWK2-044, PR #36 thread): the Stop adapter resolves the project from the payload's workspacePaths[0], as the touch hook and the conductor do, NOT from the folder it runs in.
+// The case the reviewer named: the plugin folder sits OUTSIDE the project (a plugin registered by path). The detector is the project's own config: autoFixMode "off" is set in the
+// project only, and the Stop hook's scan report states the effective value (16f row 17), so a Stop that read the plugin folder's project (which has no config) would say nothing.
+test('AG plugin Stop adapter: with the plugin folder OUTSIDE the project, the Stop hook still reads the WORKSPACE project (workspacePaths[0]), not the folder it runs in', (t) => {
+  const conv = 'conv-stop-ws';
+  const sb = mkSandbox(t);
+  const { proj } = ownProject(t);
+  fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.claude', 'coal', 'coalmine.json'), JSON.stringify({ autoFixMode: 'off' }));
+  fs.writeFileSync(path.join(proj, 'edited.js'), 'x');
+  // the plugin copy lives in another git root with no config of its own
+  const other = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-agother-'));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(other, '.git'));
+  const outside = path.join(other, 'coalmine-plugin');
+  fs.cpSync(PLUGIN, outside, { recursive: true });
+  const hooks = readJson(path.join(PLUGIN, 'hooks.json'));
+  const touch = runShipped(cmdFor(hooks, 'PostToolUse'), { ...common(proj, conv), stepIdx: 1, toolCall: { name: 'write_to_file', args: { TargetFile: 'edited.js' } } }, sb, outside);
+  assert.equal(touch.status, 0);
+  const r = runShipped(cmdFor(hooks, 'Stop'), stopStdin(proj, conv), sb, outside);
+  assert.equal(r.status, 0);
+  assert.equal(r.stderr, '');
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.decision, 'continue');
+  assert.match(out.reason, /autoFixMode in effect: off \(from the project config/, 'the stop hook read the WORKSPACE project config, not the plugin folder\'s project');
+});
+
 // verify.mjs gates the AG files. Each case copies the tree (without .git and scratch) and breaks one thing.
 function verifyCopy(t) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-agverify-'));
