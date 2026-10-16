@@ -10,6 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { gitEnv } from './git-env.mjs';
+import { removeTree } from './test-sandbox.mjs';
 
 const NL = String.fromCharCode(10);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -23,7 +24,7 @@ function sandboxEnv(dir, extra = {}) {
 }
 function verifyRun(t, tmp) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-home-'));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  t.after(() => removeTree(home));
   return () => spawnSync(process.execPath, ['--max-old-space-size=2048', path.join(tmp, 'scripts', 'verify.mjs')],
     { encoding: 'utf8', env: sandboxEnv(home), timeout: VERIFY_TIMEOUT_MS, killSignal: 'SIGKILL' });
 }
@@ -130,7 +131,7 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
     assert.match(r.stdout, /FAIL surface accounting: 1 tracked file\(s\) in NEITHER.*UNCLASSIFIED\.txt/,
       'a tracked file owned by no list must FAIL by name -- exhaustive by construction, not by luck');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -210,7 +211,7 @@ test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FA
       assert.deepEqual(lines(run()), [], heading + ': a released entry citing a dead path stays exempt');
     }
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -258,7 +259,7 @@ test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence 
       assert.ok(found[0].includes('scripts/lib/no-such-module.mjs') && found[0].includes('does not resolve'));
     }
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -322,7 +323,7 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
     assert.match(both.stdout, /FAIL commands[\/]update\.md cites `throwaway-build\/readme\.md`.*gitignored/,
       'plant B, the path-shaped citation that armed the root, must FAIL too');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -381,7 +382,7 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
 // not reproduce the quirk, because the quirk legs were skipped inside it by a `t.diagnostic`; the quirk legs are now their own test, which ends in a real `t.skip`.
 function loneCrFixture(t) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-lonecr-'));
-  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeTree(tmp));
   for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
     const src = path.join(repo, d);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
@@ -505,7 +506,7 @@ test('verify.mjs 2.11 pointers: git unavailable degrades to a NAMED SKIP, never 
     assert.doesNotMatch(pointersBlock, /FAIL/,
       'a question only git can answer must never redden the gate for a non-git user');
   } finally {
-    fs.rmSync(emptyPath, { recursive: true, force: true });
+    removeTree(emptyPath);
   }
 });
 

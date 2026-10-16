@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { removeTree } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const words = (s) => s.split(/\s+/).filter(Boolean).length;
@@ -35,7 +36,7 @@ test('the plugin README names every shipped hook, at least three example uses, t
 
 test('verify.mjs fails a tree whose plugin/README.md is missing, stale, or under 40 words', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-plugin-readme-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeTree(dir));
   const skip = new Set(['.git', 'scratchpad', '.claude', 'node_modules', 'dist-claude-ai']);
   fs.cpSync(repo, dir, { recursive: true, filter: (src) => !skip.has(path.basename(src)) });
   const run = () => spawnSync(process.execPath, [path.join(dir, 'scripts', 'verify.mjs')], {
