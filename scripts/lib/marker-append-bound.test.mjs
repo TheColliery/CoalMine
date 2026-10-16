@@ -64,8 +64,10 @@ test('an append that would take the marker past MARKER_MAX_BYTES is refused: the
   fs.writeFileSync(second, 'x\n');
   assert.ok(Buffer.byteLength(second + '\n') > 20, 'the fixture really crosses the bound');
   touch(cfg, second);
-  assert.equal(fs.statSync(cfg.marker).size, MAX - 20, 'the refused append wrote nothing: the marker stays at the bound it had');
-  assert.ok(!fs.readFileSync(cfg.marker, 'utf8').includes(second), 'the over-bound entry was dropped');
+  // one read, both assertions from the same bytes (CodeQL js/file-system-race: a stat and a read of the same path are two looks at a file that may have changed between them)
+  const after = fs.readFileSync(cfg.marker);
+  assert.equal(after.length, MAX - 20, 'the refused append wrote nothing: the marker stays at the bound it had');
+  assert.ok(!after.toString('utf8').includes(second), 'the over-bound entry was dropped');
   const r = stop(cfg);
   const out = JSON.parse(r.stdout);
   assert.equal(out.decision, 'block', 'the stop hook still reads the list and asks for the scan');
