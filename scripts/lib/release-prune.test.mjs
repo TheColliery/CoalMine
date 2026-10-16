@@ -21,7 +21,7 @@ test('selectAssetsToPrune: keeps the newest stable + one previous (N=2), prunes 
   assert.ok(assetsToDelete.every((a) => a.name === 'CoalMine.zip' || a.name === 'SHA256SUMS.txt'));
 });
 
-test('selectAssetsToPrune: input order does not matter -- sorted by published_at, not array position', () => {
+test('selectAssetsToPrune: input order does not matter -- sorted by version, not array position', () => {
   const releases = [
     rel('v1.0.0', '2026-01-01T00:00:00Z'),
     rel('v3.0.0', '2026-09-01T00:00:00Z'),
@@ -29,6 +29,22 @@ test('selectAssetsToPrune: input order does not matter -- sorted by published_at
   ];
   const { keptReleases } = selectAssetsToPrune(releases, 2);
   assert.deepEqual(keptReleases, ['v3.0.0', 'v2.0.0']);
+});
+
+// CoalWash PR #18 thread 4167848017 (16j): a Release back-filled for an OLDER tag is published after the newer ones (RELEASE-PATTERN.md, "Back-filling a
+// missed Release"), so a publish-date order kept it and pruned the real newest. The order is the version's. RED before 16j.
+test('selectAssetsToPrune: a back-filled older Release published last is still older -- the two highest versions are kept and its ZIPs are pruned', () => {
+  const releases = [
+    rel('v3.0.0', '2026-09-01T00:00:00Z'),
+    rel('v1.0.0', '2026-10-15T00:00:00Z'), // back-filled yesterday
+    rel('v2.0.0', '2026-06-01T00:00:00Z'),
+    rel('v2.0.10', '2026-07-01T00:00:00Z'), // numeric, not lexical: 2.0.10 > 2.0.9 and > 2.0.0
+  ];
+  const { keptReleases, assetsToDelete } = selectAssetsToPrune(releases, 2);
+  assert.deepEqual(keptReleases, ['v3.0.0', 'v2.0.10']);
+  assert.deepEqual(assetsToDelete.map((a) => a.tag_name).sort(), ['v1.0.0', 'v1.0.0', 'v2.0.0', 'v2.0.0']);
+  const mixed = [rel('legacy-build', '2026-12-01T00:00:00Z'), rel('v1.0.0', '2026-01-01T00:00:00Z'), rel('v0.9.0', '2025-12-01T00:00:00Z')];
+  assert.deepEqual(selectAssetsToPrune(mixed, 2).keptReleases, ['v1.0.0', 'v0.9.0'], 'a tag that is not vX.Y.Z ranks below every SemVer tag, whatever its date');
 });
 
 test('selectAssetsToPrune: pre-release and draft releases are never counted as "stable" and never pruned', () => {

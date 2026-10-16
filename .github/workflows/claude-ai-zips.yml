@@ -165,6 +165,7 @@ jobs:
         if: steps.gate.outputs.post == 'true'
         with:
           node-version: 24
+          package-manager-cache: false # a restored cache is a poisoning path into a job that can write contents (zizmor cache-poisoning)
 
       # UMB-162 (a), "WRITE ONCE, DERIVE EVERYTHING" (owner-proposed, main-confirmed
       # 2026-09-21): the CHANGELOG entry -- heading + a required one-line summary -- is the

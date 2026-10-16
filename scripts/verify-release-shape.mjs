@@ -74,8 +74,9 @@ function main() {
   // mismatch (which would block every future release under this mechanism) while still
   // catching a real corruption -- a substituted character mid-body, the exact same-length
   // em-dash-to-hyphen shape this rail exists for, trims away to nothing and still differs.
-  const titleMatch = sha256(published.name.trim()) === sha256(intendedTitle.trim());
-  const bodyMatch = sha256(published.body.trim()) === sha256(intendedBody.trim());
+  // trimEnd, never trim (16j; CoalWash PR #18, CoalBoard T5, CoalLedger): only the trailing newline GitHub appends is tolerated; a leading byte is the corruption this rail is for.
+  const titleMatch = sha256(published.name.trimEnd()) === sha256(intendedTitle.trimEnd());
+  const bodyMatch = sha256(published.body.trimEnd()) === sha256(intendedBody.trimEnd());
 
   // A signal, never a refusal (RELEASE-PATTERN.md "The title"): outside the summary-length band the rail names it and goes on.
   const band = titleBandWarning(intendedTitle.trim());

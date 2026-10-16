@@ -146,7 +146,7 @@ test('nodeOptionsWithHeap: the room\'s cap rides NODE_OPTIONS; a caller\'s own h
 // ---- the admission loop (real children, a stub reading) ---------------------------------------------------------------------------------
 test('a permanent WAIT never stops the run: at least one file is always running, so every file still runs, one at a time -- RED before BB-87', async () => {
   const onEvent = trace();
-  const r = await runWaves({ files: fx('pass', 'pass-slow', 'mixed'), cwd: SANDBOX, env: process.env, ...LIMITS, read: scripted('WAIT'), onEvent });
+  const r = await runWaves({ files: fx('pass', 'pass-slow', 'mixed'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: scripted('WAIT'), onEvent });
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.PASS, STATUS.PASS, STATUS.PASS]);
   assert.equal(maxRunning(onEvent.events), 1, 'a WAIT holds every second file');
   assert.ok(onEvent.events.some((e) => e.type === 'hold'), 'a hold was recorded');
@@ -155,13 +155,13 @@ test('a permanent WAIT never stops the run: at least one file is always running,
 
 test('a WAIT holds the next file until a running one exits, a BREATHE admits it beside the running one -- RED before BB-87', async () => {
   const held = trace();
-  await runWaves({ files: fx('pass-slow', 'pass'), cwd: SANDBOX, env: process.env, ...LIMITS, read: scripted('WAIT'), onEvent: held });
+  await runWaves({ files: fx('pass-slow', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: scripted('WAIT'), onEvent: held });
   const startOfSecond = held.events.findIndex((e) => e.type === 'start' && e.file.endsWith('pass.fixture.mjs'));
   const exitOfFirst = held.events.findIndex((e) => e.type === 'exit' && e.file.endsWith('pass-slow.fixture.mjs'));
   assert.ok(exitOfFirst >= 0 && startOfSecond > exitOfFirst, 'the second file started only after the first exited');
   const open = trace();
   const reading = scripted('BREATHE');
-  await runWaves({ files: fx('pass-slow', 'pass'), cwd: SANDBOX, env: process.env, ...LIMITS, read: reading, onEvent: open });
+  await runWaves({ files: fx('pass-slow', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: reading, onEvent: open });
   assert.equal(maxRunning(open.events), 2, 'the second file started beside the first');
   assert.deepEqual(reading.calls, [{ running: 1 }], 'one reading, taken with the number of files already running');
 });
@@ -169,7 +169,7 @@ test('a WAIT holds the next file until a running one exits, a BREATHE admits it 
 test('a WAIT then a BREATHE: the file held at the first reading is admitted at the second -- RED before BB-87', async () => {
   const onEvent = trace();
   const reading = scripted('WAIT', 'BREATHE');
-  const r = await runWaves({ files: fx('pass-slow', 'pass', 'mixed'), cwd: SANDBOX, env: process.env, ...LIMITS, read: reading, onEvent });
+  const r = await runWaves({ files: fx('pass-slow', 'pass', 'mixed'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: reading, onEvent });
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.PASS, STATUS.PASS, STATUS.PASS]);
   assert.ok(reading.calls.length >= 2, 'the reading was taken again after the hold');
   assert.ok(onEvent.events.filter((e) => e.type === 'hold').length >= 1);
@@ -178,14 +178,14 @@ test('a WAIT then a BREATHE: the file held at the first reading is admitted at t
 test('--serial runs one file at a time and takes no reading at all', async () => {
   const onEvent = trace();
   const reading = scripted('BREATHE');
-  const r = await runWaves({ files: fx('pass', 'pass-slow', 'skip'), cwd: SANDBOX, env: process.env, ...LIMITS, serial: true, read: reading, onEvent });
+  const r = await runWaves({ files: fx('pass', 'pass-slow', 'skip'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: reading, onEvent });
   assert.equal(maxRunning(onEvent.events), 1);
   assert.equal(reading.calls.length, 0);
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.PASS, STATUS.PASS, STATUS.SKIP]);
 });
 
 test('one failing file turns the run red and the summary names it; the other files still ran', async () => {
-  const r = await runWaves({ files: fx('pass', 'fail', 'mixed'), cwd: SANDBOX, env: process.env, ...LIMITS, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('pass', 'fail', 'mixed'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: scripted('BREATHE') });
   assert.deepEqual(statuses(r), { pass: STATUS.PASS, fail: STATUS.FAIL, mixed: STATUS.PASS });
   assert.equal(r.exitCode, 1);
   assert.match(r.summary.line, /fail 1 \(fail\.fixture\.mjs\)/);
@@ -193,7 +193,7 @@ test('one failing file turns the run red and the summary names it; the other fil
 });
 
 test('a file that exits 0 before its tests, and one that exits 0 inside a test, are VACUOUS: never a pass, never a fail, the run is red and names them -- RED before BB-87', async () => {
-  const r = await runWaves({ files: fx('pass', 'exit0-before', 'exit0-inside', 'no-tests'), cwd: SANDBOX, env: process.env, ...LIMITS, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('pass', 'exit0-before', 'exit0-inside', 'no-tests'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: scripted('BREATHE') });
   assert.deepEqual(statuses(r), { pass: STATUS.PASS, 'exit0-before': STATUS.VACUOUS, 'exit0-inside': STATUS.VACUOUS, 'no-tests': STATUS.VACUOUS });
   assert.equal(r.exitCode, 1, 'a run with a vacuous file is not green');
   assert.match(r.summary.line, /vacuous 3 \(exit0-before\.fixture\.mjs, exit0-inside\.fixture\.mjs, no-tests\.fixture\.mjs\)/);
@@ -202,14 +202,14 @@ test('a file that exits 0 before its tests, and one that exits 0 inside a test, 
 });
 
 test('the NODE_TEST_CONTEXT of a parent test runner never reaches a child: it would switch the child to a binary format and leave no TAP to read -- RED before BB-87', async () => {
-  const r = await runWaves({ files: fx('pass'), cwd: SANDBOX, env: { ...process.env, NODE_TEST_CONTEXT: 'child-v8' }, ...LIMITS, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('pass'), cwd: SANDBOX, env: sandboxEnv({ NODE_TEST_CONTEXT: 'child-v8' }), ...LIMITS, read: scripted('BREATHE') });
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.PASS]);
 });
 
 test('a file that leaves a handle open still ends (--test-force-exit), and a test that never settles is cancelled at the clock of the room: FAIL naming the cancel -- RED before BB-87', async () => {
-  const open = await runWaves({ files: fx('open-handle'), cwd: SANDBOX, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  const open = await runWaves({ files: fx('open-handle'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(open.results.map((x) => x.status), [STATUS.PASS]);
-  const hung = await runWaves({ files: fx('hang-async'), cwd: SANDBOX, env: process.env, ...LIMITS, fileTimeoutMs: 1500, serial: true, read: scripted('BREATHE') });
+  const hung = await runWaves({ files: fx('hang-async'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, fileTimeoutMs: 1500, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(hung.results.map((x) => x.status), [STATUS.FAIL]);
   assert.match(hung.results[0].reason, /cancelled 1/);
 });
@@ -217,14 +217,14 @@ test('a file that leaves a handle open still ends (--test-force-exit), and a tes
 test('a module that throws at load is FAIL; a listed file that does not exist is FAIL without a child', async () => {
   const gone = path.join(SANDBOX, 'not-here.fixture.mjs');
   const onEvent = trace();
-  const r = await runWaves({ files: [...fx('throws-at-load'), gone], cwd: SANDBOX, env: process.env, ...LIMITS, read: scripted('BREATHE'), onEvent });
+  const r = await runWaves({ files: [...fx('throws-at-load'), gone], cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: scripted('BREATHE'), onEvent });
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.FAIL, STATUS.FAIL]);
   assert.match(r.results[1].reason, /missing/);
   assert.equal(onEvent.events.filter((e) => e.type === 'start').length, 1, 'no child for the missing file');
 });
 
 test('the whole-run deadline kills a hung file\'s tree and the run ends; a file never started is NOT-RUN and the roster still reconciles -- RED before BB-87', async () => {
-  const r = await runWaves({ files: fx('hang-sync', 'pass'), cwd: SANDBOX, env: process.env, ...LIMITS, deadlineMs: 2500, serial: true, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('hang-sync', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, deadlineMs: 2500, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.FAIL, STATUS.NOT_RUN]);
   assert.match(r.results[0].reason, /whole-run deadline/);
   assert.match(r.results[1].reason, /before this file started/);
@@ -233,7 +233,7 @@ test('the whole-run deadline kills a hung file\'s tree and the run ends; a file 
 });
 
 test('the summary counts match the files: five files of five kinds, one line, every count named', async () => {
-  const r = await runWaves({ files: fx('pass', 'mixed', 'skip', 'fail', 'exit0-before'), cwd: SANDBOX, env: process.env, ...LIMITS, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('pass', 'mixed', 'skip', 'fail', 'exit0-before'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: scripted('BREATHE') });
   const s = r.summary;
   assert.deepEqual(s.counts, { pass: 2, fail: 1, vacuous: 1, skipped: 1, notRun: 0 });
   assert.equal(s.line.split('\n').length, 1, 'one line');
@@ -243,13 +243,13 @@ test('the summary counts match the files: five files of five kinds, one line, ev
 test('an unreadable machine (exit 2 of the reading) never blocks a file and is counted', async () => {
   const unmeasured = async () => ({ verdict: 'UNMEASURED' });
   const onEvent = trace();
-  const r = await runWaves({ files: fx('pass-slow', 'pass'), cwd: SANDBOX, env: process.env, ...LIMITS, read: unmeasured, onEvent });
+  const r = await runWaves({ files: fx('pass-slow', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: unmeasured, onEvent });
   assert.equal(maxRunning(onEvent.events), 2);
   assert.equal(r.readings.unmeasured, 1);
 });
 
 test('refuses a run with no finite clock, a duplicate file or an empty roster: the numbers are the room\'s, the clock is not optional', async () => {
-  const base = { files: fx('pass'), cwd: SANDBOX, env: process.env, ...LIMITS, read: scripted('BREATHE') };
+  const base = { files: fx('pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, read: scripted('BREATHE') };
   await assert.rejects(runWaves({ ...base, deadlineMs: undefined }), /deadlineMs/);
   await assert.rejects(runWaves({ ...base, fileTimeoutMs: 0 }), /fileTimeoutMs/);
   await assert.rejects(runWaves({ ...base, heapMb: -1 }), /heapMb/);
@@ -293,7 +293,8 @@ test('defaultRead passes the running count and the thresholds the room gives to 
   assert.deepEqual(bare.raw.argv, ['--json', '--running', '1'], 'no threshold of ours is passed: the defaults of the core apply');
 });
 
-// 14h (item 14, courier 10; CoalLedger PR #20 #15): the real core reads os.cpus() and os.freemem(), which every machine answers, so a reading of it is a BREATHE or a WAIT with its thresholds. The test used to accept
+// 14h (item 14, courier 10; CoalLedger PR #20 #15; the wording 16j, CoalHearth t131 finding 3): a functioning reader returns BREATHE or WAIT, with its thresholds, even when an axis is unmeasured (the core reads
+// os.cpus() for the CPU and process.availableMemory() for memory, never os.freemem(); an unmeasured axis never blocks on its own, and only every axis unmeasured admits nothing beyond --running 0). The test used to accept
 // UNMEASURED as well, which is exactly what a core that crashes, exits 2 or prints nothing readable becomes, so a broken core passed. UNMEASURED stays a legitimate verdict of the STUB cores above (a missing reader,
 // a garbage line, exit 2); against the real one it is a failure.
 test('defaultRead against the real core: one reading comes back as BREATHE or WAIT with both thresholds, never UNMEASURED and no error, within the clock of the room -- RED before 14h (10 #15)', async () => {
@@ -313,6 +314,8 @@ const sandboxEnv = (extra = {}) => ({
   ...extra,
 });
 const cli = (args, extra) => spawnSync(process.execPath, [WAVE_RUN, ...args], { cwd: SANDBOX, encoding: 'utf8', timeout: 90000, env: sandboxEnv(extra) });
+// Every runWaves child of this file gets the same sandbox (16j, CoalFace t133 finding 3): the runner hands `env` to each test child as it is, so a process.env there leaked the operator's own.
+const SANDBOX_ENV = sandboxEnv();
 
 // 15h item 2(b), CoalHearth thread 7 (CodeRabbit on PR #19, comment 4231557209; the CoalWorks chief's 14a return D3 item 1): the cli() helper and the direct spawn of WAVE_RUN passed no `env`, so the runner and every test
 // child it started got the operator's real HOME, USERPROFILE, TEMP, TMP, TMPDIR and CLAUDE_CONFIG_DIR (and any token in the shell). Both now go through sandboxEnv(): named keys only (the program path, and SystemRoot
@@ -387,7 +390,7 @@ const STDOUT_SYNC_URL = pathToFileURL(path.join(HERE, 'stdout-sync.mjs')).href;
 
 test('the simulation is faithful: with no preload a force-exited file of 300 tests loses the end of its TAP and reads VACUOUS (the control for the fix below)', () => {
   const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap', '--test-force-exit', path.join(SANDBOX, 'many.fixture.mjs')], {
-    cwd: SANDBOX, env: { ...process.env, NODE_TEST_CONTEXT: undefined, NODE_OPTIONS: SIM_NODE_OPTIONS }, encoding: 'utf8', timeout: 60000,
+    cwd: SANDBOX, env: sandboxEnv({ NODE_OPTIONS: SIM_NODE_OPTIONS }), encoding: 'utf8', timeout: 60000,
   });
   const c = classifyFile({ file: 'many.fixture.mjs', code: r.status, signal: r.signal, stdout: r.stdout });
   assert.ok(c.status === STATUS.VACUOUS || c.status === STATUS.FAIL, `the loss must show: ${c.status} ${c.reason}`);
@@ -395,7 +398,7 @@ test('the simulation is faithful: with no preload a force-exited file of 300 tes
 });
 
 test('every child gets the stdout preload: the 300 tests of a force-exited file all report under the simulated POSIX pipe -- RED before the fix', async () => {
-  const r = await runWaves({ files: fx('many'), cwd: SANDBOX, env: { ...process.env, NODE_OPTIONS: SIM_NODE_OPTIONS }, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('many'), cwd: SANDBOX, env: sandboxEnv({ NODE_OPTIONS: SIM_NODE_OPTIONS }), ...LIMITS, serial: true, read: scripted('BREATHE') });
   assert.equal(r.results[0].status, STATUS.PASS, r.results[0].reason);
   assert.equal(r.results[0].counts.tests, MANY);
   assert.equal(r.exitCode, 0);
@@ -444,11 +447,11 @@ test('the stdout preload switches BOTH pipes, stdout and stderr, to blocking (a 
   // started the old way sees nothing. This child therefore gets an EMPTY NODE_OPTIONS (its heap cap rides its own argv) and loads the preload only by the flag below: the test means the same
   // alone and under the runner, and the runner's claim that every node process of the run inherits the preload stays true (the preload is not moved onto a command line).
   const probe = (extra, env) => spawnSync(process.execPath, ['--max-old-space-size=256', ...extra, '-e', 'console.log(JSON.stringify(globalThis.__calls))'], { encoding: 'utf8', timeout: 30000, env });
-  const r = probe(['--import', pathToFileURL(rec).href, '--import', STDOUT_SYNC_URL], { ...process.env, NODE_OPTIONS: '' });
+  const r = probe(['--import', pathToFileURL(rec).href, '--import', STDOUT_SYNC_URL], sandboxEnv({ NODE_OPTIONS: '' }));
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout.trim()).sort(), ['stderr:true', 'stdout:true']);
   // the control: the shape the runner hands a child (the preload already in NODE_OPTIONS) runs the preload first, so a recorder behind it sees no call -- why the strip above is needed
-  const inherited = probe(['--import', pathToFileURL(rec).href], withStdoutSync({ ...process.env, NODE_OPTIONS: '' }));
+  const inherited = probe(['--import', pathToFileURL(rec).href], withStdoutSync(sandboxEnv({ NODE_OPTIONS: '' })));
   assert.equal(inherited.status, 0, inherited.stderr);
   assert.deepEqual(JSON.parse(inherited.stdout.trim()), []);
 });
@@ -459,10 +462,10 @@ test('the stdout preload switches BOTH pipes, stdout and stderr, to blocking (a 
 // four times it plus a second (never below the old 2,000 ms), so the hang is still killed by the clock and the passing file has four times its own measured start to spare.
 test('the file clock: a file that hangs before its first test is killed at the clock of the file (FAIL naming it) and the next file still runs, the clock sized from a measured solo run of the passing file -- RED before the fix', async () => {
   const t0 = Date.now();
-  const solo = await runWaves({ files: fx('pass'), cwd: SANDBOX, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  const solo = await runWaves({ files: fx('pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(solo.results.map((x) => x.status), [STATUS.PASS]);
   const clock = Math.max(2000, (Date.now() - t0) * 4 + 1000);
-  const r = await runWaves({ files: fx('hang-top', 'pass'), cwd: SANDBOX, env: process.env, ...LIMITS, deadlineMs: clock * 4 + 20000, fileClockMs: clock, serial: true, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('hang-top', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, deadlineMs: clock * 4 + 20000, fileClockMs: clock, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.FAIL, STATUS.PASS]);
   assert.match(r.results[0].reason, /file clock/);
   assert.equal(r.exitCode, 1);
@@ -470,9 +473,9 @@ test('the file clock: a file that hangs before its first test is killed at the c
 
 test('the file clock is optional but never loose: a value that is not a positive whole number is refused, and without it the whole-run deadline still ends a hang', async () => {
   for (const bad of [0, -5, 1.5, '2000']) {
-    await assert.rejects(runWaves({ files: fx('pass'), cwd: SANDBOX, env: process.env, ...LIMITS, fileClockMs: bad, read: scripted('BREATHE') }), /fileClockMs must be a positive integer/, JSON.stringify(bad));
+    await assert.rejects(runWaves({ files: fx('pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, fileClockMs: bad, read: scripted('BREATHE') }), /fileClockMs must be a positive integer/, JSON.stringify(bad));
   }
-  const r = await runWaves({ files: fx('hang-top', 'pass'), cwd: SANDBOX, env: process.env, ...LIMITS, deadlineMs: 2500, serial: true, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('hang-top', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, deadlineMs: 2500, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.FAIL, STATUS.NOT_RUN]);
   assert.match(r.results[0].reason, /whole-run deadline/);
 });
@@ -516,7 +519,7 @@ test('classifyFile: a failing test marked TODO is not a failure -- a file whose 
 });
 
 test('a real file with a failing test.todo: node exits 0 and the runner reports PASS, the file is not red -- RED before K1', async () => {
-  const r = await runWaves({ files: fx('todo-fails'), cwd: SANDBOX, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  const r = await runWaves({ files: fx('todo-fails'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
   assert.equal(r.results[0].status, STATUS.PASS, r.results[0].reason);
   assert.equal(r.exitCode, 0);
 });
@@ -528,11 +531,11 @@ test('display: a file named through a symlinked spelling of the folder prints as
   t.after(() => { try { fs.unlinkSync(link); } catch { /* a junction goes by rmdir on some builds */ try { fs.rmdirSync(link); } catch { /* gone */ } } });
   const real = fs.realpathSync.native(SANDBOX);
   const viaLink = path.join(link, 'fail.fixture.mjs');
-  const r = await runWaves({ files: [viaLink, path.join(real, 'pass.fixture.mjs')], cwd: real, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  const r = await runWaves({ files: [viaLink, path.join(real, 'pass.fixture.mjs')], cwd: real, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(r.results.map((x) => x.name), ['fail.fixture.mjs', 'pass.fixture.mjs']);
   assert.match(r.summary.line, /fail 1 \(fail\.fixture\.mjs\)/);
   // the other spelling: the run's folder named through the link, the file through the real path
-  const other = await runWaves({ files: [path.join(real, 'fail.fixture.mjs')], cwd: link, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  const other = await runWaves({ files: [path.join(real, 'fail.fixture.mjs')], cwd: link, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
   assert.deepEqual(other.results.map((x) => x.name), ['fail.fixture.mjs']);
 });
 
@@ -541,7 +544,7 @@ test('display fails closed: a file outside the folder, and a path that cannot be
   try {
     fs.copyFileSync(path.join(SANDBOX, 'pass.fixture.mjs'), path.join(outside, 'pass.fixture.mjs'));
     const gone = path.join(SANDBOX, 'sub', '..', 'not-here.fixture.mjs');
-    const r = await runWaves({ files: [path.join(outside, 'pass.fixture.mjs'), gone], cwd: SANDBOX, env: process.env, ...LIMITS, serial: true, read: scripted('BREATHE') });
+    const r = await runWaves({ files: [path.join(outside, 'pass.fixture.mjs'), gone], cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
     assert.equal(r.results[0].name, path.join(outside, 'pass.fixture.mjs'));
     assert.equal(r.results[1].name, gone, 'an unresolvable path is shown as the caller wrote it');
     assert.match(r.results[1].reason, /missing/);

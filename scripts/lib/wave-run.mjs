@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // wave-run.mjs -- run a room's enumerated test files in waves admitted by the LIVE machine reading (BB-87, owner 2026-10-08).
 //
-//   node scripts/lib/wave-run.mjs --heap-mb N --file-timeout-ms N --deadline-ms N [--cpu-max N] [--mem-min N] [--serial] -- <test files...>
+//   node scripts/lib/wave-run.mjs --heap-mb N --file-timeout-ms N --deadline-ms N [--file-clock-ms N] [--cpu-max N] [--mem-min N] [--serial] -- <test files...>
+//   (--file-timeout-ms is the clock of one TEST, passed to node --test as --test-timeout; --file-clock-ms is the wall clock of one FILE)
 //
 // WHY: a serial runner is safe and slow; every file at once saturates the box (AGENTS.md THE MACHINE BOUND). This runs each file as its own child,
 //   node --test --test-reporter=tap --test-timeout=<file clock> --test-force-exit <file>
@@ -150,7 +151,7 @@ export async function runWaves(opts) {
   const { files, cwd = process.cwd(), env = process.env, heapMb, fileTimeoutMs, deadlineMs, fileClockMs, serial = false, onEvent = () => {} } = opts;
   if (!Array.isArray(files) || files.length === 0) throw new UsageError('no test files were given');
   for (const [k, v] of [['heapMb', heapMb], ['fileTimeoutMs', fileTimeoutMs], ['deadlineMs', deadlineMs]]) {
-    if (!posInt(v)) throw new UsageError(`${k} must be a positive integer: the heap cap, the clock per file and the whole-run deadline are the room's numbers, and a run with no finite clock is refused`);
+    if (!posInt(v)) throw new UsageError(`${k} must be a positive integer: the heap cap, the clock per test (node --test's --test-timeout) and the whole-run deadline are the room's numbers, and a run with no finite clock is refused`);
   }
   if (fileClockMs !== undefined && !posInt(fileClockMs)) throw new UsageError('fileClockMs must be a positive integer when given: it is the wall clock of one file, in milliseconds');
   const dupe = files.find((f, i) => files.indexOf(f) !== i);

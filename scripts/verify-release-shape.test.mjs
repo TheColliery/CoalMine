@@ -227,3 +227,17 @@ test('sandboxEnv: one literal of named keys with GIT_CONFIG_NOSYSTEM the literal
   assert.deepEqual(spreads, ['...Object.fromEntries(BASE_ENV_KEYS.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),']);
   assert.ok(/GIT_CONFIG_NOSYSTEM: '1'/.test(body));
 });
+
+// 16j (CoalWash PR #18, CoalBoard T5, CoalLedger: the same finding three times): the rail compared both sides after trim(), so a LEADING space or newline the API
+// added or lost read as a match. Only the trailing newline GitHub itself appends is tolerated (trimEnd); a leading byte is the corruption this rail exists for.
+test('verify-release-shape.mjs: a published title or body that gained a LEADING space or newline is a mismatch, exit 1; the trailing newline alone still matches -- RED before 16j', () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'release-title.txt'), 'v1.0.0 - a fix\n');
+  fs.writeFileSync(path.join(dir, 'release-body.md'), 'A fix.\n');
+  const title = run(dir, JSON.stringify({ name: ' v1.0.0 - a fix', body: 'A fix.' }));
+  assert.equal(title.status, 1, title.stdout + title.stderr); assert.match(title.stderr, /TITLE MISMATCH/);
+  const body = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix', body: '\nA fix.' }));
+  assert.equal(body.status, 1, body.stdout + body.stderr); assert.match(body.stderr, /BODY MISMATCH/);
+  const ok = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix', body: 'A fix.\n' }));
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+});
