@@ -17,7 +17,7 @@ A cloned repository's config could set `autoFixMode: safe` and make `rot-canary`
 
 ### Changed
 - **Internal —** the release workflow `.github/workflows/claude-ai-zips.yml` builds reproducible ZIPs and lists a Release's assets before it downloads, as the org canon does (CR row 7, thread t129 (4)): the stage step takes the tag commit's time as `SOURCE_DATE_EPOCH`, the zip step runs under `TZ=UTC` as `find | LC_ALL=C sort | zip -X -D -@`, and the step that reads the Release's existing assets fails on an API error instead of treating it as a first run. The first real run is this release's tag push. This ships nothing in `plugin/`.
-- **Internal —** four `front-door-links` files are adopted from the org canon by blob (the outward half of the link check): `.github/workflows/front-door-links.yml` `7c582bd7`, `scripts/front-door-links.mjs` `3793a056`, `scripts/lib/front-door-links.mjs` `7df59db6` and `scripts/front-door-links.test.mjs` `3cff2b30` (blob ids as `git hash-object` reads them). This ships nothing in `plugin/`.
+- **Internal —** four `front-door-links` files are adopted from the org canon by blob (the outward half of the link check): `.github/workflows/front-door-links.yml` `f0cc9ec0` (its job is named `front-door-links`), `scripts/front-door-links.mjs` `3793a056`, `scripts/lib/front-door-links.mjs` `7df59db6` and `scripts/front-door-links.test.mjs` `3cff2b30` (blob ids as `git hash-object` reads them). This ships nothing in `plugin/`.
 
 ## [3.23.3] - 2026-10-16
 
