@@ -23,6 +23,9 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // below fails the gate if you forget).
 const TESTS = [
   'scripts/lib/render.test.mjs',
+  // 15b5b: render.test.mjs split at its seams (the 14 tests that spawn the real verify.mjs went to these two) so no file nears node 22's per-file clock.
+  'scripts/lib/verify-wiring.test.mjs',
+  'scripts/lib/verify-pointers.test.mjs',
   'scripts/lib/hooks.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',
