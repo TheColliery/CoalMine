@@ -1,8 +1,10 @@
 name: claude-ai-zips
 
-# claude.ai installs skills as a ZIP only, and its skill-listing description cap is 200
-# chars vs our own cross-platform 1024 (desc-cap.mjs). For one tag: stage every
-# skill with its description deterministically trimmed to the platform cap
+# claude.ai installs skills as a ZIP only. Its skills page (read 2026-10-02) states a 1,024-char
+# description limit, and this build trims to 200 as a CONSERVATIVE cap until one real upload at the
+# longer length is on record (UMB-333; build-claude-ai-zips.mjs says the same); our own
+# cross-platform cap is 1024 (desc-cap.mjs). For one tag: stage every
+# skill with its description deterministically trimmed to that conservative cap
 # (scripts/build-claude-ai-zips.mjs — a DERIVED artifact, source skills/*/SKILL.md is
 # never edited), zip each staged directory, and attach the ZIPs to the GitHub Release
 # as assets. The user downloads a ZIP from the Release and uploads it to claude.ai
@@ -240,11 +242,16 @@ jobs:
       - name: Stage trimmed-description skill directories
         if: steps.pkg.outputs.package == 'true'
         working-directory: tag-src
-        run: node scripts/build-claude-ai-zips.mjs
+        # SOURCE_DATE_EPOCH = the tag commit's time: the staged files carry it as their mtime, so the ZIPs are reproducible (09g, M1)
+        run: SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" node scripts/build-claude-ai-zips.mjs
 
+      # Reproducible (09g, M1): TZ=UTC because zip stores a local DOS time; the file list is SORTED by byte value; -X drops the extra
+      # attributes and -D the folder entries; the dotfile exclusion '*/.*' reaches every depth. Rerun on a runner with the same zip, the bytes match.
       - name: Zip each staged skill directory
         if: steps.pkg.outputs.package == 'true'
         working-directory: tag-src
+        env:
+          TZ: UTC
         run: |
           set -euo pipefail
           cd -- dist-claude-ai
@@ -252,7 +259,7 @@ jobs:
             name="${d%/}"
             # zip refuses "--" before the archive name, so a name that could read as an option is refused here instead.
             [[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "::error::skill directory name '${name}' is not a plain name"; exit 1; }
-            zip -r "${name}.zip" "${name}" -x "${name}/.*"
+            find "${name}" -type f | LC_ALL=C sort | zip -X -D -@ "${name}.zip" -x '*/.*'
           done
           ls -la -- *.zip
 
@@ -357,20 +364,29 @@ jobs:
 
       # UMB-163's named divergence, closed here: `--clobber` used to run unconditionally on
       # every invocation of this workflow, silently overwriting whatever a prior run had
-      # already published. Best-effort: absent on a genuine first run (nothing to download),
-      # which is the expected, non-error case -- `|| true` only swallows THAT, never a real
-      # network failure the next step would then also need to distinguish (out of scope here;
-      # a transient download failure surfaces as "no existing file" and is treated the same as
-      # first-run, the safe direction).
+      # already published. 14h (CoalFace #1 = CoalLedger #4, Major): the check used to end in `|| true`, which turned an API or
+      # network failure into "no prior sums", and the decision then said upload-clobber over published assets, the safe direction
+      # reversed. The Release's assets are LISTED first: a failed listing fails the step, a Release without SHA256SUMS.txt is a first
+      # run, and a listed SHA256SUMS.txt that cannot be downloaded fails the step too.
       - name: Check for an already-published SHA256SUMS.txt on this tag's Release
         if: steps.pkg.outputs.package == 'true'
         working-directory: tag-src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "${RELEASE_TAG}" -p 'SHA256SUMS.txt' -O existing-SHA256SUMS.txt --clobber 2>/dev/null || true
+        run: |
+          set -euo pipefail
+          rm -f existing-SHA256SUMS.txt
+          assets=$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name') || { echo "::error::could not list the assets of the Release of ${RELEASE_TAG} (an API or network failure is not 'no prior SHA256SUMS.txt'); nothing was uploaded"; exit 1; }
+          if printf '%s\n' "${assets}" | grep -qx 'SHA256SUMS.txt'; then
+            gh release download "${RELEASE_TAG}" -p 'SHA256SUMS.txt' -O existing-SHA256SUMS.txt --clobber || { echo "::error::SHA256SUMS.txt is on the Release of ${RELEASE_TAG} but could not be downloaded; nothing was uploaded"; exit 1; }
+          else
+            echo "no SHA256SUMS.txt on the Release of ${RELEASE_TAG}: a first run for this tag"
+          fi
 
       # UMB-182 M1, measured: zip stores mtimes, so a re-run of a tag whose assets are already
-      # published ends RED here, and that red is the safe outcome (nothing is overwritten; a fully
+      # published ended RED here. Since 09g the staged files carry the tag commit's time and the list is
+      # sorted, so the same zip program rebuilds the same bytes and the decision is `skip`; a different
+      # zip program can still differ, and that red stays the safe outcome (nothing is overwritten; a fully
       # published tag has nothing left to do). A run that died before SHA256SUMS.txt was uploaded
       # finds no prior file and uploads normally. scripts/lib/asset-upload-mode.mjs has the detail.
       - name: Decide whether to upload, skip, or fail (a published version must never silently change)
