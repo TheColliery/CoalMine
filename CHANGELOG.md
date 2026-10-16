@@ -6,14 +6,14 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 A project config can no longer turn on automatic fixes
 
-A cloned repository's config could set `autoFixMode: safe` and make the agent edit files without the menu; that now needs your own global config. `plugin/` moves, so this is a PATCH release. (Provisional wording, finalized at DOCS 1.)
+A cloned repository's config could set `autoFixMode: safe` and make `rot-canary` edit files without showing the menu; `safe` now counts only from your own global config. `plugin/` moved (the three hooks, the `rot-canary` skill), so this is a PATCH release.
 
 ### Security
-- **`autoFixMode` from a project config may only lower it.** `safe` counts only when it comes from the user's global config (``/.claude/.coalmine.json`); a project value can keep the mode or lower it, never raise it (CR row 17, CWK2-044). This reverses on purpose the 3.22.3 sentence that a project config you did not write can set it to `safe`.
+- **`autoFixMode` from a project config may only lower it.** The order is `off` < `interactive` < `safe`: a project value can keep the mode or lower it, never raise it, and `safe` counts only when it comes from the user's global config (``/.claude/.coalmine.json`); with no global `safe`, a project `safe` reads as `interactive` (CR row 17, CWK2-044). The hooks apply the clamp on every run (all three Node hooks and the PowerShell fallbacks) and say what is in effect: `[CoalMine] autoFixMode in effect: <mode> (<why>)` on the session-start context and on the session-end scan report, only when a config sets the key. A manual `/rot-canary` run has no hook in front of it: there the same rule comes from the skill text, which is a mitigation an agent follows, not a clamp a machine enforces, so it is not claimed as closed. This reverses on purpose the 3.22.3 sentence that a project config you did not write can set the key to `safe`: a cloned repository could turn on automatic edits. — test: `scripts/lib/autofix-clamp.test.mjs`, `scripts/lib/ps-config.test.ps1`
 
 ### Fixed
-- **The touch hook's marker append is bounded by `MARKER_MAX_BYTES`** (CR row 18): an append that would pass the bound is refused, so the marker never grows unreadable.
-- **The Antigravity Stop hook resolves the project from `workspacePaths`** (CR row 22), as the touch hook and the conductor already do.
+- **The touch hook's marker append is bounded by `MARKER_MAX_BYTES`.** An entry that would take the marker past 1 MiB is dropped silently (Phoenix #4) instead of written, because the reader treats a marker over the bound as absent and the stop hook would lose the whole touched-file list; an entry landing exactly on the bound is written. — test: `scripts/lib/marker-append-bound.test.mjs`
+- **The Antigravity Stop hook resolves the project from `workspacePaths`.** In Antigravity mode it took the git root of its own working folder, which is the plugin folder when the plugin is registered outside the project, while the touch hook and the conductor already used the workspace; it now uses `workspacePaths[0]` for the config, the language probe and the MEMORY.md probe. Claude Code is unchanged. — test: `scripts/lib/ag-plugin.test.mjs`
 
 ## [3.23.3] - 2026-10-16
 

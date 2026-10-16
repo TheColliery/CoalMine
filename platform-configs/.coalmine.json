@@ -140,7 +140,7 @@
   // # Default value: []
   "disabledCanaries": [],
 
-  // ## Default behavior for the rot-canary fix mode menu (interactive = ask user, safe = auto-apply safe fixes, off = report only).
+  // ## Default behavior for the rot-canary fix mode menu (interactive = ask user, safe = auto-apply safe fixes, off = report only). A project config can only LOWER it: safe counts only from the global config.
   // # Setting type: String (interactive, safe, off)
   // # Default value: interactive
   "autoFixMode": "interactive",

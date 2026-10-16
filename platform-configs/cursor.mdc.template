@@ -5,7 +5,7 @@ alwaysApply: true
 <!-- COALMINE:START -->
 # CoalMine — 9 Quality Canaries
 
-Skills live in `.cursor/skills/` (one `SKILL.md` each). Invoke by keyword; each skill gates its own tier and fix mode — never fix outside that gate (its menu, or the `autoFixMode` the config sets).
+Skills live in `.cursor/skills/` (one `SKILL.md` each). Invoke by keyword; each skill gates its own tier and fix mode — never fix outside that gate (its menu, or the `autoFixMode` your global config sets; a project config can only lower it).
 
 | Trigger | Use when |
 |---|---|

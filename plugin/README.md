@@ -1,6 +1,6 @@
 # CoalMine plugin
 
-CoalMine is a set of nine code-quality "canary" skills for coding agents, plus three small hooks that nudge your agent to run the health scan at the right moments. It reports problems first. Fixes go through a menu you choose from, unless you set `autoFixMode: safe` in the CoalMine config, in which case `rot-canary` applies the safe, reversible fixes without a menu.
+CoalMine is a set of nine code-quality "canary" skills for coding agents, plus three small hooks that nudge your agent to run the health scan at the right moments. It reports problems first. Fixes go through a menu you choose from, unless you set `autoFixMode: safe` in your global CoalMine config (a project config can only lower it), in which case `rot-canary` applies the safe, reversible fixes without a menu.
 
 The nine skills are `rot-canary` (dead code, bug-prone logic, leaks, silent failures), `gold-standard` (rules and standards completeness), `source-grounding` (verify version-sensitive facts before asserting them), `supply-chain-audit`, `resilience-audit`, `telemetry-canary`, `testability-canary`, `scale-canary` and `drift-canary`. Two commands ship with them: `/coalmine:stats` (a local activity and rule-freshness report) and `/coalmine:update` (check for a newer version and choose how updates are handled). One read-only helper agent, `coalmine-scanner`, carries out scans the skills fan out.
 
