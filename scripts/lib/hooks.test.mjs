@@ -2192,7 +2192,11 @@ test('CWK-137: a .claude/rules junction that ESCAPES the project is not walked -
   assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a stamp reached only through an escaping link must NOT count as the project verified');
 });
 
-test('CWK-137: a .claude/rules junction that stays INSIDE the project is still walked (a link is not automatically hostile)', (t) => {
+// 15b5 (CWK2-037) TEST PROVEN WRONG, CHANGED IN ITS OWN NAMED STEP: this test asserted the pre-pin behaviour (a link that stays inside the project is
+// followed). The folder pin refuses a link in the folder chain between the root and the entry, wherever it points (hooks-safety.md section 6 row 10;
+// the head's CWK2-037 order), and the rules walk is one more caller of the same repoEntryKind: `.claude/rules` is an entry whose realpath leaves its
+// folder `.claude`, so it is refused. The direction is safe (a stamp reached only through such a link no longer counts, so the onboarding offer shows).
+test('CWK-137 / 15b5: a .claude/rules junction that stays INSIDE the project is NOT walked either (the folder pin refuses any link in the chain)', (t) => {
   const tmp = mkAnchoredTmp();
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const real = path.join(tmp, 'docs', 'rules');
@@ -2202,7 +2206,7 @@ test('CWK-137: a .claude/rules junction that stays INSIDE the project is still w
   fs.symlinkSync(real, path.join(tmp, '.claude', 'rules'), 'junction');
   const r = runHook(CONDUCTOR, '', tmp);
   assert.equal(r.status, 0);
-  assert.ok(!r.stdout.includes('offer /gold-standard ONCE'), 'a contained link keeps working');
+  assert.ok(r.stdout.includes('offer /gold-standard ONCE'), 'a stamp reached only through a link in the folder chain does not count as the project verified');
 });
 
 test('CWK-137: AGENTS.md -> /dev/zero does not exhaust memory -- the conductor exits 0 promptly (POSIX)', (t) => {

@@ -46,11 +46,41 @@ export function isContained(child, parent) {
 
 // 'file' | 'dir' | null, decided WITHOUT opening the path. `root` null = no containment
 // (the user's own home files: a dotfile manager legitimately symlinks them anywhere).
-export function repoEntryKind(p, root) {
+// 15b5 (CWK2-037; hooks-safety.md section 6 row 10, node/runtime.md section 4: an allowlist pins the LITERAL expected location). When `root`
+// is set the check runs for EVERY entry, not only for a symlinked file: a junction (Windows) or symlink (POSIX) planted at a PARENT folder
+// (`.claude`, `.claude/coal`) leaves the file itself lstat-ing as a plain file, and a realpath-inside-the-ROOT test let that link out to any
+// folder of the project. So: (1) FOLDER PIN, by lstat per component (never by comparing a realpath with a hand-joined string: case and 8.3
+// short names are VOLUME properties): every component between `root` and the entry's own folder must be a real directory, a link at any of
+// them refused wherever it points, a target inside the project included; `root` itself is not walked, so a project opened through a linked
+// path still reads its own files; a `..` segment is refused outright, because the lexical walk cannot see which link it would climb out of.
+// (2) ENTRY PIN: the entry's realpath (`.native` on both sides) must stay inside its own folder's realpath, which refuses a FILE symlink that
+// leaves its folder. Node reports a Windows junction as a symbolic link, so one lstat test covers both kinds. Residual, named: the check and
+// the later open are two steps, so a link swapped in between is not caught here (the fd re-check below only re-checks kind and size).
+function folderChainIsPlain(p, root) {
+  if (p.split(/[\\/]/).includes('..')) return false;
+  const rel = path.relative(root, p);
+  if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) return false;
+  let cur = root;
+  for (const part of rel.split(path.sep).slice(0, -1)) {
+    cur = path.join(cur, part);
+    try { if (fs.lstatSync(cur).isSymbolicLink()) return false; } catch { return false; }
+  }
+  return true;
+}
+function entryInsideItsFolder(p, root) {
+  if (path.relative(root, p) === '') return true; // the root itself is not walked
+  if (!folderChainIsPlain(p, root)) return false;
+  try {
+    const realFolder = fs.realpathSync.native(path.dirname(p));
+    const real = fs.realpathSync.native(p);
+    return real !== realFolder && isContained(real, realFolder);
+  } catch { return false; }
+}
+export function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
   try {
     const lst = fs.lstatSync(p);
     if (!lst.isSymbolicLink() && !lst.isFile() && !lst.isDirectory()) return null;
-    if (root != null && !isContained(fs.realpathSync.native(p), fs.realpathSync.native(root))) return null;
+    if (root != null && !entryInsideItsFolder(p, root)) return null;
     const st = lst.isSymbolicLink() ? fs.statSync(p) : lst;
     if (st.isFile()) return 'file';
     if (st.isDirectory()) return 'dir';

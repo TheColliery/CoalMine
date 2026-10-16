@@ -69,7 +69,7 @@ test('a regular file is read; over the bound it is SKIPPED, never truncated; pre
   assert.deepEqual(readRepoBytesBounded(f, dir, 64), Buffer.from('0123456789'));
 });
 
-test('a read through a junction that ESCAPES the root is refused; one that stays inside is allowed', (t) => {
+test('a read through a junction that ESCAPES the root is refused; one that stays inside is refused too (15b5: the folder pin)', (t) => {
   const root = tmpDir(t, 'root');
   const outside = tmpDir(t, 'outside');
   fs.writeFileSync(path.join(outside, 'secret.md'), 'OUTSIDE');
@@ -79,7 +79,7 @@ test('a read through a junction that ESCAPES the root is refused; one that stays
   fs.symlinkSync(path.join(root, 'real'), path.join(root, 'inner'), 'junction');
   assert.equal(repoEntryKind(path.join(root, 'escape'), root), null, 'the escaping junction itself is refused');
   assert.equal(readRepoFileBounded(path.join(root, 'escape', 'secret.md'), root, 64), null, 'a file under it is refused');
-  assert.equal(readRepoFileBounded(path.join(root, 'inner', 'doc.md'), root, 64), 'INSIDE', 'a contained link is not hostile');
+  assert.equal(readRepoFileBounded(path.join(root, 'inner', 'doc.md'), root, 64), null, '15b5 (CWK2-037): a link in the folder chain is refused even when it points inside the project');
   assert.equal(readRepoFileBounded(path.join(root, 'escape', 'secret.md'), null, 64), 'OUTSIDE', 'root null = no containment (home files)');
 });
 
