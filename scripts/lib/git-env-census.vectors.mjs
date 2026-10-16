@@ -1,5 +1,5 @@
 // THE WITNESS LIST AS DATA (08d, merged into the canon 2026-10-09): the union of what seven rooms' reviewers found against their git-spawn censuses, rounds 1 to 3
-// (the chief's scratchpad/dispatch/08d-census-witness-list.md: F1-F60 a git spawn whose env must be a finding, R1-R5 a spawn the census must COUNT, P1-P7 an env it must pass
+// (a list kept by the CoalWorks chief at order 08d, a file only the umbrella holds, so this file is the list now: F1-F60 a git spawn whose env must be a finding, R1-R5 a spawn the census must COUNT, P1-P7 an env it must pass
 // with no pin). One entry per vector; `texts` are whole fixture files, so a vector that declares `const env` carries BOTH call forms (the shorthand `{ env }` and
 // `env: env`). Three sources are merged: CoalTipple's fixtures (F1-F42, R1-R2, its own X, B, N and I rows, P3-P8), the round-3 rows written for the canon from the list's own
 // wording (ROUND3), and CoalFace's independent fixtures of the same rows (FROM_FACE, `src: 'CoalFace'`). Every fixture is a string or a template literal here, so the real
@@ -1067,4 +1067,56 @@ ${KEYS_ALLOW}  ++/'/.lastIndex; Object.assign(env, process.env); //'
   ] },
 ];
 
-export const VECTORS = [...FROM_TIPPLE, ...ROUND3, ...FROM_FACE, ...FROM_09F];
+// 14h (item 14, courier 2; CoalBoard #101): an env object another module can import is not one the census can read whole -- the importer can write GIT_DIR into it after this file's spawn.
+// Each declaration keyword and each export form is a row; the controls show an export that is NOT the env still passes.
+const EXENV = (kw) => `export ${kw} env = ${MK};\n`;
+const FROM_14H = [
+  { id: 'B-101', src: 'CoalBoard #101', expect: 'fail', texts: [
+    `${HEAD}${EXENV('const')}${SHORT}\n`,
+    `${HEAD}${EXENV('const')}${KEYED}\n`,
+    `${HEAD}${EXENV('let')}${SHORT}\n`,
+    `${HEAD}${EXENV('var')}${KEYED}\n`,
+  ] },
+  { id: 'B-101b', src: 'CoalBoard #101', expect: 'fail', texts: [
+    `${HEAD}const env = ${MK};\nexport { env };\n${SHORT}\n`,
+    `${HEAD}const env = ${MK};\nexport { env as shared };\n${KEYED}\n`,
+    `${HEAD}const env = ${MK};\n${SHORT}\nexport default env;\n`,
+    `${HEAD}const env = ${MK};\n${SHORT}\nmodule.exports = env;\n`,
+    `${HEAD}const env = ${MK};\n${SHORT}\nexports.env = env;\n`,
+  ] },
+  { id: 'P-101', src: 'CoalBoard #101', expect: 'pass', texts: [
+    `${HEAD}const env = ${MK};\n${SHORT}\nexport const other = 1;\n`,
+    `${HEAD}const env = ${MK};\nexport function run() { return spawnSync('git', ['status'], { env }); }\n`,
+    `${HEAD}export const mk = (dir) => (${MK});\nspawnSync('git', ['status'], { env: mk(d) });\n`,
+  ] },
+  // 14h (item 14, courier 4), CoalMine's three census couriers of 09a, measured against the canon (scratchpad r09a/shim/disagree.jsonl rows 12-14). Row 12 was a hole and is a finding now;
+  // rows 13 and 14 pass BY DESIGN (a pure read of the binding, a loop over the keys of process.env that writes nowhere), so they are pinned as controls beside the variants that stay refused.
+  { id: 'CM-12', src: 'CoalMine 09a row 12', expect: 'fail', texts: [
+    `${HEAD}function mk() { if (a) return ${MK}; return { PATH: process.env.PATH }; }\nspawnSync('git', ['x'], { env: mk() });\n`,
+    `${HEAD}function mk() { if (a) return { PATH: process.env.PATH }; return ${MK}; }\nspawnSync('git', ['x'], { env: mk() });\n`,
+    `${HEAD}const mk = (a) => { if (a) { return ${MK}; } return { PATH: process.env.PATH }; };\nspawnSync('git', ['x'], { env: mk(1) });\n`,
+  ] },
+  { id: 'P-CM-12', src: 'CoalMine 09a row 12', expect: 'pass', texts: [
+    `${HEAD}function mk() { if (a) return ${MK}; return { HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: '1' }; }\nspawnSync('git', ['x'], { env: mk() });\n`,
+    `${HEAD}function mk() { if (a) return ${MK}; return { GIT_CONFIG_NOSYSTEM: '1' }; }\nspawnSync('git', ['x'], { env: mk() });\n`,
+    `${HEAD}${IMPORT_HELPER}function mk(d) { if (a) return ${MK}; return { ...gitEnv(d), PATH: process.env.PATH }; }\nspawnSync('git', ['x'], { env: mk(d) });\n`,
+    `${HEAD}${IMPORT_HELPER}function mk(d) { if (a) return { ...gitEnv(d), PATH: process.env.PATH }; return gitEnv(d); }\nspawnSync('git', ['x'], { env: mk(d) });\n`,
+    `${HEAD}function mk() { return { PATH: process.env.PATH }; }\nspawnSync('git', ['x'], { env: { ...mk(), GIT_CONFIG_NOSYSTEM: '1' } });\n`,
+  ] },
+  { id: 'CM-13', src: 'CoalMine 09a row 13', expect: 'fail', texts: [
+    `${HEAD}const env = ${MK};\nlog(env);\n${SHORT}\n`,
+    `${HEAD}const env = ${MK};\nlog({ env });\n${SHORT}\n`,
+    `${HEAD}const env = ${MK};\nlog([env]);\n${SHORT}\n`,
+    `${HEAD}const env = ${MK};\nObject.assign(env, x);\n${SHORT}\n`,
+  ] },
+  { id: 'P-CM-13', src: 'CoalMine 09a row 13', expect: 'pass', texts: [`${HEAD}const env = ${MK};\nlog(Object.keys(env));\n${SHORT}\n`] },
+  { id: 'CM-14', src: 'CoalMine 09a row 14', expect: 'fail', texts: [
+    `${HEAD}const env = ${MK};\nfor (const k in process.env) env[k] = process.env[k];\n${SHORT}\n`,
+    `${HEAD}const env = ${MK};\nfor (const k in process.env) Object.assign(env, { [k]: process.env[k] });\n${SHORT}\n`,
+  ] },
+  { id: 'P-CM-14', src: 'CoalMine 09a row 14', expect: 'pass', texts: [
+    `${HEAD}const env = ${MK};\nlet n = 0;\nfor (const k in process.env) n++;\n${SHORT}\n`,
+    `${HEAD}const env = ${MK};\nconst o = {};\nfor (const k in process.env) o[k] = process.env[k];\n${SHORT}\n`,
+  ] },
+];
+export const VECTORS = [...FROM_TIPPLE, ...ROUND3, ...FROM_FACE, ...FROM_09F, ...FROM_14H];

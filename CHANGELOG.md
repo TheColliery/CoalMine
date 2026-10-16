@@ -2,6 +2,40 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.23.3] - 2026-10-16
+
+Config folder links are refused wherever they point
+
+A link at a folder of the project-config chain was followed when its target stayed inside the project; any such link is now refused. `plugin/` moved (the three hooks), so this is a PATCH release.
+
+### Security
+- **A link at a config folder is refused, wherever it points.** Before: a Windows junction or POSIX symlink at a folder of the project-config chain (`.claude`, `.claude/coal`, any component between the project root and the file's own folder) was followed when its target stayed inside the project, so a planted in-project link could redirect which in-project file was read as the config or rule file (found by the sibling CoalLedger's sweep, CWK2-037; never outside the project). Now: any link at any such component is refused, and the file's own realpath must stay inside its own folder; the project root itself is not walked. Surfaces: the three hooks (`hooks/coalmine-conductor.js`, `hooks/rot-canary-stop.js`, `hooks/rot-canary-touch.js`, through `hooks/_shared/node-config.js`) and `scripts/lib/repo-fs.mjs` (`repoEntryKind`, used by `install.mjs` and `configure.mjs`). Two named consequences: no rule file under a `.claude/rules` junction is read, and `install.mjs` refuses a link in the folder chain of the trigger files it reads (the Cursor, Copilot and Antigravity rules files). Not covered: a link swapped in between the check and the open. The Windows junction legs ran locally; the POSIX symlink and file-symlink legs run on this release's CI matrix (ubuntu-latest and macos-latest, Node 22 and 24). See the follow-up record under CWK-137 in `SECURITY.md`. — test: `scripts/lib/folder-pin.test.mjs`
+
+### Changed
+- **Internal —** `scripts/verify.mjs` now fails a Claude Code hook entry whose `type` is not `command` (and any entry that is not the exec form), and the exec-form test holds the conductor's stdout to the sanctioned output exactly (`scripts/lib/verify-hooks-manifest.test.mjs`, `scripts/lib/hooks-exec-form.test.mjs`); this ships nothing in `plugin/`.
+- **`SECURITY.md`'s SkillSpector section describes the v3.23.2 scan** (SkillSpector v2.12.0 pinned at `2226747`, 27 findings, 44 of 49 files covered, all adjudicated).
+
+## [3.23.2] - 2026-10-15
+
+Hooks run in exec form; installer cleans every kill point
+
+The Claude Code hooks no longer depend on a shell, and a killed install is cleaned up at every kill point. `plugin/hooks/hooks.json` moved (the only `plugin/` byte that did), so this is a PATCH release.
+
+### Fixed
+- **The Claude Code hooks run in exec form.** The three entries in `hooks/hooks.json` (and its `plugin/hooks/hooks.json` twin) were `node "${CLAUDE_PLUGIN_ROOT}/hooks/<name>.js"` shell strings; each is now `"command": "node"` with `"args": ["${CLAUDE_PLUGIN_ROOT}/hooks/<name>.js"]`, no shell, no `onFailure`. On Windows a shell string went to PowerShell, which reads `${CLAUDE_PLUGIN_ROOT}` as one of its own variables that expands to nothing: CoalWash measured `exit=1` with a node loader error, and `exit=0` for the exec form. Claude Code 2.1.299's changelog fixes a related failure ("Windows: Fixed PreToolUse and PermissionRequest hooks that set no shell failing open when Git for Windows isn't installed"), and the vendor's hooks reference says "Prefer exec form for any hook that references a path placeholder". The `args` form needs Claude Code 2.1.139 or later (the floor CoalWash's record names). The Antigravity manifest `plugin/hooks.json` is unchanged on purpose: measured on agy 1.3.2, the exec form fired the conductor in 0 of 3 runs and the shell string in 2 of 2. `hooks/settings.snippet.json` keeps the shell string, since it uses a `<REPO>` placeholder you fill in.
+- **A killed install left a partial skill folder.** `installSkillDir` wrote the final folder in place, so a kill part-way through a first install left a partial folder under the skill's name, and a killed reinstall left the skill partial. It now builds the tree in a work folder beside the target (`.<skill>.coalmine-tmp-<pid>`, with the marker `.coalmine-installing`), proves the file set complete, moves a previous folder aside, renames the new one into place (both renames inside one parent) and removes the work folder in `finally`. A failed rename puts the old folder back and surfaces the error, with no in-place fallback; if the restore itself fails the work folder is kept and the message names it. Every install and uninstall first sweeps leftovers: a work folder that is a real directory (a link is never followed) directly inside the same parent whose pid is not alive and that carries the marker, or is EMPTY (the kill window before the marker write), is removed; a non-empty unmarked folder is kept. The sweep also unlinks a dead installer's `.coalmine-manifest.json.coalmine-tmp-<pid>` (a regular file only). Measured over 116 kill points (58 first-install, 58 reinstall): 0 partial skill folders, 0 problems. The refusal and ownership checks (manifest hashes, tracked hooks, links) are unchanged. Named residuals: a kill between the move-aside and the rename leaves the old copy inside the work folder and the next install reinstalls the skill; a temp file `writeRepoFile` makes for any other target (a project config, a trigger file) is not swept.
+- **Internal —** `scripts/lib/install-lowthree.test.mjs` (real SIGKILL on the Nth file copy, kill points before the marker write and before the manifest rename, link and liveness guards) and `scripts/lib/hooks-exec-form.test.mjs` (every hook entry is the exec form and each hook runs as `node` plus the script with no shell) join the suite: 41 files, 41 passing.
+
+## [3.23.1] - 2026-10-15
+
+Reference files re-verified; SkillSpector scan is v3.23.0
+
+Seven rule reference files were re-checked against their sources instead of re-dated, and the `SECURITY.md` scan section now describes the v3.23.0 scan. `plugin/` moved: the rendered copies of the reference files (the shared escalation file renders into every canary).
+
+### Changed
+- **Reference files re-verified on 2026-10-14.** Each version-sensitive claim in the seven past-due files was read against its primary source. Corrections: `rot-canary`'s tooling table no longer lists `depcheck` as a live tool (the project is archived and recommends `knip`); the shared escalation list says Cursor's Max Mode now exists only on legacy request-based plans. Claims no source settled carry a `⚠️ unverified: check <source>` mark: the Amp and Goose subagent levers, and the per-platform hook event names in the `rot-canary` cadence reference. The freshness stamps moved to 2026-10-14 only because every claim is now settled or marked.
+- **`SECURITY.md`'s SkillSpector section describes the v3.23.0 scan** (SkillSpector v2.12.0 pinned at `2226747`, 27 findings, 44 of 49 files covered, all adjudicated), replacing the v3.20.2 scan text.
+
 ## [3.23.0] - 2026-10-09
 
 CoalMine now carries a native Antigravity plugin

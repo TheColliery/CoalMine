@@ -9,10 +9,15 @@
 // lives in .claude-plugin/plugin.json, which this folder does not carry.
 //
 // Axes (each optional; an axis the machine cannot report is UNMEASURED and never blocks on its own):
-//   CPU    busy % from a delta of os.cpus() times over a short sample; on Linux, where cgroup v2 cpu.max holds a
-//          quota, busy % of that quota from cpu.stat usage_usec over the same sample. The output names the source.
-//   memory free % = process.availableMemory() (sees a container limit; os.freemem() when absent) over
-//          process.constrainedMemory() when it is > 0, else os.totalmem().
+//   CPU    busy % from a delta of os.cpus() times over a short sample, judged over the k busiest logical CPUs where
+//          k = os.availableParallelism() (the CPUs this process may use; all of them on an unconfined box, so the
+//          reading is then the whole-machine mean as before); on Linux, where cgroup v2 cpu.max holds a quota, busy % of
+//          that quota from cpu.stat usage_usec over the same sample. The output names the source.
+//   memory free % = process.availableMemory() (sees a container limit) over process.constrainedMemory() when that is
+//          a real limit, else os.totalmem(). A constrainedMemory of 0, at or above 2**63 (libuv returns UINT64_MAX when a
+//          cgroup holds no limit) or above os.totalmem() is NO limit. Where availableMemory is absent (Node before 22.0.0)
+//          the axis is UNMEASURED: os.freemem() is never the fallback (on macOS it counts free pages only).
+//   All axes unmeasured: BREATHE only with --running 0, so a machine that cannot be read releases one unit at a time.
 //   GPU    not read: no portable API. Printed as N/A.
 // Thresholds are OURS, not a measurement of any machine; they are flags (--cpu-max, --mem-min) because this folder
 // cannot import the config reader. The agent passes the merged .coalface.json values.
@@ -31,10 +36,17 @@ const EXIT_ERROR = 2; // the machine could not be read at all: neither BREATHE n
 const round1 = (n) => Math.round(n * 10) / 10;
 
 // Busy share of the delta between two os.cpus() snapshots. null = unmeasured (empty list, no elapsed time).
-export function cpuBusyFromTimes(before, after) {
+// shortcut: every logical CPU counts the same, so on a hybrid box (performance and efficiency cores) the k busiest are
+// not weighted by core class; the per-OS core-class read waits for phase 2 (CWK2-025 finding 1) and a hybrid-box measurement.
+// usable = os.availableParallelism(): when it is lower than the CPU count the process is confined (an affinity mask, a cpuset),
+// the CPUs it may use are not named by os.cpus(), and the whole-machine mean would read the unusable ones as idle room. The
+// reading is then the mean over the k busiest CPUs (a confined box whose usable CPUs are saturated reads busy). With usable
+// absent, not a positive integer, or at least the CPU count (an unconfined box) it is the whole-machine mean, as before.
+export function cpuBusyFromTimes(before, after, usable) {
   if (!Array.isArray(before) || !Array.isArray(after) || before.length === 0 || before.length !== after.length) return null;
   let busy = 0;
   let total = 0;
+  const shares = [];
   for (let i = 0; i < before.length; i++) {
     const a = before[i].times;
     const b = after[i].times;
@@ -44,9 +56,24 @@ export function cpuBusyFromTimes(before, after) {
     if (!(dTotal >= 0) || !(dIdle >= 0)) return null;
     total += dTotal;
     busy += dTotal - dIdle;
+    shares.push(dTotal > 0 ? (dTotal - dIdle) / dTotal : 0);
   }
   if (total <= 0) return null;
+  if (Number.isInteger(usable) && usable > 0 && usable < before.length) {
+    const top = shares.sort((x, y) => y - x).slice(0, usable);
+    return round1((top.reduce((x, y) => x + y, 0) / usable) * 100);
+  }
   return round1((busy / total) * 100);
+}
+
+// Free memory share from injected readings. avail = process.availableMemory() or null where the runtime has none (UNMEASURED,
+// never os.freemem()). constrained = process.constrainedMemory(): a real limit only when it is above 0, below 2**63 and not above
+// the machine total (libuv returns UINT64_MAX when a cgroup holds no limit); anything else means "no limit" and total is the denominator.
+export function memFreePct({ avail = null, constrained = 0, total = 0 } = {}) {
+  if (typeof avail !== 'number' || !Number.isFinite(avail)) return null;
+  const limited = constrained > 0 && constrained < 2 ** 63 && constrained <= total;
+  const denom = limited ? constrained : total;
+  return denom > 0 ? round1(Math.min(100, (avail / denom) * 100)) : null;
 }
 
 // Container CPU: cgroup v2 cpu.max ("<quota> <period>" or "max <period>") and two cpu.stat reads. null = no quota
@@ -75,6 +102,8 @@ export function decide({ cpuBusyPct = null, cpuSource = 'unmeasured', memFreePct
   const reasons = [];
   if (cpuBusyPct !== null && cpuBusyPct >= cpuMaxPct) reasons.push(`cpu ${cpuBusyPct}% at or above ${cpuMaxPct}%`);
   if (memFreePct !== null && memFreePct < memMinPct) reasons.push(`mem free ${memFreePct}% below ${memMinPct}%`);
+  // Every axis unmeasured releases one unit at a time: a second unit WAITs, the first is admitted by the running-zero rule below.
+  if (cpuBusyPct === null && memFreePct === null) reasons.push('every axis unmeasured');
   const over = reasons.length > 0;
   const forced = over && running === 0;
   return {
@@ -93,7 +122,8 @@ export function decide({ cpuBusyPct = null, cpuSource = 'unmeasured', memFreePct
 export function formatLine(r) {
   const cpu = r.cpuBusyPct === null ? 'cpu unmeasured' : `cpu ${r.cpuBusyPct}% (${r.cpuSource})`;
   const mem = r.memFreePct === null ? 'mem unmeasured' : `mem free ${r.memFreePct}%`;
-  const tail = r.admittedBy === 'running-zero' ? ' · admitted: running 0' : '';
+  // A WAIT names each axis that held and the threshold it crossed (decide() built them); a BREATHE line keeps its shape.
+  const tail = r.admittedBy === 'running-zero' ? ' · admitted: running 0' : r.verdict === 'WAIT' && r.reasons.length ? ` · held: ${r.reasons.join('; ')}` : '';
   return `${r.verdict} — ${cpu} · ${mem} · gpu N/A${tail}`;
 }
 
@@ -149,14 +179,12 @@ async function readLive() {
   let cpuBusyPct = null;
   let cpuSource = 'unmeasured';
   if (cg) { cpuBusyPct = cg.busyPct; cpuSource = cg.source; } else {
-    cpuBusyPct = cpuBusyFromTimes(cpusA, cpusB);
+    cpuBusyPct = cpuBusyFromTimes(cpusA, cpusB, typeof os.availableParallelism === 'function' ? os.availableParallelism() : undefined);
     if (cpuBusyPct !== null) cpuSource = 'host';
   }
-  const avail = typeof process.availableMemory === 'function' ? process.availableMemory() : os.freemem();
+  const avail = typeof process.availableMemory === 'function' ? process.availableMemory() : null; // absent = UNMEASURED, never os.freemem()
   const constrained = typeof process.constrainedMemory === 'function' ? process.constrainedMemory() : 0;
-  const total = constrained > 0 ? constrained : os.totalmem();
-  const memFreePct = total > 0 && Number.isFinite(avail) ? round1(Math.min(100, (avail / total) * 100)) : null;
-  return { cpuBusyPct, cpuSource, memFreePct };
+  return { cpuBusyPct, cpuSource, memFreePct: memFreePct({ avail, constrained, total: os.totalmem() }) };
 }
 
 async function main() {

@@ -13,6 +13,11 @@
 // not recognized as a skill) and checks every archive's layout before upload.
 // Canonical exemplar: CoalMine (board #40).
 //
+// REPRODUCIBLE, AND REFUSING WHAT IT CANNOT PACKAGE (09g, CoalMine issue 42 M1-M3). A symlink or any entry that is neither a regular file nor a folder is REFUSED, never
+// followed (copyFileSync would read the link's target into a public asset); an entry whose name starts with a dot is not staged at any depth (a nested .DS_Store); a name with a
+// control character is refused. When SOURCE_DATE_EPOCH is set (whole seconds, 1980 or later: the reproducible-builds variable, which the workflow sets to the tag commit's time) every
+// staged file and folder gets that mtime, because zip stores mtimes and a time of the build would make every rebuild a different archive. The zip step then zips a sorted list.
+//
 // Entry-point imports node builtins only at the top level (node/runtime.md
 // §1) — local libs are dynamic, inside main().
 import fs from 'fs';
@@ -24,14 +29,39 @@ const repo = path.resolve(scriptDir, '..');
 const pluginSkills = path.join(repo, 'plugin', 'skills');
 const outDir = path.join(repo, 'dist-claude-ai');
 
+const hasControlChar = (name) => [...name].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
+const byCodeUnit = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+
 function copyDirRecursive(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+  for (const entry of fs.readdirSync(src, { withFileTypes: true }).sort(byCodeUnit)) {
+    if (entry.name.startsWith('.')) continue; // a dotfile or dot-folder is not packaged, at any depth
     const s = path.join(src, entry.name);
     const d = path.join(dest, entry.name);
-    if (entry.isDirectory()) copyDirRecursive(s, d);
+    if (hasControlChar(entry.name)) throw new Error(`${JSON.stringify(entry.name)} has a control character in its name`);
+    const st = fs.lstatSync(s); // lstat: a symlink or junction is seen as itself, never followed
+    if (st.isSymbolicLink() || !(st.isDirectory() || st.isFile())) throw new Error(`${s} is neither a regular file nor a folder (a symlink or special file is refused, not followed)`);
+    if (st.isDirectory()) copyDirRecursive(s, d);
     else fs.copyFileSync(s, d);
   }
+}
+
+// every file and folder under dir gets the same mtime (children first, then the folder), so the archive does not depend on when it was built
+function stampTree(dir, seconds) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) stampTree(p, seconds);
+    else fs.utimesSync(p, seconds, seconds);
+  }
+  fs.utimesSync(dir, seconds, seconds);
+}
+
+// null when SOURCE_DATE_EPOCH is unset; the seconds when it is a whole number of 1980 or later (zip cannot store an earlier time); else a refusal
+function sourceDateEpoch(env) {
+  const raw = env.SOURCE_DATE_EPOCH;
+  if (raw === undefined) return null; // set but empty (a failed git log in the workflow) is a refusal below, never a silent non-reproducible build
+  if (!/^\d{1,12}$/.test(raw) || Number(raw) < 315532800) throw new Error(`SOURCE_DATE_EPOCH must be whole seconds, 1980-01-01 or later (got ${JSON.stringify(raw)})`);
+  return Number(raw);
 }
 
 // Replace the frontmatter `description:` field (bare/quoted single-line, or
@@ -64,8 +94,14 @@ async function main() {
     return;
   }
 
+  let epoch;
+  try { epoch = sourceDateEpoch(process.env); } catch (e) {
+    console.error(`FAIL: ${e.message}`);
+    process.exitCode = 1;
+    return;
+  }
   fs.rmSync(outDir, { recursive: true, force: true });
-  const skills = fs.readdirSync(pluginSkills, { withFileTypes: true }).filter((e) => e.isDirectory());
+  const skills = fs.readdirSync(pluginSkills, { withFileTypes: true }).filter((e) => e.isDirectory()).sort(byCodeUnit);
   let failed = 0;
   for (const skill of skills) {
     try {
@@ -78,6 +114,7 @@ async function main() {
       if (description == null) throw new Error('no description field found');
       const trimmed = trimDescription(description, CLAUDE_AI_DESC_CAP);
       fs.writeFileSync(skillMdPath, replaceDescriptionField(text, trimmed), 'utf8');
+      if (epoch !== null) stampTree(destDir, epoch);
       console.log(`staged ${skill.name} (description ${description.length} -> ${trimmed.length} chars)`);
     } catch (e) {
       console.error(`FAIL ${skill.name}: ${e.message}`);

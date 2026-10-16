@@ -19,7 +19,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { loadShared as loadSharedFrom, listSkills, installSkillDir } from './lib/render.mjs';
+import { loadShared as loadSharedFrom, listSkills, installSkillDir, sweepInstallLeftovers } from './lib/render.mjs';
 import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
 import { gitEnv } from './lib/git-env.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
@@ -676,6 +676,12 @@ function writeManifest(destDir, installedSkills, root = destDir, carried = null)
   }
 }
 
+// 14a LOW-3: remove a dead installer's work folder (a marked directory, directly inside `dest`, whose pid is not alive);
+// the conditions live in sweepInstallLeftovers (lib/render.mjs). Say what was removed, never fail the run over it.
+function sweepLeftovers(dest) {
+  try { for (const n of sweepInstallLeftovers(dest)) console.log(`  removed the leftover of a killed install: ${n}`); } catch { /* the sweep is best effort */ }
+}
+
 // ─── Reusable install steps (shared by single-agent and `all`) ──────────────
 function installSkills(dest, skills, shared, root = dest) {
   console.log(`\nInstalling ${skills.length} skill(s) → ${dest}`);
@@ -691,6 +697,7 @@ function installSkills(dest, skills, shared, root = dest) {
     process.exitCode = 1;
     return { installed: 0, failed: skills.length };
   }
+  sweepLeftovers(dest); // 14a LOW-3: a killed earlier install's work folder goes first, so it never reads as a stuck skill
   const manifest = readManifest(dest, root);
   const manifestSkills = manifest ? manifest.skills : null;
   // Trust boundary: the target is the user's dir. Refuse any skill whose target dir
@@ -919,6 +926,7 @@ if (isUninstall) {
   const uninstallRoot = skillsRootFor(targetKey, dest);
   const destWhy = lexists(dest) ? checkRepoDirTarget(dest, uninstallRoot) : null;
   if (destWhy) { console.warn(refuseMsg(dest, destWhy)); process.exitCode = 1; return; } // CWK-137: never rm through a junction
+  if (lexists(dest)) sweepLeftovers(dest); // 14a LOW-3: the same narrow sweep, so an uninstall after a killed install leaves nothing
   const previous = readManifest(dest, uninstallRoot);
   const ownedNames = previous
     ? previous.skills

@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded } from './repo-fs.mjs';
+import { MANIFEST_NAME } from './manifest.mjs';
 
 // The single shared reference every skill ships in references/escalation.md.
 // It holds the on-demand Heavy-tier detail (per-platform levers + durability)
@@ -71,11 +72,140 @@ export function renderSkillMd(skillDir, shared) {
 
 // Materialize one conformed skill dir: aux files copied, SKILL.md rendered.
 // Nested dirs (references/, scripts/) copy recursively — anthropics/skills-style
-// skill bundles must not break the installer. The target skill dir is cleared
-// first so files deleted/renamed in source can't linger at install targets.
+// skill bundles must not break the installer. The target skill dir is replaced
+// whole, so files deleted/renamed in source can't linger at install targets.
+//
+// 14a LOW-3: the folder is never written in place. A kill mid-copy of a FIRST install left a partial skill
+// folder with no skill-meta.json and no manifest, which every later install refused and uninstall left behind
+// (09b INSPECT unit 2). The copy now goes into a WORK folder beside the target, `.<skill>.coalmine-tmp-<pid>`,
+// holding a marker file, the new tree (`new/`) and, during a reinstall, the folder it replaces (`old/`). The new
+// tree is proven complete, the old folder is moved aside, the new one renamed in (both renames stay inside one
+// parent, so never across devices), and the work folder is removed. A kill at any point leaves either the old
+// folder whole or no folder, plus a marked work folder the next install sweeps (sweepInstallLeftovers).
+// A rename that fails (EPERM/EBUSY on Windows: a process holds the folder) puts the old folder back, removes the
+// work folder, and throws; it NEVER falls back to an in-place copy (node/runtime.md section 5).
+const WORK_MARK = '.coalmine-installing';
+const WORK_RE = /^\.(.+)\.coalmine-tmp-(\d+)$/;
+
+const lexists = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
+
+// A work folder is removed only when it is a real directory (never a link) that carries the marker file, or is EMPTY.
+// 15b (INSPECT 14a MEDIUM-1): the folder exists a moment before its marker does, and a kill in that gap left an
+// unmarked folder the marker rule refused to remove (18 of 116 kill points). An empty directory holds nothing to lose and
+// fs.rmdirSync cannot delete content by construction, so it is the one unmarked shape the sweep may take; a folder with
+// any content and no marker stays untouched.
+function removeWork(work) {
+  try {
+    if (!fs.lstatSync(work).isDirectory()) return false;
+    let marked = false;
+    try { marked = fs.lstatSync(path.join(work, WORK_MARK)).isFile(); } catch { /* no marker */ }
+    if (marked) { fs.rmSync(work, { recursive: true, force: true }); return true; }
+    if (fs.readdirSync(work).length === 0) { fs.rmdirSync(work); return true; }
+    return false;
+  } catch { return false; }
+}
+
+// The relative file set a finished skill folder must hold: every source file except SKILL.md (rendered, so it is
+// listed by name), the shared references, and SKILL.md itself when the source has one.
+function expectedFiles(from, shared) {
+  const out = [];
+  const walk = (abs, rel) => {
+    for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+      if (rel === '' && e.name === 'SKILL.md') continue;
+      if (e.isDirectory()) walk(path.join(abs, e.name), rel + e.name + '/');
+      else out.push(rel + e.name);
+    }
+  };
+  walk(from, '');
+  for (const name of Object.keys(shared.sharedReferences ?? {})) out.push('references/' + name);
+  if (fs.existsSync(path.join(from, 'SKILL.md'))) out.push('SKILL.md');
+  return [...new Set(out)].sort();
+}
+function assertComplete(from, fresh, shared) {
+  const want = expectedFiles(from, shared);
+  const have = [];
+  const walk = (abs, rel) => { for (const e of fs.readdirSync(abs, { withFileTypes: true })) { if (e.isDirectory()) walk(path.join(abs, e.name), rel + e.name + '/'); else have.push(rel + e.name); } };
+  walk(fresh, '');
+  have.sort();
+  if (want.length !== have.length || want.some((f, i) => f !== have[i])) {
+    const missing = want.filter((f) => !have.includes(f));
+    throw new Error(`the new skill folder is incomplete (missing: ${missing.slice(0, 5).join(', ') || 'none; extra files present'}); nothing was changed`);
+  }
+}
+
 export function installSkillDir(from, to, shared) {
-  fs.rmSync(to, { recursive: true, force: true });
-  fs.mkdirSync(to, { recursive: true });
+  const work = path.join(path.dirname(to), `.${path.basename(to)}.coalmine-tmp-${process.pid}`);
+  const fresh = path.join(work, 'new');
+  const aside = path.join(work, 'old');
+  // A work folder with this very name is an earlier run's (pid reuse): replace it only if it is provably ours.
+  if (lexists(work) && !removeWork(work)) throw new Error(`${work} exists and is not an installer work folder; nothing was changed`);
+  fs.mkdirSync(work, { recursive: true });
+  fs.writeFileSync(path.join(work, WORK_MARK), String(process.pid), 'utf8');
+  let keep = false;
+  try {
+    fs.mkdirSync(fresh);
+    buildSkillTree(from, fresh, shared);
+    assertComplete(from, fresh, shared);
+    const had = lexists(to);
+    if (had) fs.renameSync(to, aside);
+    try {
+      fs.renameSync(fresh, to);
+    } catch (e) {
+      if (had) {
+        try { fs.renameSync(aside, to); }
+        catch { keep = true; e.message += ` (the previous copy could not be put back and is kept in ${work}${path.sep}old)`; }
+      }
+      throw e;
+    }
+  } finally {
+    if (!keep) removeWork(work);
+  }
+}
+
+// What the next install does with a leftover work folder (a killed installer's): remove it ONLY when it is a real
+// directory (a link named like one is never followed), its realpath is a direct child of the destination's realpath,
+// it carries the installer's marker file, and the pid in its name is not a live process. One marked directory per
+// delete, never a glob or a wider target (AGENTS.md, A DELETE IS NARROW). An alive pid, or a pid we cannot probe,
+// keeps the folder: the other installer may still be writing to it. Returns the names removed.
+export function sweepInstallLeftovers(parent) {
+  const removed = [];
+  let entries;
+  let parentReal;
+  try { entries = fs.readdirSync(parent, { withFileTypes: true }); parentReal = fs.realpathSync.native(parent); } catch { return removed; }
+  for (const e of entries) {
+    // 15b (INSPECT 14a LOW-1, the same pattern): writeRepoFile's temp `<manifest>.coalmine-tmp-<pid>` is a FILE a kill between its
+    // write and its rename leaves behind. Same narrow rule: the installer's exact manifest-temp name, a regular file (a link reads
+    // isSymbolicLink, so never), a dead pid, a realpath directly inside the parent; one unlink per file.
+    const mt = e.isFile() && e.name.startsWith(MANIFEST_NAME + '.coalmine-tmp-') ? e.name.slice((MANIFEST_NAME + '.coalmine-tmp-').length) : null;
+    if (mt !== null) {
+      const mpid = /^\d+$/.test(mt) ? Number(mt) : 0;
+      if (mpid === 0 || mpid === process.pid || pidMayBeAlive(mpid)) continue;
+      const mp = path.join(parent, e.name);
+      try {
+        if (path.dirname(fs.realpathSync.native(mp)) !== parentReal) continue;
+        fs.unlinkSync(mp);
+        removed.push(e.name);
+      } catch { /* unreadable: left alone */ }
+      continue;
+    }
+    const m = WORK_RE.exec(e.name);
+    if (!m || !e.isDirectory()) continue; // a link reads isSymbolicLink, not isDirectory
+    const pid = Number(m[2]);
+    if (pid === process.pid || pidMayBeAlive(pid)) continue;
+    const p = path.join(parent, e.name);
+    try {
+      const real = fs.realpathSync.native(p);
+      if (path.dirname(real) !== parentReal) continue;
+      if (removeWork(p)) removed.push(e.name);
+    } catch { /* unreadable: left alone */ }
+  }
+  return removed;
+}
+function pidMayBeAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return !(e && e.code === 'ESRCH'); }
+}
+
+function buildSkillTree(from, to, shared) {
   for (const f of fs.readdirSync(from, { withFileTypes: true })) {
     if (f.name === 'SKILL.md') continue;
     const src = path.join(from, f.name);

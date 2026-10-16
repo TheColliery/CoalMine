@@ -121,6 +121,34 @@ for (const m of ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json'
   try { JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); pass(m); } catch (e) { fail(`${m} invalid JSON: ${e.message}`); }
 }
 
+// 15b5 CWK2-039 (CWK2-027 gate half): the Claude Code hook manifests are held to the exec form (hooks-safety.md section 3, the vendor's hooks reference):
+// type "command", command exactly "node", the script path in args under ${CLAUDE_PLUGIN_ROOT}/hooks/, no shell string, no `shell`, no `onFailure`.
+// A missing `type` or a `prompt`/`agent`/`http`/`mcp_tool` hook FAILs (a clamp in such a hook is prose in a hook's costume, hooks-safety.md section 9).
+// The Antigravity plugin/hooks.json is a different host and keeps its own block below. Both files are read; the dist twin is also held byte-equal to the source.
+console.log('Claude Code hook manifests (exec form):');
+for (const m of ['hooks/hooks.json', 'plugin/hooks/hooks.json']) {
+  const p = path.join(repo, m);
+  if (!fs.existsSync(p)) { if (m.startsWith('plugin/')) continue; fail(`${m} missing`); continue; }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, ''));
+    let handlers = 0;
+    for (const [event, groups] of Object.entries(cfg.hooks || {})) {
+      for (const g of Array.isArray(groups) ? groups : []) {
+        for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
+          handlers++;
+          const at = `${m} ${event}`;
+          if (h.type !== 'command') fail(`${at}: type is ${JSON.stringify(h.type)} (want "command"; a missing type or a prompt/agent hook is refused)`);
+          else if (h.command !== 'node') fail(`${at}: command is ${JSON.stringify(h.command)} (want exactly "node", the exec form: no shell string)`);
+          else if (!Array.isArray(h.args) || h.args.length !== 1 || typeof h.args[0] !== 'string' || !h.args[0].startsWith('${CLAUDE_PLUGIN_ROOT}/hooks/')) fail(`${at}: args must be ["\${CLAUDE_PLUGIN_ROOT}/hooks/<script>.js"]`);
+          else if ('shell' in h || 'onFailure' in h) fail(`${at}: no "shell" or "onFailure" field (a fail-silent hook is never opted into block)`);
+          else pass(`${at} -> ${h.args[0]}`);
+        }
+      }
+    }
+    if (handlers === 0) fail(`${m}: declares no hook handler`);
+  } catch (e) { fail(`${m} exec-form check failed: ${e.message}`); }
+}
+
 // 2.5 config (if present)
 const configPath = path.join(repo, '.coalmine.json');
 if (fs.existsSync(configPath)) {

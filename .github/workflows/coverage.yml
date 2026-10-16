@@ -58,7 +58,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up Node (skips cleanly until scripts/test.mjs exists)
         if: hashFiles('scripts/test.mjs') != ''
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - name: Run tests with coverage (skips cleanly until scripts/test.mjs exists)
@@ -76,7 +76,7 @@ jobs:
       # skip it too; guarding here avoids spinning the step up at all).
       - name: Upload coverage report
         if: hashFiles('scripts/test.mjs') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: actions/upload-code-coverage@bfa741d815a28cb064a8e3a0837e577457a017d5 # v1.4.3
+        uses: actions/upload-code-coverage@2b21a77928be8d5168c2b9581a67f2adbebacc52 # v1.4.4
         with:
           file: coverage/cobertura.xml
           language: JavaScript

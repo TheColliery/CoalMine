@@ -84,9 +84,9 @@ function killTree(child) {
 
 function runPlanted(dir) {
   return new Promise((resolve) => {
-    const t0 = Date.now();
     // NODE_TEST_CONTEXT is set inside a node --test file child; inherited, the nested runner would behave as a child and run nothing.
-    const env = { ...process.env };
+    // 16e (CR PRRT_kwDOSxeWG86rMDJ9, row 24): HOME, USERPROFILE, TEMP, TMP and TMPDIR point at the planted fixture, never the operator's.
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir, TEMP: dir, TMP: dir, TMPDIR: dir };
     delete env.NODE_TEST_CONTEXT;
     const child = spawn(process.execPath, ['scripts/test.mjs'], { cwd: dir, env, detached: process.platform !== 'win32' });
     let out = '';
@@ -94,7 +94,7 @@ function runPlanted(dir) {
     child.stderr.on('data', (d) => { out += d; });
     let bound = false;
     const timer = setTimeout(() => { bound = true; killTree(child); }, 40000);
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, bound, out, s: (Date.now() - t0) / 1000 }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, bound, out }); });
   });
 }
 
@@ -103,7 +103,7 @@ test('test-spawn (run): a test that awaits forever with a live interval FAILS an
   const r = await runPlanted(dir);
   assert.equal(r.bound, false, 'the run did not end by itself\n' + r.out.slice(-400));
   assert.notEqual(r.code, 0, 'the hung test is a failure, not a pass');
-  assert.ok(r.s < 30, String(r.s));
+  // 16e (CR PRRT_kwDOSxeWG86rMDJ_, row 25): no wall-clock bound here. `r.bound === false` above, under the 40 s timer, already proves the run ended by itself.
 });
 
 test('test-spawn (run): a file that leaks a handle at its top level while its one test passes ENDS the run, green (08b INSPECT M-1, shape R3)', async (t) => {

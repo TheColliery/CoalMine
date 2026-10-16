@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { removeTree } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const words = (s) => s.split(/\s+/).filter(Boolean).length;
@@ -22,7 +23,7 @@ test('the plugin README names every shipped hook, at least three example uses, t
   const md = fs.readFileSync(path.join(repo, 'plugin', 'README.md'), 'utf8');
   const hooks = JSON.parse(fs.readFileSync(path.join(repo, 'hooks', 'hooks.json'), 'utf8'));
   const names = new Set();
-  for (const groups of Object.values(hooks.hooks)) for (const g of groups) for (const h of g.hooks) names.add(/hooks\/([a-z-]+)\.js/.exec(h.command)[1]);
+  for (const groups of Object.values(hooks.hooks)) for (const g of groups) for (const h of g.hooks) names.add(/hooks\/([a-z-]+)\.js/.exec(h.args[0])[1]);
   assert.equal(names.size, 3);
   for (const n of names) assert.ok(md.includes('`' + n + '`'), `names the ${n} hook`);
   const examples = md.split('## Example uses')[1].split('\n## ')[0].split('\n').filter((l) => /^\d+\. /.test(l));
@@ -35,11 +36,11 @@ test('the plugin README names every shipped hook, at least three example uses, t
 
 test('verify.mjs fails a tree whose plugin/README.md is missing, stale, or under 40 words', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-plugin-readme-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeTree(dir));
   const skip = new Set(['.git', 'scratchpad', '.claude', 'node_modules', 'dist-claude-ai']);
   fs.cpSync(repo, dir, { recursive: true, filter: (src) => !skip.has(path.basename(src)) });
   const run = () => spawnSync(process.execPath, [path.join(dir, 'scripts', 'verify.mjs')], {
-    cwd: dir, encoding: 'utf8', timeout: 110000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=2048', TEMP: dir, TMP: dir, TMPDIR: dir },
+    cwd: dir, encoding: 'utf8', timeout: 110000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=2048', HOME: dir, USERPROFILE: dir, TEMP: dir, TMP: dir, TMPDIR: dir },
   });
   assert.equal(run().status, 0, 'control: the copied tree verifies clean');
   const dist = path.join(dir, 'plugin', 'README.md');

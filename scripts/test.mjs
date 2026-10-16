@@ -23,6 +23,11 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // below fails the gate if you forget).
 const TESTS = [
   'scripts/lib/render.test.mjs',
+  // 15b5b: render.test.mjs split at its seams (the 14 tests that spawn the real verify.mjs went to these two) so no file nears node 22's per-file clock.
+  'scripts/lib/verify-wiring.test.mjs',
+  'scripts/lib/verify-pointers.test.mjs',
+  // 16e item 4 (CWK2-041): removeTree, the retrying teardown of a fixture a killed git child can hold (test-sandbox.mjs), proven with a child that holds the tree as its cwd.
+  'scripts/lib/remove-tree.test.mjs',
   'scripts/lib/hooks.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',
@@ -49,6 +54,10 @@ const TESTS = [
   'scripts/lib/r14-fixes.test.mjs',
   'scripts/lib/r14-low.test.mjs',
   'scripts/lib/r14-install.test.mjs',
+  'scripts/lib/install-lowthree.test.mjs',
+  'scripts/lib/hooks-exec-form.test.mjs',
+  'scripts/lib/verify-hooks-manifest.test.mjs',
+  'scripts/lib/folder-pin.test.mjs',
   'scripts/lib/plugin-readme.test.mjs',
   // CWK-202 (09b): the native Antigravity plugin (plugin/plugin.json + plugin/hooks.json), each shipped hook command run from plugin/ with AG's stdin, the Stop adapter, verify's gate over them.
   'scripts/lib/ag-plugin.test.mjs',

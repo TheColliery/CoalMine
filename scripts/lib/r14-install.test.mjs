@@ -12,6 +12,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { gitEnv } from './git-env.mjs';
+import { removeTree } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INSTALL = path.join(repo, 'scripts', 'install.mjs');
@@ -19,7 +20,7 @@ const fwd = (p) => p.split(path.sep).join('/');
 
 function fixture(t) {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r14-ih-'));
-  t.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
+  t.after(() => removeTree(sandbox));
   const proj = path.join(sandbox, 'proj');
   fs.mkdirSync(proj);
   const git = (args, cwd = proj) => spawnSync('git', args, { cwd, env: gitEnv(path.dirname(cwd)), encoding: 'utf8', timeout: 30000 });
@@ -70,7 +71,7 @@ test('the real global config is recognised as the global file under a sandboxed 
   const real = path.join(os.userInfo().homedir, '.claude', '.coalmine.json');
   if (!fs.existsSync(real)) { t.skip('this machine has no ~/.claude/.coalmine.json to recognise'); return; }
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r14-home-'));
-  t.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
+  t.after(() => removeTree(sandbox));
   const probe = 'import { isGlobalCfgFile } from ' + JSON.stringify(new URL('./config-paths.mjs', import.meta.url).href) + ';' +
     'process.stdout.write(String(isGlobalCfgFile(' + JSON.stringify(real) + ')));';
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
