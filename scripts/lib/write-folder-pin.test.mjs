@@ -52,6 +52,9 @@ test('a .claude junction to a folder OUTSIDE the project is still refused, and n
   link(outside, path.join(proj, '.claude'));
   assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), refused);
   assert.deepEqual(names(outside), [], 'no folder appeared outside the project');
+  // the ancestor-resolves-outside reason (checkRepoDirTarget's realpath branch) is a folder refusal too and carries the folder instruction (17a CI red 2)
+  folderText(checkRepoDirTarget(path.dirname(path.join(proj, CFG)), proj));
+  folderText(checkRepoWriteTarget(path.join(proj, CFG), proj));
 });
 
 test('a junction at .claude/coal (the folder, not its parent) is refused and nothing is made behind it', (t) => {
@@ -163,6 +166,7 @@ test('POSIX symlink at .claude (in-project and outside targets) is refused like 
   fs.symlinkSync(outside, path.join(proj, '.claude'), 'dir');
   assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), refused);
   assert.deepEqual(names(outside), []);
+  folderText(checkRepoWriteTarget(path.join(proj, CFG), proj)); // the outside-target symlink reaches the ancestor-resolves-outside reason
 });
 test('a symlink to a FILE at .claude is refused (no folder can be made behind it)', (t) => {
   const { proj, base } = fixture(t);

@@ -190,10 +190,12 @@ export function checkRepoDirTarget(dir, root) {
   let rootReal;
   try { rootReal = fs.realpathSync.native(root); } catch { return `the root ${root} does not resolve`; }
   const anc = nearestExistingAncestor(path.resolve(dir));
-  if (anc === null) return `no existing directory above ${dir}`;
+  // Every reason below judges a FOLDER on the way to the target, so each carries the folder instruction (17a CI red 2: the ancestor-outside reason did not,
+  // and a linked folder or file at .claude was told nothing). The root's own failure, and the file-level reasons in checkRepoWriteTarget, keep their own text.
+  if (anc === null) return `no existing directory above ${dir} -- ${FOLDER_FIX}`;
   let ancReal;
-  try { ancReal = fs.realpathSync.native(anc); } catch { return `${anc} is a link that does not resolve`; }
-  if (!isContained(ancReal, rootReal)) return `${anc} resolves to ${ancReal}, outside ${rootReal}`;
+  try { ancReal = fs.realpathSync.native(anc); } catch { return `${anc} is a link that does not resolve -- ${FOLDER_FIX}`; }
+  if (!isContained(ancReal, rootReal)) return `${anc} resolves to ${ancReal}, outside ${rootReal} -- ${FOLDER_FIX}`;
   return folderChainWhy(path.resolve(dir), path.resolve(root)); // 17a: a link anywhere under the root is refused, in-project included
 }
 
