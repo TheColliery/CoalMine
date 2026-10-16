@@ -2,6 +2,19 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+A project write refuses a link at any parent folder
+
+A project write (the config, the installer's files) now refuses a link at any folder between the project root and the file. Nothing in `plugin/` moved.
+
+### Security
+- **A project write refuses a link at any folder between the project root and the file, wherever it points.** Before: a write through an in-project link (an in-project `.claude` junction or symlink) was made while the hooks refused to read the same file (the 3.23.3 read pin); a link that led outside the project was already refused. Now `writeRepoFile` and the pre-checks every caller runs (`configure.mjs`, `install.mjs`: rules files, git hooks, the skills folder, the manifest, uninstall) refuse a link at any component, an in-project target included, and make missing folders one at a time, checking each. A user whose own `.claude`, `.github` or `.agents` is an in-project link (a dotfile manager's) is refused where they install, the same rule the reads already apply; `configure.mjs --global` (no project root) is unchanged. Not covered: the check-then-make race. The walk and the later write are separate steps, so a local process that swaps a folder for a link between the last check and the write can still land the file outside the project. — test: `scripts/lib/write-folder-pin.test.mjs`
+
+### Changed
+- **Internal —** the canon re-copy round (UMB3-038), by blob id, from the org canon overlay: `scripts/lib/wave-run.mjs` `b60827c6`, `scripts/lib/wave-run.test.mjs` `bccbaa58`, `scripts/lib/release-prune.mjs` `7f33a695`, `scripts/lib/release-prune.test.mjs` `96a4cceb`, `scripts/lib/asset-upload-mode.mjs` `0022e6fa`, `scripts/lib/asset-upload-mode.test.mjs` `573349d2`, `scripts/verify-release-shape.mjs` `270e43d1`, `scripts/verify-release-shape.test.mjs` `7c2b35c4` and `scripts/release-notes.test.mjs` `f9dde432`; the `github/codeql-action` pin in `codeql.yml` and `scorecard.yml` moved to `24c54180a607b1449ed407dd24f251e4e9147c8d` (v4); `scorecard.yml`'s `paths-ignore` gains `NOTICE`; `claude-ai-zips.yml` takes the canon's `package-manager-cache: false` on `setup-node`. These ship nothing in `plugin/`.
+- **`NOTICE` follows the canon wording** (BB-185): name, copyright line, the series URL and the licence; the room's own Origin line and attribution sentence are gone.
+
 ## [3.23.4] - 2026-10-17
 
 A project config can no longer turn on automatic fixes
