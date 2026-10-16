@@ -1,0 +1,20 @@
+{
+  "_comment": "Merge this into ~/.claude/settings.json under \"hooks\". Replace <HOME> with your home path (e.g. C:\\Users\\you). Keep any hooks you already have. Place the two .ps1 files at <HOME>\\.claude\\hooks\\ (or edit the paths). Restart the session afterward.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"<HOME>\\.claude\\hooks\\rot-canary-touch.ps1\"" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"<HOME>\\.claude\\hooks\\rot-canary-stop.ps1\"" }
+        ]
+      }
+    ]
+  }
+}

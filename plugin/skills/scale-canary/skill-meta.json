@@ -1,0 +1,1 @@
+{ "lightIntent": "Spot performance check, hot paths only", "standardIntent": "Balanced scalability audit, multi-category", "heavyIntent": "Full 5-category audit + adversarial profiling verify" }

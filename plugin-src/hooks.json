@@ -1,0 +1,18 @@
+{
+  "coalmine": {
+    "PreInvocation": [
+      { "type": "command", "command": "node hooks/coalmine-conductor.js PreInvocation", "timeout": 10 }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|write_file|replace_file_content|multi_replace_file_content|replace|edit_file|edit|multi_edit|code_action|file_change",
+        "hooks": [
+          { "type": "command", "command": "node hooks/rot-canary-touch.js PostToolUse", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      { "type": "command", "command": "node hooks/rot-canary-stop.js Stop", "timeout": 10 }
+    ]
+  }
+}

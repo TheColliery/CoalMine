@@ -1,0 +1,21 @@
+{
+  "$comment": "Gemini CLI: business-tier product (individual/AI-Pro/Ultra tiers ended 2026-06-18 -> migrated to Antigravity CLI); it ships its own official lifecycle hooks (11 events - github.com/google-gemini/gemini-cli docs/hooks) incl. a genuine per-session SessionStart, so conductor + touch + stop are all wireable. Merge the 'hooks' key into .gemini/settings.json (project) or ~/.gemini/settings.json (user); system/extension layers also load. SessionStart invokes the conductor with the trailing event-name argument 'SessionStart' — a discriminator distinct from Antigravity's 'PreInvocation', so the conductor emits Gemini's OWN nested {\"hookSpecificOutput\":{\"additionalContext\":...}} shape (per geminicli.com/docs/hooks/reference, verified 2026-07-15: SessionStart injects context ONLY via that nested field, ignoring continue/decision at startup — AG's {\"injectSteps\":...} shape would be silently dropped here). Unlike AG (which never fires SessionStart and instead guards PreInvocation once-per-session), Gemini's SessionStart genuinely fires once per session, so it needs no marker workaround; fire as-is. AfterTool records edits (silent, verified). AfterAgent (the per-turn Stop parallel) nudges the scan — invoked with NO trailing argument, so it gets the plain Claude-Code {\"decision\":\"block\",\"reason\"} shape, which AfterAgent's documented reject+retry protocol accepts as-is (verified 2026-07-15; keep AfterAgent argument-free — do not add 'AfterAgent' as a trailing arg here). Adjust C:/path/to/CoalMine to your clone path. Wiring is UNVALIDATED end-to-end — no live Gemini session has run it yet.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" SessionStart" }]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"" }]
+      }
+    ]
+  }
+}

@@ -1,0 +1,1236 @@
+// CoalMine installer integration tests — node:test built-in, zero dependencies.
+// Run: node --test scripts/lib/install.test.mjs
+// Covers the manifest-driven clean version transition: renamed/removed skills
+// from a previous install never linger, foreign skills are never touched.
+//
+// r34 ITEM 2, THE RULE (rewritten at findings-back per INSPECT MEDIUM-1/LOW-1): an
+// installer test in this file NEVER runs against the operator's real HOME. Every
+// sandboxed spawn -- `runInstall` AND its own harness-proof probe below -- goes
+// through the ONE shared `spawnSandboxed` helper (scripts/lib/test-sandbox.mjs), so a
+// regression in that helper is a regression the probe can see; the pre-fix shape had
+// each build a separate env literal, so the probe proved only itself. `sandboxDir` is
+// EXPLICIT and separate from `cwd` on every call, defaulting to `cwd` -- a test whose
+// SUBJECT is "what happens when cwd is the live repo" (the self-pollution guard,
+// below) passes cwd=repo but a SEPARATE throwaway sandboxDir, so HOME/TEMP still never
+// resolve into the live tree even though cwd deliberately does. A manual probe of the
+// installer (outside this file, by hand) follows the same shape: an explicit fixture
+// target and an explicit, separate sandbox dir, never the bare 'claude' keyword
+// against a real machine and never cwd doing double duty as the sandbox -- the
+// r31/r33/r34 hazard this rule exists to make structural rather than remembered.
+//
+// round 2, LOW-C: a probe against `spawnSandboxed` proves the HELPER; it cannot see
+// `runInstall`'s own wiring to it regress. Two tests below drive the proof through
+// `runInstall` itself instead, via a `--require` preload that reports the real
+// installer CHILD's os.homedir()/os.tmpdir() (`writeHomeReporter`/`withHomeReporter`,
+// scripts/lib/test-sandbox.mjs) -- one generic wrapper-level probe, and the
+// self-pollution test's own reporter check covering the LOW-1 call site specifically.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { detectPresentAgents } from './targets.mjs';
+import { listSkills } from './render.mjs';
+import { gitEnv } from './git-env.mjs';
+import { spawnSandboxed, writeHomeReporter, withHomeReporter, removeTree } from './test-sandbox.mjs';
+import { hashFile } from './manifest.mjs';
+
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const INSTALL = path.join(repo, 'scripts', 'install.mjs');
+const MANIFEST = '.coalmine-manifest.json';
+// CWK-120 row 25: install.mjs itself enumerates skills/ with listSkills() and writes
+// that dynamic list to the manifest -- a bare `9` here is a SECOND, independent
+// enumeration that drifts the moment a canary is added or removed. Derived once,
+// shared by every assertion below that counts the manifest's skills.
+const SKILL_COUNT = listSkills(path.join(repo, 'skills')).length;
+
+// `targets.mjs`'s `TARGETS.claude = path.join(os.homedir(), '.claude', 'skills')` is a
+// module-level constant evaluated at IMPORT time INSIDE the spawned child, reading
+// whatever HOME/USERPROFILE that child inherits -- one regression in `all`'s
+// ALL_EXCLUDE, or one new test naming 'claude', writes into the real home with no
+// signal unless the child's env is sandboxed regardless of what target it resolves.
+// `sandboxDir` defaults to `cwd` for every ordinary call (the common case: the fixture
+// IS the sandbox); pass it separately only when cwd must be something else (r34 LOW-1).
+function runInstall(target, cwd, extra = [], sandboxDir = cwd) {
+  return spawnSandboxed(process.execPath, [INSTALL, ...extra, target], { cwd, sandboxDir });
+}
+
+// r34 ITEM 2 + findings-back MEDIUM-1 -- proves the SHARED HELPER, not a parallel
+// literal: spawns a plain node one-liner through `spawnSandboxed` itself (the exact
+// function `runInstall` calls), and asserts the CHILD's own os.homedir()/os.tmpdir()
+// resolve inside the sandbox. Deliberately does not spawn `install.mjs` here -- a red
+// proof for this property must never risk writing the real home to demonstrate the
+// bug; a bare `os` probe writes nothing anywhere, pass or fail. Re-proven red-first by
+// deleting the `env:` line from `spawnSandboxed` in `test-sandbox.mjs` itself (never
+// from a copy inside this test), in a `git clone` of the committed tree with the
+// working-tree edit overlaid on top: this test goes from 17/17 to 16/17, red at
+// exactly `os.homedir() must resolve inside the fixture` -- restore the line to return
+// to green. This proves the HELPER; it does NOT prove `runInstall`'s own use of it --
+// see the wrapper-level probe below (round 2, LOW-C) for that half.
+test('the shared sandbox helper resolves os.homedir() and os.tmpdir() inside the fixture, never the real machine', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-sandbox-probe-'));
+  try {
+    const probe = spawnSandboxed(
+      process.execPath,
+      ['-e', 'console.log(JSON.stringify({home: require("node:os").homedir(), tmp: require("node:os").tmpdir()}))'],
+      { cwd: tmp, sandboxDir: tmp },
+    );
+    assert.equal(probe.status, 0, probe.stderr);
+    const reported = JSON.parse(probe.stdout);
+    assert.equal(reported.home, tmp, 'os.homedir() must resolve inside the fixture, never the operator\'s real home');
+    assert.equal(reported.tmp, tmp, 'os.tmpdir() must resolve inside the fixture, never the operator\'s real temp dir');
+  } finally { removeTree(tmp); }
+});
+
+// r34 findings-back round 2 (LOW-C): the probe above proves `spawnSandboxed`; it
+// cannot see a regression in `runInstall`'s OWN wiring to that helper (INSPECT
+// Mutation B: reverting `runInstall`'s body to a raw `spawnSync` with no env left
+// this whole file 17/17 green, because nothing here spawns `install.mjs` through the
+// wrapper and checks what the CHILD resolves). This test drives the proof through
+// `runInstall` itself, the exact call every other test in this file makes -- a
+// `--require` preload reports the real INSTALLER child's os.homedir()/os.tmpdir()
+// before install.mjs runs a line of its own code, writing only to stderr.
+test('runInstall wires the sandbox through to the CHILD it actually spawns -- proof rides the wrapper, not spawnSandboxed directly', () => {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-wrapprobe-sb-'));
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-wrapprobe-tg-'));
+  try {
+    const reporter = writeHomeReporter(sandbox);
+    const r = withHomeReporter(reporter, () => runInstall(target, target, [], sandbox));
+    assert.equal(r.status, 0, `install must pass:\n${r.stdout}${r.stderr}`);
+    const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
+    assert.equal(reported.home, sandbox, 'the real installer CHILD must resolve os.homedir() inside the sandbox `runInstall` was given');
+    assert.equal(reported.tmp, sandbox, 'the real installer CHILD must resolve os.tmpdir() inside the same sandbox');
+  } finally {
+    removeTree(sandbox);
+    removeTree(target);
+  }
+});
+
+// r34 findings-back round 3 (LOW-D): RE-INSPECT measured that `withHomeReporter`'s
+// NODE_OPTIONS build broke under a reporter path containing a space -- exactly what a
+// Windows account name with a space in it (e.g. "C:\Users\John Smith\...") produces in
+// `os.tmpdir()` for every fixture in this file. This test pins the fix directly against
+// that shape: a spaced mkdtemp, no install.mjs involved, no fixture outside
+// os.tmpdir(). Goes red on the pre-fix `withHomeReporter` at exactly the assertion the
+// reviewer's own measurement named (`MODULE_NOT_FOUND` -> non-zero status).
+test('withHomeReporter works when its reporter path contains a space (a real Windows account name)', () => {
+  const spaced = fs.mkdtempSync(path.join(os.tmpdir(), 'cm lowd spaced '));
+  try {
+    const reporter = writeHomeReporter(spaced);
+    const r = withHomeReporter(reporter, () =>
+      spawnSandboxed(process.execPath, ['-e', 'console.log("ok")'], { cwd: spaced, sandboxDir: spaced }),
+    );
+    assert.equal(r.status, 0, `child must start despite the space in its reporter's path:\n${r.stdout}${r.stderr}`);
+    const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
+    assert.equal(reported.home, spaced, 'the reporter must still resolve os.homedir() inside the (spaced) sandbox');
+    assert.equal(reported.tmp, spaced, 'the reporter must still resolve os.tmpdir() inside the (spaced) sandbox');
+  } finally {
+    removeTree(spaced);
+  }
+});
+
+test('manifest-driven reinstall removes renamed leftovers, spares foreign skills', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-install-'));
+  const target = path.join(tmp, 'skills');
+  try {
+    // 1. Fresh install → 9 skills + manifest listing them.
+    const first = runInstall(target, tmp);
+    assert.equal(first.status, 0, `first install must pass:\n${first.stdout}${first.stderr}`);
+    const manifest1 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.equal(manifest1.skills.length, SKILL_COUNT, `manifest records all ${SKILL_COUNT} skills`);
+    assert.ok(manifest1.version, 'manifest records the version');
+
+    // 2. Simulate a pre-rename install: plant a legacy skill dir and list it
+    //    in the manifest, plus a foreign skill CoalMine never installed.
+    fs.mkdirSync(path.join(target, 'old-renamed-skill'));
+    fs.writeFileSync(path.join(target, 'old-renamed-skill', 'SKILL.md'), 'legacy', 'utf8');
+    fs.mkdirSync(path.join(target, 'foreign-skill'));
+    fs.writeFileSync(path.join(target, 'foreign-skill', 'SKILL.md'), 'not ours', 'utf8');
+    manifest1.skills.push('old-renamed-skill');
+    // A genuine leftover of a previous install carries its recorded hashes (CWK-158 item 7: an orphan
+    // is removed only when its contents are provably what the manifest wrote).
+    manifest1.hashes['old-renamed-skill/SKILL.md'] = hashFile(path.join(target, 'old-renamed-skill', 'SKILL.md'));
+    fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(manifest1), 'utf8');
+
+    // 3. Reinstall → legacy dir cleaned via manifest, foreign dir untouched.
+    const second = runInstall(target, tmp);
+    assert.equal(second.status, 0, `reinstall must pass:\n${second.stdout}${second.stderr}`);
+    assert.ok(!fs.existsSync(path.join(target, 'old-renamed-skill')), 'manifest-listed legacy skill removed');
+    assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill must never be touched');
+    const manifest2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.equal(manifest2.skills.length, SKILL_COUNT, 'new manifest lists only the current set');
+    assert.ok(!manifest2.skills.includes('old-renamed-skill'), 'legacy name gone from manifest');
+
+    // 4. Uninstall → manifest-listed skills + manifest gone, foreign survives.
+    const un = runInstall(target, tmp, ['--uninstall']);
+    assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
+    assert.ok(!fs.existsSync(path.join(target, 'rot-canary')), 'installed skill removed on uninstall');
+    assert.ok(!fs.existsSync(path.join(target, MANIFEST)), 'manifest removed on uninstall');
+    assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill survives uninstall');
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+test('retired skill names are swept even without a manifest (rotcanary -> rot-canary)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-retired-'));
+  const target = path.join(tmp, 'skills');
+  try {
+    // A very old install: the pre-rename `rotcanary` dir is present but is in
+    // NEITHER a manifest (none here) NOR the current skill set, plus a foreign skill.
+    fs.mkdirSync(path.join(target, 'rotcanary'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'rotcanary', 'SKILL.md'), 'name: rotcanary', 'utf8');
+    fs.mkdirSync(path.join(target, 'foreign-skill'));
+    fs.writeFileSync(path.join(target, 'foreign-skill', 'SKILL.md'), 'not ours', 'utf8');
+
+    const res = runInstall(target, tmp);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    assert.ok(!fs.existsSync(path.join(target, 'rotcanary')), 'retired rotcanary removed without a manifest');
+    assert.ok(fs.existsSync(path.join(target, 'rot-canary', 'SKILL.md')), 'current rot-canary installed');
+    assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill never touched');
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+test('H12: install into a dir with a FOREIGN colliding skill dir preserves the user data (never delete-then-write what we do not own)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-h12-'));
+  const target = path.join(tmp, 'skills');
+  const precious = path.join(target, 'gold-standard', 'precious.txt');
+  try {
+    // No manifest. A foreign dir shares a CoalMine skill's NAME but holds the user's
+    // own file — a blind delete-then-write would destroy it (the H12 root cause).
+    fs.mkdirSync(path.join(target, 'gold-standard'), { recursive: true });
+    fs.writeFileSync(precious, 'IRREPLACEABLE', 'utf8');
+
+    const res = runInstall(target, tmp);
+    assert.notEqual(res.status, 0, 'must fail loud (non-zero) when it refuses a foreign collision');
+    assert.match(res.stdout + res.stderr, /refused/i, 'the refusal is reported');
+    assert.ok(fs.existsSync(precious), 'foreign user data must survive');
+    assert.equal(fs.readFileSync(precious, 'utf8'), 'IRREPLACEABLE', 'foreign data is left byte-untouched');
+    assert.ok(!fs.existsSync(path.join(target, 'gold-standard', 'SKILL.md')), 'the refused skill is NOT written over the foreign dir');
+    // Only the collision is skipped — the non-colliding skills still install.
+    assert.ok(fs.existsSync(path.join(target, 'rot-canary', 'SKILL.md')), 'other skills still install');
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+test('H12: uninstall (no manifest) leaves a FOREIGN colliding dir in place', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-h12un-'));
+  const target = path.join(tmp, 'skills');
+  const precious = path.join(target, 'gold-standard', 'precious.txt');
+  try {
+    fs.mkdirSync(path.join(target, 'gold-standard'), { recursive: true });
+    fs.writeFileSync(precious, 'IRREPLACEABLE', 'utf8');
+
+    const res = runInstall(target, tmp, ['--uninstall']);
+    assert.equal(res.status, 0, `uninstall must pass:\n${res.stdout}${res.stderr}`);
+    assert.ok(fs.existsSync(precious), 'foreign user data must survive an uninstall too');
+    assert.equal(fs.readFileSync(precious, 'utf8'), 'IRREPLACEABLE');
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+test('a colliding dir carrying our own skill-meta.json marker IS replaced (pre-manifest upgrade — the guard is not locked tight)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-premanifest-'));
+  const target = path.join(tmp, 'skills');
+  try {
+    // A pre-manifest CoalMine install: no manifest, but the dir carries OUR marker
+    // (skill-meta.json) — so it is owned and must upgrade cleanly, not be refused.
+    fs.mkdirSync(path.join(target, 'gold-standard'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'gold-standard', 'skill-meta.json'), '{}', 'utf8');
+    fs.writeFileSync(path.join(target, 'gold-standard', 'stale.txt'), 'old', 'utf8');
+
+    const res = runInstall(target, tmp);
+    assert.equal(res.status, 0, `owned dir must upgrade cleanly:\n${res.stdout}${res.stderr}`);
+    assert.ok(fs.existsSync(path.join(target, 'gold-standard', 'SKILL.md')), 'the owned skill is (re)installed');
+    assert.ok(!fs.existsSync(path.join(target, 'gold-standard', 'stale.txt')), 'a stale file from the old owned install is cleared');
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+test('corrupt manifest entries can never escape the target directory', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-escape-'));
+  const target = path.join(tmp, 'skills');
+  const sentinel = path.join(tmp, 'sentinel-dir');
+  try {
+    const first = runInstall(target, tmp);
+    assert.equal(first.status, 0);
+
+    // Sibling dir OUTSIDE the target — a '..' entry would wipe it (and the target).
+    fs.mkdirSync(sentinel);
+    fs.writeFileSync(path.join(sentinel, 'keep.txt'), 'must survive', 'utf8');
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    manifest.skills = ['..', '.', '../sentinel-dir', tmp, '.coalmine-manifest.json', 'rot-canary'];
+    fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(manifest), 'utf8');
+
+    const second = runInstall(target, tmp);
+    assert.equal(second.status, 0, `reinstall with corrupt manifest must still pass:\n${second.stdout}${second.stderr}`);
+    assert.ok(fs.existsSync(path.join(sentinel, 'keep.txt')), 'escape via .. must be impossible');
+    assert.ok(fs.existsSync(path.join(target, 'rot-canary', 'SKILL.md')), 'valid entries still install');
+    const after = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.equal(after.skills.length, SKILL_COUNT, 'manifest rebuilt with the clean current set');
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+test('installer run from the CoalMine source repo does NOT drop a project config anywhere (self-pollution guard)', () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-selfpol-'));
+  // r34 findings-back round 2, NOTE-3: sandboxDir is its OWN mkdtemp, separate from
+  // `target` -- the installer's child TEMP/HOME must not double as the very directory
+  // it is installing skills into (a future stray temp write there would sit exactly
+  // where cleanPreviousInstall/manifest logic looks, unmeasured today but decoupled
+  // for free by giving it a different fixture).
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-selfpol-sb-'));
+  const rootCfg = path.join(repo, '.coalmine.json');
+  // The new-shape default write target (namespace campaign #69+#39,
+  // owner-designated 2026-08-08) — snapshotted too, so a regression that
+  // resurrects the self-pollution one level deeper is still caught.
+  const newCfg = path.join(repo, '.claude', 'coal', 'coalmine.json');
+  // The full installer also rewrites the git hooks from the source copies — into
+  // .githooks/ when this clone sets core.hooksPath, else .git/hooks/. Snapshot BOTH
+  // configs and the hooks so the test leaves the real repo byte-identical either way.
+  const snap = (p) => (fs.existsSync(p) ? fs.readFileSync(p) : null);
+  const restore = (p, buf) => { if (buf === null) { try { fs.rmSync(p, { force: true }); } catch {} } else fs.writeFileSync(p, buf); };
+  const cfgBefore = snap(rootCfg);
+  const newCfgBefore = snap(newCfg);
+  const hookPaths = ['pre-commit', 'pre-push'].flatMap((h) => [
+    path.join(repo, '.githooks', h),
+    path.join(repo, '.git', 'hooks', h),
+  ]);
+  const hooksBefore = hookPaths.map(snap);
+  try {
+    // cwd === repo → copyDefaultConfig must skip the write entirely. r34 LOW-1: cwd
+    // MUST be the live repo for this test's own subject, so the sandbox dir is passed
+    // SEPARATELY (`sandbox`, its own throwaway fixture -- round 2 NOTE-3, no longer
+    // `target`) -- HOME/TEMP resolve there, never into the live tree, even though cwd
+    // deliberately does not.
+    //
+    // round 2, LOW-C Mutation D: reverting to `runInstall(target, repo)` (no explicit
+    // sandboxDir) makes `sandboxDir` default back to `cwd` = `repo`, and the reporter
+    // below then reports `home === repo` -- this is what makes that regression FAIL
+    // rather than pass silently, the way it did before this test carried a reporter.
+    const reporter = writeHomeReporter(sandbox);
+    const r = withHomeReporter(reporter, () => runInstall(target, repo, [], sandbox));
+    assert.equal(r.status, 0, `install from source repo must pass:\n${r.stdout}${r.stderr}`);
+    if (cfgBefore === null) {
+      assert.ok(!fs.existsSync(rootCfg), 'no .coalmine.json may be created at the source repo root');
+    }
+    if (newCfgBefore === null) {
+      assert.ok(!fs.existsSync(newCfg), 'no config may be created at the new own-dir home either');
+    }
+    assert.match(r.stdout, /self-pollution|source repo/i, 'the skip is reported');
+    const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
+    assert.equal(reported.home, sandbox, 'the installer child\'s HOME must be the throwaway sandbox, never the live repo');
+    assert.notEqual(reported.home, repo, 'the installer child must never resolve os.homedir() to the source repo it is running from');
+  } finally {
+    // Leave the real repo exactly as found (both config homes + git hooks).
+    restore(rootCfg, cfgBefore);
+    restore(newCfg, newCfgBefore);
+    hookPaths.forEach((p, i) => restore(p, hooksBefore[i]));
+    removeTree(target);
+    removeTree(sandbox);
+  }
+});
+
+test('installer run from a real project (cwd ≠ source repo) creates the default config at the NEW own-dir home, never the legacy root', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-realproj-'));
+  fs.mkdirSync(path.join(proj, '.git')); // a real project repo
+  const target = path.join(proj, 'skills');
+  try {
+    const r = runInstall(target, proj);
+    assert.equal(r.status, 0, `install into a real project must pass:\n${r.stdout}${r.stderr}`);
+    assert.ok(fs.existsSync(path.join(proj, '.claude', 'coal', 'coalmine.json')), 'a real project still gets its default config (guard must not over-trigger) — at the new own-dir home');
+    assert.ok(!fs.existsSync(path.join(proj, '.coalmine.json')), 'a fresh install must not perpetuate the legacy root shape');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('installer run from a real project that ALREADY has a legacy .coalmine.json leaves it alone (existing users are not force-migrated by install)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-realproj-legacy-'));
+  fs.mkdirSync(path.join(proj, '.git'));
+  fs.writeFileSync(path.join(proj, '.coalmine.json'), JSON.stringify({ language: 'th' }), 'utf8');
+  const target = path.join(proj, 'skills');
+  try {
+    const r = runInstall(target, proj);
+    assert.equal(r.status, 0, `install into a real project must pass:\n${r.stdout}${r.stderr}`);
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(proj, '.coalmine.json'), 'utf8')).language, 'th', 'the existing legacy config is left untouched by install (only configure.mjs migrates on write)');
+    assert.ok(!fs.existsSync(path.join(proj, '.claude', 'coal', 'coalmine.json')), 'no NEW default is created when one already exists anywhere in the read order');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('installer run from a real project that already has a .gemini/ dir (no .claude) creates the default config UNDER .gemini, never a foreign .claude (INSPECT MEDIUM 2, 2026-08-08)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-realproj-gemini-'));
+  fs.mkdirSync(path.join(proj, '.git'));
+  fs.mkdirSync(path.join(proj, '.gemini')); // the project already uses Gemini CLI, never Claude Code
+  const target = path.join(proj, 'skills');
+  try {
+    const r = runInstall(target, proj);
+    assert.equal(r.status, 0, `install into a real project must pass:\n${r.stdout}${r.stderr}`);
+    assert.ok(fs.existsSync(path.join(proj, '.gemini', 'coal', 'coalmine.json')), 'the default config nests under the agent dir the project ALREADY has');
+    assert.ok(!fs.existsSync(path.join(proj, '.claude')), 'no foreign .claude/ is planted into a project that never used Claude Code');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// A CoalMine hook as it shipped BEFORE v2.4.0 added the `# Generated by CoalMine`
+// line — the shape that made the ownership check file our own hook as the user's.
+const LEGACY_OWN_HOOK = '#!/bin/sh\n# CoalMine pre-commit hook (Unix)\n# Exit on failure to prevent commit\nexit 0\n';
+const FOREIGN_HOOK = '#!/bin/sh\n# my own gate\nexit 0\n';
+
+// A real repo is required: `git config --get` refuses to read local config from a
+// hand-made `.git` dir (probed), so the fake-.git idiom used elsewhere cannot set
+// core.hooksPath. Capability-probed, never keyed on process.platform.
+function gitAvailable() {
+  const r = spawnSync('git', ['--version'], { encoding: 'utf8', env: gitEnv(os.tmpdir()) });
+  return r.status === 0;
+}
+
+test('git hooks are installed where git will ACTUALLY read them (core.hooksPath honored)', (t) => {
+  if (!gitAvailable()) { t.skip('git binary not available'); return; }
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-hp-plain-'));
+  const moved = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-hp-moved-'));
+  try {
+    // Control: no core.hooksPath → the historical <gitDir>/hooks location.
+    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: plain, env: gitEnv(path.dirname(plain)) }).status, 0);
+    const a = runInstall(path.join(plain, 'skills'), plain);
+    assert.equal(a.status, 0, `install must pass:\n${a.stdout}${a.stderr}`);
+    assert.ok(fs.existsSync(path.join(plain, '.git', 'hooks', 'pre-commit')), 'fallback location still used when core.hooksPath is unset');
+
+    // core.hooksPath set (husky/lefthook/our own .githooks/): git reads ONLY there,
+    // so a hook written to .git/hooks is an inert gate under a success message.
+    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: moved, env: gitEnv(path.dirname(moved)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: moved, env: gitEnv(path.dirname(moved)) }).status, 0);
+    const b = runInstall(path.join(moved, 'skills'), moved);
+    assert.equal(b.status, 0, `install must pass:\n${b.stdout}${b.stderr}`);
+    assert.ok(fs.existsSync(path.join(moved, '.githooks', 'pre-commit')), 'hook lands in the configured core.hooksPath dir');
+    assert.ok(fs.existsSync(path.join(moved, '.githooks', 'pre-push')), 'both hooks land there');
+    assert.ok(!fs.existsSync(path.join(moved, '.git', 'hooks', 'pre-commit')), 'nothing is written to the dir git ignores');
+
+    // Uninstall reads the same resolution, so it can find what it installed.
+    const un = runInstall(path.join(moved, 'skills'), moved, ['--uninstall']);
+    assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
+    assert.ok(!fs.existsSync(path.join(moved, '.githooks', 'pre-commit')), 'uninstall removes the hook from the configured dir');
+  } finally {
+    removeTree(plain);
+    removeTree(moved);
+  }
+});
+
+test('a pre-v2.4.0 CoalMine hook is recognised as OURS — never backed up as the user\'s, never restored', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-legacy-'));
+  const hookPath = path.join(proj, '.git', 'hooks', 'pre-commit');
+  try {
+    fs.mkdirSync(path.join(proj, '.git', 'hooks'), { recursive: true });
+    fs.writeFileSync(hookPath, LEGACY_OWN_HOOK, 'utf8');
+
+    const res = runInstall(path.join(proj, 'skills'), proj);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    assert.ok(!fs.existsSync(hookPath + '.pre-coalmine'), 'our own older hook is upgraded in place, not filed as the user\'s');
+    assert.match(fs.readFileSync(hookPath, 'utf8'), /Generated by CoalMine/, 'the current (generic) hook replaced it');
+
+    const un = runInstall(path.join(proj, 'skills'), proj, ['--uninstall']);
+    assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
+    assert.ok(!fs.existsSync(hookPath), 'uninstall removes our hook');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('a genuinely foreign hook is still backed up and restored (the ownership check is not over-tightened)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-foreign-'));
+  const hookPath = path.join(proj, '.git', 'hooks', 'pre-commit');
+  try {
+    fs.mkdirSync(path.join(proj, '.git', 'hooks'), { recursive: true });
+    fs.writeFileSync(hookPath, FOREIGN_HOOK, 'utf8');
+
+    const res = runInstall(path.join(proj, 'skills'), proj);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    assert.equal(fs.readFileSync(hookPath + '.pre-coalmine', 'utf8'), FOREIGN_HOOK, 'the user\'s hook is backed up byte-exact');
+
+    // Backup slot occupied by a DIFFERENT foreign hook → refuse, never destroy it.
+    fs.writeFileSync(hookPath, '#!/bin/sh\n# a second gate\nexit 0\n', 'utf8');
+    const again = runInstall(path.join(proj, 'skills'), proj);
+    assert.notEqual(again.status, 0, 'must fail loud rather than clobber an un-backed-up foreign hook');
+    assert.match(again.stdout + again.stderr, /refused to overwrite pre-commit/, 'the refusal is reported');
+    assert.match(fs.readFileSync(hookPath, 'utf8'), /a second gate/, 'the second foreign hook survives');
+
+    // CWK-158 item 3: the round trip is install over a foreign hook, then uninstall. (This leg used to plant
+    // the foreign hook over whatever sat there and expect the restore to overwrite it -- the data-loss path.)
+    fs.rmSync(hookPath, { force: true });
+    fs.rmSync(hookPath + '.pre-coalmine', { force: true });
+    fs.writeFileSync(hookPath, FOREIGN_HOOK, 'utf8');
+    const second = runInstall(path.join(proj, 'skills'), proj);
+    assert.equal(second.status, 0, `install must pass:\n${second.stdout}${second.stderr}`);
+    const un = runInstall(path.join(proj, 'skills'), proj, ['--uninstall']);
+    assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
+    assert.equal(fs.readFileSync(hookPath, 'utf8'), FOREIGN_HOOK, 'the user\'s hook is restored');
+    assert.ok(!fs.existsSync(hookPath + '.pre-coalmine'), 'the backup is consumed');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// ─── R13 / CWK-158 items 2-4: what the installer puts in (and takes out of) a USER's hooks ─────────────
+// Probe F / G (cwk158-ruling.md): the installer wrote CoalMine's OWN repo gate into a user's repo, renamed the
+// user's hook aside and never ran it again, restored the backup over a hook written after install, and read
+// core.hooksPath without expanding "~".
+function shAvailable() {
+  const r = spawnSync('sh', ['-c', 'exit 0'], { encoding: 'utf8' });
+  return r.status === 0;
+}
+
+// 16e (CR PRRT_kwDOSxeWG86oZt-W, row 3): the content assertions and the EXECUTION leg of the generic hook were one test that ended in `t.diagnostic` + `return` when there is no
+// `sh`, which reports a PASS for a leg that never ran. The execution leg is its own test now, with a real `t.skip`, the shape the chained-hook test below already uses.
+function genericHookFixture(t) {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-generic-'));
+  t.after(() => removeTree(proj));
+  fs.mkdirSync(path.join(proj, '.git', 'hooks'), { recursive: true });
+  fs.mkdirSync(path.join(proj, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'scripts', 'verify.mjs'), 'require("fs").writeFileSync("ran-verify", "1"); process.exit(1);\n', 'utf8');
+  fs.writeFileSync(path.join(proj, 'scripts', 'test.mjs'), 'require("fs").writeFileSync("ran-test", "1"); process.exit(1);\n', 'utf8');
+  const res = runInstall(path.join(proj, 'skills'), proj);
+  assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+  return proj;
+}
+
+test('CWK-158 item 2: the installed hook is a generic chain-only hook -- the project\'s own scripts/verify.mjs and scripts/test.mjs are never run', (t) => {
+  const proj = genericHookFixture(t);
+  for (const h of ['pre-commit', 'pre-push']) {
+    const body = fs.readFileSync(path.join(proj, '.git', 'hooks', h), 'utf8');
+    assert.match(body, /Generated by CoalMine/, `${h} is recognised as ours`);
+    assert.doesNotMatch(body, /scripts\/verify\.mjs|scripts\/test\.mjs/, `${h} must not carry CoalMine's own repo gate`);
+  }
+});
+
+test('CWK-158 item 2: the generic hook, EXECUTED, passes and runs none of the project\'s own scripts', (t) => {
+  if (!shAvailable()) { t.skip('no sh available to execute a hook'); return; }
+  const proj = genericHookFixture(t);
+  const run = spawnSync('sh', [path.join(proj, '.git', 'hooks', 'pre-commit')], { cwd: proj, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
+  assert.equal(run.status, 0, `a bare generic hook passes: ${run.stderr}`);
+  assert.ok(!fs.existsSync(path.join(proj, 'ran-verify')) && !fs.existsSync(path.join(proj, 'ran-test')), 'the project\'s own scripts were not run');
+});
+
+test('CWK-158 item 2: the user\'s prior hook is CHAINED -- it still runs, and its exit status still decides', (t) => {
+  if (!shAvailable()) { t.skip('no sh available to execute a hook'); return; }
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-chain-'));
+  const hookPath = path.join(proj, '.git', 'hooks', 'pre-commit');
+  try {
+    fs.mkdirSync(path.join(proj, '.git', 'hooks'), { recursive: true });
+    fs.writeFileSync(hookPath, '#!/bin/sh\n# my own gate\ntouch user-hook-ran "$1"\nexit 3\n', 'utf8');
+    fs.chmodSync(hookPath, 0o755);
+    const res = runInstall(path.join(proj, 'skills'), proj);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    assert.ok(fs.existsSync(hookPath + '.pre-coalmine'), 'the user\'s hook is kept beside ours');
+    const run = spawnSync('sh', [hookPath, 'arg1'], { cwd: proj, encoding: 'utf8' });
+    assert.equal(run.status, 3, `the chained hook's exit status passes through: ${run.stderr}`);
+    assert.ok(fs.existsSync(path.join(proj, 'user-hook-ran')), 'the user\'s hook actually ran');
+    assert.ok(fs.existsSync(path.join(proj, 'arg1')), 'and received the hook arguments');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('CWK-158 item 2: a hook the repo TRACKS (core.hooksPath at a versioned dir) is never rewritten on install', (t) => {
+  if (!gitAvailable()) { t.skip('git binary not available'); return; }
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-trackedinst-'));
+
+  try {
+    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    fs.mkdirSync(path.join(proj, '.githooks'));
+    fs.writeFileSync(path.join(proj, '.githooks', 'pre-commit'), FOREIGN_HOOK, 'utf8');
+    assert.equal(spawnSync('git', ['add', '-f', '.githooks/pre-commit'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    const res = runInstall(path.join(proj, 'skills'), proj);
+    assert.notEqual(res.status, 0, 'refusing is a loud, non-zero outcome');
+    assert.match(res.stdout + res.stderr, /\[refused\] pre-commit/, 'the refusal is reported');
+    assert.equal(fs.readFileSync(path.join(proj, '.githooks', 'pre-commit'), 'utf8'), FOREIGN_HOOK, 'the tracked hook keeps its bytes');
+    assert.ok(!fs.existsSync(path.join(proj, '.githooks', 'pre-commit.pre-coalmine')), 'and no backup is made of it');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('CWK-158 item 3: uninstall never restores the backup over a hook the user wrote AFTER install', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-newer-'));
+  const hookPath = path.join(proj, '.git', 'hooks', 'pre-commit');
+  const NEWER = '#!/bin/sh\n# user-v2 written after install\nexit 0\n';
+  try {
+    fs.mkdirSync(path.join(proj, '.git', 'hooks'), { recursive: true });
+    fs.writeFileSync(hookPath, FOREIGN_HOOK, 'utf8');
+    const res = runInstall(path.join(proj, 'skills'), proj);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    fs.writeFileSync(hookPath, NEWER, 'utf8'); // the user replaces CoalMine's hook with their own newer one
+    const un = runInstall(path.join(proj, 'skills'), proj, ['--uninstall']);
+    assert.notEqual(un.status, 0, 'keeping both files is reported loudly');
+    assert.match(un.stdout + un.stderr, /\[kept\] pre-commit/, 'the keep is reported');
+    assert.equal(fs.readFileSync(hookPath, 'utf8'), NEWER, 'the user\'s newer hook is untouched');
+    assert.equal(fs.readFileSync(hookPath + '.pre-coalmine', 'utf8'), FOREIGN_HOOK, 'and the older backup stays for them to merge');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('CWK-158 item 4: core.hooksPath "~/..." expands the way git does -- the hook lands in the home dir, never in <project>/~/', (t) => {
+  if (!gitAvailable()) { t.skip('git binary not available'); return; }
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-tilde-proj-'));
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-tilde-home-'));
+
+  try {
+    assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '~/coalhooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    // The fixture HOME is a SEPARATE dir (runInstall's 4th argument), so "~" resolves outside the project.
+    // The dir exists, as a user's hooks dir does: a hooks dir OUTSIDE the worktree is its own root, and
+    // an absent root is refused (unchanged, CWK-137).
+    fs.mkdirSync(path.join(sandbox, 'coalhooks'));
+    const res = runInstall(path.join(proj, 'skills'), proj, [], sandbox);
+    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
+    assert.ok(!fs.existsSync(path.join(proj, '~')), 'no literal <project>/~ directory is created');
+    assert.ok(fs.existsSync(path.join(sandbox, 'coalhooks', 'pre-commit')), 'the hook lands where git reads it: $HOME/coalhooks');
+  } finally {
+    removeTree(proj);
+    removeTree(sandbox);
+  }
+});
+
+// R13 / CWK-158 item 7 (CSV-2, probe H): a manifest NAMES a dir, it does not prove ownership. A project
+// manifest arrives with a cloned repo; a dir it lists whose contents the manifest never hashed is the
+// user's, and neither install nor uninstall may recursively delete it.
+function plantManifestNaming(target, names, hashes = {}) {
+  fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify({ version: '0.0.1', skills: names, hashes }), 'utf8');
+}
+
+test('CWK-158 item 7: install keeps a dir a PLANTED manifest names but never hashed (probe H)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-victim-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, 'victim-dir'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'victim-dir', 'notes.txt'), 'the users own data', 'utf8');
+    plantManifestNaming(target, ['victim-dir']);
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the install');
+    assert.match(res.stdout + res.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('CWK-158 item 7: install keeps a manifest-named dir whose recorded file was CHANGED or whose dir holds an extra file', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-victim2-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, 'edited'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'edited', 'SKILL.md'), 'edited by the user', 'utf8');
+    fs.mkdirSync(path.join(target, 'extra'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'extra', 'SKILL.md'), 'ours', 'utf8');
+    fs.writeFileSync(path.join(target, 'extra', 'mine.txt'), 'user file', 'utf8');
+    plantManifestNaming(target, ['edited', 'extra'], {
+      'edited/SKILL.md': 'deadbeef',
+      'extra/SKILL.md': hashFile(path.join(target, 'extra', 'SKILL.md')),
+    });
+    runInstall(target, proj);
+    assert.ok(fs.existsSync(path.join(target, 'edited', 'SKILL.md')), 'a changed file makes the dir unproven');
+    assert.ok(fs.existsSync(path.join(target, 'extra', 'mine.txt')), 'an unrecorded extra file makes the dir unproven');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('CWK-158 item 7: uninstall keeps a manifest-named dir that is not provably ours', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-victim3-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, 'victim-dir'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'victim-dir', 'notes.txt'), 'the users own data', 'utf8');
+    plantManifestNaming(target, ['victim-dir']);
+    const un = runInstall(target, proj, ['--uninstall']);
+    assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the uninstall');
+    assert.match(un.stdout + un.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('CWK-120 row 4: a failed backup blocks the overwrite -- a foreign hook is never clobbered when it cannot be verified saved', () => {
+  // A directory-permission probe (chmod the hooks dir read-only) does NOT reproduce
+  // reliably: measured on this box, Windows' read-only DIRECTORY attribute does not
+  // block child-file creation, so the probe always reports "not blocked" and the test
+  // would only ever run on POSIX -- one platform standing in for three (node/runtime.md
+  // §6). A `--require` preload monkeypatching `fs.copyFileSync` (the same NODE_OPTIONS
+  // mechanism `withHomeReporter` already uses in this file) is deterministic on every
+  // platform, because it never depends on the volume's own permission semantics.
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-backupfail-'));
+  const hooksDir = path.join(proj, '.git', 'hooks');
+  const hookPath = path.join(hooksDir, 'pre-commit');
+  const preloadPath = path.join(proj, 'fail-copy.cjs');
+  try {
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(hookPath, FOREIGN_HOOK, 'utf8');
+    // Fails ONLY the `.pre-coalmine` backup copy -- every other fs.copyFileSync call
+    // the installer makes (skill install, etc.) is untouched, so this isolates the one
+    // call site row 4 is about.
+    // CWK-137: the backup is now written by content through the contained writer (a temp
+    // renamed into place), so the fault is planted on BOTH the old copy and the new rename
+    // that land on the `.pre-coalmine` slot -- the property under test is unchanged.
+    fs.writeFileSync(
+      preloadPath,
+      "const fs = require('node:fs'); const fail = () => { throw Object.assign(new Error('EACCES: simulated backup failure'), { code: 'EACCES' }); }; " +
+      "const origCopy = fs.copyFileSync; fs.copyFileSync = (src, dest, ...rest) => { if (String(dest).endsWith('.pre-coalmine')) fail(); return origCopy(src, dest, ...rest); }; " +
+      "const origRen = fs.renameSync; fs.renameSync = (src, dest) => { if (String(dest).endsWith('.pre-coalmine')) fail(); return origRen(src, dest); };",
+      'utf8',
+    );
+
+    const slashed = preloadPath.split(path.sep).join('/');
+    const prevOpts = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = prevOpts ? `${prevOpts} --require "${slashed}"` : `--require "${slashed}"`;
+    let res;
+    try {
+      res = runInstall(path.join(proj, 'skills'), proj);
+    } finally {
+      if (prevOpts === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = prevOpts;
+    }
+
+    assert.notEqual(res.status, 0, `a backup failure must fail loud (non-zero), not report success:\n${res.stdout}${res.stderr}`);
+    assert.equal(fs.readFileSync(hookPath, 'utf8'), FOREIGN_HOOK, 'the foreign hook must survive a failed backup UNCHANGED');
+    assert.ok(!fs.existsSync(hookPath + '.pre-coalmine'), 'no backup exists -- the copy itself is what failed');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('CWK-096: a tracked hook (core.hooksPath at a VERSIONED directory) SURVIVES uninstall', (t) => {
+  // r33 INSPECT LOW-2: a capability gate degrades to a VISIBLE skip, never a bare
+  // `return` -- a bare return counts as a silent PASS, and this is the unit's own
+  // headline test. A green run on a git-less box must never read as "the tracked-hook
+  // guard is proven" when nothing was exercised.
+  if (!gitAvailable()) { t.skip('git binary not available'); return; }
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-tracked-'));
+  const hooksDir = path.join(proj, '.githooks');
+  const hookPath = path.join(hooksDir, 'pre-commit');
+  try {
+    assert.equal(spawnSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.email', 'test@test.invalid'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.name', 'Test'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    // R14: `git commit` starts `git maintenance run --auto` as its own process (b4194b3, measured); it races this fixture's cleanup, so the fixture turns it off.
+    assert.equal(spawnSync('git', ['config', 'maintenance.auto', 'false'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'gc.auto', '0'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+
+    const install = runInstall(path.join(proj, 'skills'), proj);
+    assert.equal(install.status, 0, `install must pass:\n${install.stdout}${install.stderr}`);
+    assert.ok(fs.existsSync(hookPath), 'the hook was installed into the configured (tracked) dir');
+
+    // Commit it — this is now the repo maintainer's TRACKED file, not a CoalMine leftover.
+    assert.equal(spawnSync('git', ['add', '-A'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['commit', '-q', '-m', 'track the hooks'], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0);
+    assert.equal(spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: proj, env: gitEnv(path.dirname(proj)) }).status, 0, 'fixture sanity: git itself confirms the hook is tracked');
+
+    const un = runInstall(path.join(proj, 'skills'), proj, ['--uninstall']);
+    // THE PROPERTY, not the exit code alone (the order's own rail): the file is
+    // still there. Asserted FIRST — a caller reading this test top-to-bottom sees
+    // the deliverable before the supporting signal.
+    assert.ok(fs.existsSync(hookPath), 'CWK-096: a tracked hook survives uninstall — CoalMine never deletes tracked files');
+    assert.equal(fs.readFileSync(hookPath, 'utf8').includes('CoalMine'), true, 'and it is untouched, not silently replaced with something else');
+    assert.notEqual(un.status, 0, 'the refusal is loud: uninstall exits non-zero rather than reporting quiet success');
+    assert.match(un.stdout + un.stderr, /\[refused\] pre-commit: core\.hooksPath points at a versioned directory/, 'the refusal names the file and the reason');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('detectPresentAgents: only agents whose marker dir exists; claude/cline never auto-detected', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-detect-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '.cursor'));
+    fs.mkdirSync(path.join(tmp, '.github'));
+    fs.mkdirSync(path.join(tmp, '.claude')); // present, but excluded from `all`
+    const { present, absent } = detectPresentAgents(tmp);
+
+    assert.ok(present.includes('cursor'), 'cursor present (.cursor exists)');
+    assert.ok(present.includes('copilot'), 'copilot present (.github exists)');
+    assert.ok(absent.includes('windsurf'), 'windsurf absent (no .windsurf)');
+    assert.ok(absent.includes('gemini'), 'gemini absent (no .gemini)');
+    assert.ok(absent.includes('antigravity'), 'antigravity absent (no .agents)');
+
+    // The .claude-rooted agents are never auto-seeded — ambiguous with a global
+    // or Claude Code plugin install — even though .claude/ exists here.
+    for (const k of ['claude', 'cline']) {
+      assert.ok(!present.includes(k) && !absent.includes(k), `${k} excluded from 'all'`);
+    }
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+test("`all` installs to every present agent dir, skips absent, never auto-seeds .claude", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-all-'));
+  try {
+    // Three present agent homes (cursor, copilot, the shared .agents group) and
+    // a present-but-excluded .claude.
+    fs.mkdirSync(path.join(tmp, '.cursor'));
+    fs.mkdirSync(path.join(tmp, '.github'));
+    fs.mkdirSync(path.join(tmp, '.agents'));
+    fs.mkdirSync(path.join(tmp, '.claude'));
+
+    const res = runInstall('all', tmp);
+    assert.equal(res.status, 0, `'all' must pass:\n${res.stdout}${res.stderr}`);
+
+    // Installed into each present agent's own dir.
+    assert.ok(fs.existsSync(path.join(tmp, '.cursor', 'skills', 'rot-canary', 'SKILL.md')), 'cursor skills installed');
+    assert.ok(fs.existsSync(path.join(tmp, '.github', 'skills', 'rot-canary', 'SKILL.md')), 'copilot skills installed');
+    assert.ok(fs.existsSync(path.join(tmp, '.agents', 'skills', 'rot-canary', 'SKILL.md')), '.agents group skills installed');
+
+    // Absent agents get nothing; excluded .claude is never auto-seeded.
+    assert.ok(!fs.existsSync(path.join(tmp, '.windsurf')), 'absent windsurf untouched');
+    assert.ok(!fs.existsSync(path.join(tmp, '.gemini')), 'absent gemini untouched');
+    assert.ok(!fs.existsSync(path.join(tmp, '.claude', 'skills')), '.claude never auto-seeded by all');
+
+    assert.match(res.stdout, /detected:/, "reports what it detected");
+  } finally {
+    removeTree(tmp);
+  }
+});
+
+// ─── CWK-137: the installer never writes through a repo-planted link ─────────────────
+// A cloned repository can plant `.github -> <anywhere>` (a junction, unprivileged on
+// Windows) or `.github/copilot-instructions.md -> ~/.bashrc` (a file symlink). On 59ee1e7
+// the installer APPENDED its trigger block to the link target and reported success
+// (PoC-2). The property asserted is the BYTES of the outside file, never only the exit.
+function canFileSymlink(dir) {
+  const probe = path.join(dir, '.probe-link');
+  try { fs.symlinkSync(path.join(dir, 'x'), probe, 'file'); fs.unlinkSync(probe); return true; } catch { return false; }
+}
+
+test('CWK-137: a .github junction escaping the project is REFUSED loudly -- the outside file keeps its bytes', (t) => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-junc-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-junc-out-'));
+  t.after(() => { removeTree(proj); removeTree(outside); });
+  const SECRET = 'export SECRET_TOKEN=abc123\n';
+  fs.writeFileSync(path.join(outside, 'copilot-instructions.md'), SECRET);
+  fs.symlinkSync(outside, path.join(proj, '.github'), 'junction');
+  const res = runInstall('copilot', proj);
+  assert.notEqual(res.status, 0, `a refused write must fail loud:\n${res.stdout}${res.stderr}`);
+  assert.match(res.stdout + res.stderr, /\[refused\]/);
+  assert.equal(fs.readFileSync(path.join(outside, 'copilot-instructions.md'), 'utf8'), SECRET, 'the outside file is untouched');
+  assert.deepEqual(fs.readdirSync(outside), ['copilot-instructions.md'], 'nothing (skills, manifest, temp) was written outside');
+});
+
+test('CWK-137: a copilot-instructions.md symlink to a home dotfile is REFUSED -- the dotfile keeps its bytes (POSIX, or privileged Windows)', (t) => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-fsl-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-fsl-home-'));
+  t.after(() => { removeTree(proj); removeTree(home); });
+  if (!canFileSymlink(proj)) { t.skip('file symlinks need privilege on this volume'); return; }
+  const SECRET = 'export SECRET_TOKEN=abc123\n';
+  const bashrc = path.join(home, '.bashrc');
+  fs.writeFileSync(bashrc, SECRET);
+  fs.mkdirSync(path.join(proj, '.github'));
+  fs.symlinkSync(bashrc, path.join(proj, '.github', 'copilot-instructions.md'), 'file');
+  const res = runInstall('copilot', proj);
+  assert.notEqual(res.status, 0, `a refused write must fail loud:\n${res.stdout}${res.stderr}`);
+  assert.equal(fs.readFileSync(bashrc, 'utf8'), SECRET, 'the fake ~/.bashrc is untouched');
+});
+
+// R18 / CodeRabbit PR 36 (install.mjs:618): the item-7 proof covered ORPHANS only. A manifest that names a
+// CURRENT skill (rot-canary) let isForeignSkillDir return false and installSkillDir clear the folder, so a cloned
+// repo's planted manifest, or a user's own file added inside an installed skill, was deleted without a word.
+const CURRENT_SKILL = 'rot-canary';
+
+test('R18: a planted manifest naming a CURRENT skill over foreign content keeps the content and reports the refusal', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-planted-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    fs.mkdirSync(path.join(target, CURRENT_SKILL), { recursive: true });
+    fs.writeFileSync(path.join(target, CURRENT_SKILL, 'notes.txt'), 'the users own data', 'utf8');
+    plantManifestNaming(target, [CURRENT_SKILL]);
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'notes.txt')), 'the foreign content survives the install');
+    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/, 'and the refusal is reported');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R18: a file the user added inside an installed skill survives a re-install, and the message says the folder was EDITED, not foreign', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-edited-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'the added file survives the re-install');
+    const out = res.stdout + res.stderr;
+    assert.match(out, /\[refused\].*rot-canary/, 'the refusal is reported');
+    assert.match(out, /differ from what CoalMine wrote/, 'and says the contents were edited');
+    assert.doesNotMatch(out, /rot-canary holds non-CoalMine files/, 'not the foreign-folder wording, which is false here');
+    assert.notEqual(res.status, 0, 'loudly');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R18: a real earlier install (the manifest hashes match) re-installs cleanly', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18-reinstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'first install');
+    const res = runInstall(target, proj);
+    assert.equal(res.status, 0, `re-install must pass:\n${res.stdout}${res.stderr}`);
+    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/, 'nothing is refused');
+    assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'SKILL.md')), 'and the skill is there');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// R18b (INSPECT HIGH-1): the refusal must hold on the run AFTER the refusing run. The first R18 fix rewrote the
+// manifest without the refused skill, so run 3 fell back to the skill-meta.json marker and cleared the user's file.
+test('R18b: the refusal holds on the run after it -- an added file survives runs 2 and 3, and the skill stays in the manifest', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-added-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    const r3 = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'run 3 keeps the added file');
+    assert.match(r3.stdout + r3.stderr, /\[refused\].*rot-canary/, 'and refuses again, out loud');
+    assert.notEqual(r3.status, 0, 'with a non-zero exit');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.ok(m.skills.includes(CURRENT_SKILL), 'the refused skill is carried forward in the manifest');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R18b: an EDIT inside an installed skill survives runs 2 and 3 too', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-edit-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0, 'control: the first install is clean');
+    const skill = path.join(target, CURRENT_SKILL, 'SKILL.md');
+    fs.appendFileSync(skill, '\nUSER-EDIT-MARKER\n', 'utf8');
+    runInstall(target, proj);
+    const r3 = runInstall(target, proj);
+    assert.ok(fs.readFileSync(skill, 'utf8').includes('USER-EDIT-MARKER'), 'run 3 keeps the edit');
+    assert.notEqual(r3.status, 0);
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R18b: once the user moves the change aside, the carried-forward skill re-installs cleanly (the refusal does not wedge)', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-recover-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    fs.rmSync(mine);
+    const res = runInstall(target, proj);
+    assert.equal(res.status, 0, `after the file is gone the install must pass:\n${res.stdout}${res.stderr}`);
+    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/);
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R18b: uninstall after a refusal keeps the user-edited skill folder and says so', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-uninstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const mine = path.join(target, CURRENT_SKILL, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    runInstall(target, proj);
+    const un = runInstall(target, proj, ['--uninstall']);
+    assert.ok(fs.existsSync(mine), 'the user file survives the uninstall');
+    assert.match(un.stdout + un.stderr, /\[kept\].*rot-canary/, 'and the keep is reported');
+    // HIGH-2: the run AFTER the uninstall. The kept folder must still be refused, never cleared as "unmanifested".
+    const again = runInstall(target, proj);
+    assert.ok(fs.existsSync(mine), 'the user file survives the install that follows the uninstall');
+    assert.notEqual(again.status, 0, 'and that install refuses');
+    assert.match(again.stdout + again.stderr, /\[refused\].*rot-canary/, 'and says so');
+    // Recovery: the user moves the file aside, the next install is clean.
+    fs.rmSync(mine);
+    assert.equal(runInstall(target, proj).status, 0, 'once the file is gone the install is clean');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// R18b bounce 2, LOW-A: a hashless legacy manifest over a folder with no skill-meta.json can never be proven, so the
+// refusal names what unblocks it (remove or rename the folder), carries no unprovable entry, and holds on the next run.
+test('R18b: a hashless manifest over a marker-less folder says to remove or rename the folder, and still refuses next run', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-hashless-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.rmSync(path.join(dir, 'skill-meta.json'));
+    const mine = path.join(dir, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    delete m.hashes;
+    fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(m), 'utf8');
+    const r1 = runInstall(target, proj);
+    assert.notEqual(r1.status, 0, 'refused');
+    assert.match(r1.stdout + r1.stderr, /remove or rename the folder/, 'and the message names what unblocks it');
+    assert.ok(fs.existsSync(mine), 'the user file is untouched');
+    const m2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    assert.ok(!m2.skills.includes(CURRENT_SKILL), 'no unprovable entry is carried into the rewritten manifest');
+    const r2 = runInstall(target, proj);
+    assert.notEqual(r2.status, 0, 'the refusal holds on the next run');
+    assert.ok(fs.existsSync(mine), 'and the file survives it');
+    fs.renameSync(dir, path.join(target, CURRENT_SKILL + '-mine'));
+    assert.equal(runInstall(target, proj).status, 0, 'renaming the folder unblocks the install');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// INSPECT LOW-2: a skill folder that is a link gets its own true wording, not "edited, added or unrecorded file".
+test('R18b: a skill folder that is a link is refused with link wording, and what it points at survives', (t) => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-link-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const outside = path.join(proj, 'outside');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'data.txt'), 'outside data', 'utf8');
+    removeTree(path.join(target, CURRENT_SKILL));
+    try { fs.symlinkSync(outside, path.join(target, CURRENT_SKILL), 'junction'); } catch (e) { t.skip(`cannot make a link here: ${e.code}`); return; }
+    const res = runInstall(target, proj);
+    const out = res.stdout + res.stderr;
+    assert.ok(fs.existsSync(path.join(outside, 'data.txt')), 'what the link points at survives');
+    assert.match(out, /\[refused\].*rot-canary.*is a link/, 'the refusal says it is a link');
+    assert.doesNotMatch(out, /edited, added or unrecorded|changed, added or unrecorded/, 'not the edited-file wording');
+    assert.notEqual(res.status, 0);
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// INSPECT fourth LOW: the proof hashed a user file whole. A file over the bound is not one CoalMine wrote (no shipped
+// skill file comes near it), so it is unproven and refused, even when the manifest records its exact hash.
+test('R18b: a file over the size bound is unproven and refused even when the manifest records its hash, and is not read whole', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r18b-big-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const big = path.join(target, CURRENT_SKILL, 'big.bin');
+    fs.writeFileSync(big, Buffer.alloc(4 * 1024 * 1024 + 1, 1));
+    const mpath = path.join(target, MANIFEST);
+    const m = JSON.parse(fs.readFileSync(mpath, 'utf8'));
+    m.hashes[CURRENT_SKILL + '/big.bin'] = hashFile(big);
+    fs.writeFileSync(mpath, JSON.stringify(m), 'utf8');
+    const res = runInstall(target, proj);
+    assert.ok(fs.existsSync(big), 'the oversized file survives');
+    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/);
+    assert.notEqual(res.status, 0);
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// R19 LOW-C: the hashless refusal repeated only on the first run. The manifest that run rewrites no longer names the
+// folder, so later runs fell to the older "holds non-CoalMine files" wording. One true wording now covers both.
+test('R19 LOW-C: a folder nothing proves is CoalMine\'s is refused with the SAME true message on every run', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowc-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.rmSync(path.join(dir, 'skill-meta.json'));
+    const mine = path.join(dir, 'mine.txt');
+    fs.writeFileSync(mine, 'user file', 'utf8');
+    const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
+    delete m.hashes;
+    fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(m), 'utf8');
+    for (let run = 1; run <= 3; run++) {
+      const r = runInstall(target, proj);
+      const out = r.stdout + r.stderr;
+      assert.notEqual(r.status, 0, 'run ' + run + ' refuses');
+      assert.match(out, /\[refused\].*rot-canary.*nothing proves it is CoalMine's/, 'run ' + run + ' says why');
+      assert.match(out, /remove or rename the folder/, 'run ' + run + ' says what unblocks it');
+      assert.doesNotMatch(out, /holds non-CoalMine files/, 'run ' + run + ' does not fall back to the older wording');
+      assert.ok(fs.existsSync(mine), 'run ' + run + ' leaves the user file');
+    }
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// R19 LOW-D: isForeignSkillDir read ANY readdir error as "absent", so a plain FILE named like a skill (ENOTDIR) was
+// deleted by install with exit 0 and no message. Only ENOENT means absent now; anything else is refused and kept.
+function plantFileAtSkill(target, text) {
+  const p = path.join(target, CURRENT_SKILL);
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(p, text, 'utf8');
+  return p;
+}
+
+test('R19 LOW-D: install keeps a plain file named like a skill, says so, and exits non-zero', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowd-install-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    const f = plantFileAtSkill(target, 'the users own file');
+    const r = runInstall(target, proj);
+    assert.ok(fs.existsSync(f) && fs.statSync(f).isFile(), 'the file is still a file');
+    assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'with its content');
+    assert.notEqual(r.status, 0, 'loudly');
+    assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'and the message is true: it is a file');
+    assert.ok(fs.existsSync(path.join(target, 'drift-canary', 'SKILL.md')), 'the other skills still install');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R19 LOW-D: a refresh keeps it too -- a clean install, the folder replaced by a file, then install again', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowd-refresh-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    removeTree(path.join(target, CURRENT_SKILL));
+    const f = plantFileAtSkill(target, 'the users own file');
+    for (let run = 1; run <= 2; run++) {
+      const r = runInstall(target, proj);
+      assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'run ' + run + ' keeps the file');
+      assert.notEqual(r.status, 0, 'run ' + run + ' refuses');
+      assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'run ' + run + ' says so');
+    }
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R19 LOW-D: uninstall keeps it with no manifest, and with a manifest that names it', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r19-lowd-uninstall-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    // no manifest at all
+    const f = plantFileAtSkill(target, 'the users own file');
+    runInstall(target, proj, ['--uninstall']);
+    assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'no manifest: the file survives the uninstall');
+    fs.rmSync(f);
+    // a manifest that names it
+    assert.equal(runInstall(target, proj).status, 0);
+    removeTree(path.join(target, CURRENT_SKILL));
+    plantFileAtSkill(target, 'the users own file');
+    const un = runInstall(target, proj, ['--uninstall']);
+    assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'manifest names it: the file survives the uninstall');
+    assert.match(un.stdout + un.stderr, /\[kept\].*rot-canary/, 'and the keep is reported');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// R20 LOW-E: a skill folder the installer cannot read is kept safely, but the message named a wrong cause ("contents
+// differ" when the manifest named it, "no skill-meta.json marker and no recorded hashes" when not). The read failure
+// is made on every volume the house way: a --require preload patches the node:fs default export in the CHILD
+// (chmod is a no-op on NTFS), so install.mjs's readdirSync of that one folder throws EACCES.
+function runInstallUnreadable(target, cwd, unreadableDir, method = 'readdirSync') {
+  const preload = path.join(cwd, 'eacces-preload.cjs');
+  fs.writeFileSync(preload, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const real = fs." + method + ";",
+    "const bad = path.resolve(process.env.R20_EACCES_DIR);",
+    "fs." + method + " = function (p, ...rest) {",
+    "  if (path.resolve(String(p)) === bad) { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }",
+    "  return real.call(this, p, ...rest);",
+    "};",
+  ].join('\n'), 'utf8');
+  const saved = { opts: process.env.NODE_OPTIONS, dir: process.env.R20_EACCES_DIR };
+  process.env.NODE_OPTIONS = '--require "' + preload.split(path.sep).join('/') + '"';
+  process.env.R20_EACCES_DIR = unreadableDir;
+  try { return runInstall(target, cwd); }
+  finally {
+    if (saved.opts === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved.opts;
+    if (saved.dir === undefined) delete process.env.R20_EACCES_DIR; else process.env.R20_EACCES_DIR = saved.dir;
+  }
+}
+
+test('R20 LOW-E: an unreadable skill folder the manifest names is refused for the true reason, and nothing is changed', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowe-named-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    const before = fs.readdirSync(dir).sort();
+    const r = runInstallUnreadable(target, proj, dir);
+    const out = r.stdout + r.stderr;
+    assert.notEqual(r.status, 0, 'refused loudly');
+    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.doesNotMatch(out, /contents differ/, 'and does not blame its contents');
+    assert.doesNotMatch(out, /nothing proves/, 'nor the missing proof');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+test('R20 LOW-E: an unreadable skill folder with no manifest is refused for the true reason too, even though it holds the marker', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowe-unnamed-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    const dir = path.join(target, CURRENT_SKILL);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skill-meta.json'), '{}', 'utf8');
+    fs.writeFileSync(path.join(dir, 'mine.txt'), 'user file', 'utf8');
+    const r = runInstallUnreadable(target, proj, dir);
+    const out = r.stdout + r.stderr;
+    assert.notEqual(r.status, 0, 'refused loudly');
+    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.doesNotMatch(out, /nothing proves/, 'it does not claim the marker is missing');
+    assert.ok(fs.existsSync(path.join(dir, 'mine.txt')), 'the user file is untouched');
+  } finally {
+    removeTree(proj);
+  }
+});
+
+// R20 bounce 1, LOW-G: the same true message when it is lstat (the folder cannot even be searched) that fails, not only readdir.
+test('R20 LOW-G: a skill folder whose lstat fails (not ENOENT) is refused as unreadable too, manifest or not', () => {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-r20-lowg-'));
+  const target = path.join(proj, '.cursor', 'skills');
+  try {
+    // named by a manifest
+    assert.equal(runInstall(target, proj).status, 0);
+    const dir = path.join(target, CURRENT_SKILL);
+    const before = fs.readdirSync(dir).sort();
+    const named = runInstallUnreadable(target, proj, dir, 'lstatSync');
+    const outNamed = named.stdout + named.stderr;
+    assert.notEqual(named.status, 0, 'refused loudly');
+    assert.match(outNamed, /\[refused\].*rot-canary.*could not be read/, 'named: the message says it could not be read');
+    assert.doesNotMatch(outNamed, /contents differ/, 'and does not blame its contents');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
+    // no manifest at all
+    fs.rmSync(path.join(target, '.coalmine-manifest.json'), { force: true });
+    const bare = runInstallUnreadable(target, proj, dir, 'lstatSync');
+    const outBare = bare.stdout + bare.stderr;
+    assert.notEqual(bare.status, 0, 'refused loudly');
+    assert.match(outBare, /\[refused\].*rot-canary.*could not be read/, 'unnamed: the message says it could not be read');
+    assert.doesNotMatch(outBare, /nothing proves/, 'and does not claim the proof is missing');
+    assert.deepEqual(fs.readdirSync(dir).sort(), before, 'still exactly as it was');
+  } finally {
+    removeTree(proj);
+  }
+});

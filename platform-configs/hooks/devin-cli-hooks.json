@@ -1,0 +1,21 @@
+{
+  "$comment": "Devin CLI hooks — Devin CLI ONLY. Devin Desktop (ex-Windsurf) is a SEPARATE product running its own snake_case 'Cascade Hooks' system (pre_write_code/post_cascade_response-style events, unverified response channel) — no config is shipped for it here (too little verified this pass); a Cascade adapter is future work. Desktop skills still install via the existing windsurf target (node scripts/install.mjs windsurf). Place this file as .devin/hooks.v1.json. PascalCase, Claude-Code-shaped events + the same {type:'command',command} entry, so PostToolUse and Stop run rot-canary-touch.js/rot-canary-stop.js unwrapped in their plain Claude-Code output shape (Stop -> {\"decision\":\"block\",\"reason\"} -- verified against docs.devin.ai/cli/extensibility/hooks/lifecycle-hooks, no adapter needed). SessionStart is DIFFERENT: Devin's own docs require {hookSpecificOutput:{hookEventName:'SessionStart',additionalContext}} on stdout, while the shared conductor's FileCopy mode writes plain text (lines.join('\\n')) for the other file-copy platforms -- so SessionStart wraps the conductor in an inline node -e adapter that captures its plain-text stdout and re-emits it inside Devin's required envelope, rather than changing the shared FileCopy output (which Copilot CLI/Kiro/Augment/Junie also consume unwrapped). The JSON SHAPE is grounded against Devin's own docs; whether it is genuinely injected in a live Devin CLI session is still unconfirmed end-to-end -- flag if context/re-prompt doesn't land. The conductor's trailing FileCopy argument trims only the CC-plugin self-update offer + its update stamp (a file-copy install cannot run claude plugin update) — keep it. Adjust the CoalMine path in every command.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "node -e \"const cp=require('child_process');const r=cp.spawnSync(process.execPath,['C:/path/to/CoalMine/hooks/coalmine-conductor.js','FileCopy'],{encoding:'utf8'});const text=(r.stdout||'').trim();if(text)console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:text}}))\"" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"" }]
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$comment": "Kiro hooks — a MERGE SNIPPET: hooks live INSIDE the agent config, not a standalone file. Copy the \"hooks\" block below into .kiro/agents/<name>.json (project) or ~/.kiro/agents/<name>.json (user). Lower-camel event casing (agentSpawn/postToolUse/stop) per Kiro's schema-reference page. Kiro does NOT read .agents/skills/ — install the canaries to .kiro/skills/<name>/SKILL.md instead (node scripts/install.mjs kiro). Response/context-inject schema is UNVERIFIED end-to-end — every script below ships in its plain Claude-Code shape as a best-guess; flag if the offer/scan nudge never appears. The conductor's trailing FileCopy argument trims only the CC-plugin self-update offer + its update stamp (a file-copy install cannot run claude plugin update) — keep it; the output shape is unchanged. Adjust the CoalMine path in every command.",
+  "hooks": {
+    "agentSpawn": [
+      { "command": "node \"C:/path/to/CoalMine/hooks/coalmine-conductor.js\" FileCopy", "timeout_ms": 10000 }
+    ],
+    "postToolUse": [
+      { "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"", "timeout_ms": 10000 }
+    ],
+    "stop": [
+      { "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"", "timeout_ms": 10000 }
+    ]
+  }
+}

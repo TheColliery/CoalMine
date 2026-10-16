@@ -1,0 +1,12 @@
+{
+  "name": "coalmine",
+  "owner": { "name": "HetCreep" },
+  "description": "CoalMine — a quality meta-skills suite for coding agents (canary-in-the-coal-mine early warning).",
+  "plugins": [
+    {
+      "name": "coalmine",
+      "source": "./plugin",
+      "description": "9 quality-canary skills: rot-canary (code-health), gold-standard (world-class completeness), source-grounding (anti-hallucination), supply-chain-audit (deps/build/artifact), resilience-audit (failure-mode FMEA), telemetry-canary (observability), testability-canary (decoupling/DI), scale-canary (perf scaling), drift-canary (contract/schema drift). rot-canary adds cross-platform auto-cadence hooks. Served conformed from the committed plugin/ dist (built by scripts/build-plugin.mjs)."
+    }
+  ]
+}

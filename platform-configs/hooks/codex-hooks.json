@@ -1,0 +1,16 @@
+{
+  "$comment": "Codex CLI hooks — place as hooks.json beside your Codex config and enable [features] hooks in config.toml. PostToolUse records edits (incl. apply_patch); Stop nudges the scan. Adjust the CoalMine path.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|write",
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-touch.js\"" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"C:/path/to/CoalMine/hooks/rot-canary-stop.js\"" }]
+      }
+    ]
+  }
+}

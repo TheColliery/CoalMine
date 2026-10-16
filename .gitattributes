@@ -1,0 +1,8 @@
+# Normalize line endings: LF everywhere except Windows-only scripts.
+* text=auto eol=lf
+# Redundant under the rule above, but stated explicitly: a CRLF checkout of a
+# /bin/sh hook is `bad interpreter` on POSIX, i.e. a silently absent gate.
+/.githooks/** text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
