@@ -26,6 +26,8 @@ const TESTS = [
   // 15b5b: render.test.mjs split at its seams (the 14 tests that spawn the real verify.mjs went to these two) so no file nears node 22's per-file clock.
   'scripts/lib/verify-wiring.test.mjs',
   'scripts/lib/verify-pointers.test.mjs',
+  // 16e item 4 (CWK2-041): removeTree, the retrying teardown of a fixture a killed git child can hold (test-sandbox.mjs), proven with a child that holds the tree as its cwd.
+  'scripts/lib/remove-tree.test.mjs',
   'scripts/lib/hooks.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',

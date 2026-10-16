@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { detectPresentAgents } from './targets.mjs';
 import { listSkills } from './render.mjs';
 import { gitEnv } from './git-env.mjs';
-import { spawnSandboxed, writeHomeReporter, withHomeReporter } from './test-sandbox.mjs';
+import { spawnSandboxed, writeHomeReporter, withHomeReporter, removeTree } from './test-sandbox.mjs';
 import { hashFile } from './manifest.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -82,7 +82,7 @@ test('the shared sandbox helper resolves os.homedir() and os.tmpdir() inside the
     const reported = JSON.parse(probe.stdout);
     assert.equal(reported.home, tmp, 'os.homedir() must resolve inside the fixture, never the operator\'s real home');
     assert.equal(reported.tmp, tmp, 'os.tmpdir() must resolve inside the fixture, never the operator\'s real temp dir');
-  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  } finally { removeTree(tmp); }
 });
 
 // r34 findings-back round 2 (LOW-C): the probe above proves `spawnSandboxed`; it
@@ -104,8 +104,8 @@ test('runInstall wires the sandbox through to the CHILD it actually spawns -- pr
     assert.equal(reported.home, sandbox, 'the real installer CHILD must resolve os.homedir() inside the sandbox `runInstall` was given');
     assert.equal(reported.tmp, sandbox, 'the real installer CHILD must resolve os.tmpdir() inside the same sandbox');
   } finally {
-    fs.rmSync(sandbox, { recursive: true, force: true });
-    fs.rmSync(target, { recursive: true, force: true });
+    removeTree(sandbox);
+    removeTree(target);
   }
 });
 
@@ -128,7 +128,7 @@ test('withHomeReporter works when its reporter path contains a space (a real Win
     assert.equal(reported.home, spaced, 'the reporter must still resolve os.homedir() inside the (spaced) sandbox');
     assert.equal(reported.tmp, spaced, 'the reporter must still resolve os.tmpdir() inside the (spaced) sandbox');
   } finally {
-    fs.rmSync(spaced, { recursive: true, force: true });
+    removeTree(spaced);
   }
 });
 
@@ -171,7 +171,7 @@ test('manifest-driven reinstall removes renamed leftovers, spares foreign skills
     assert.ok(!fs.existsSync(path.join(target, MANIFEST)), 'manifest removed on uninstall');
     assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill survives uninstall');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -192,7 +192,7 @@ test('retired skill names are swept even without a manifest (rotcanary -> rot-ca
     assert.ok(fs.existsSync(path.join(target, 'rot-canary', 'SKILL.md')), 'current rot-canary installed');
     assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill never touched');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -215,7 +215,7 @@ test('H12: install into a dir with a FOREIGN colliding skill dir preserves the u
     // Only the collision is skipped — the non-colliding skills still install.
     assert.ok(fs.existsSync(path.join(target, 'rot-canary', 'SKILL.md')), 'other skills still install');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -232,7 +232,7 @@ test('H12: uninstall (no manifest) leaves a FOREIGN colliding dir in place', () 
     assert.ok(fs.existsSync(precious), 'foreign user data must survive an uninstall too');
     assert.equal(fs.readFileSync(precious, 'utf8'), 'IRREPLACEABLE');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -251,7 +251,7 @@ test('a colliding dir carrying our own skill-meta.json marker IS replaced (pre-m
     assert.ok(fs.existsSync(path.join(target, 'gold-standard', 'SKILL.md')), 'the owned skill is (re)installed');
     assert.ok(!fs.existsSync(path.join(target, 'gold-standard', 'stale.txt')), 'a stale file from the old owned install is cleared');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -278,7 +278,7 @@ test('corrupt manifest entries can never escape the target directory', () => {
     const after = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
     assert.equal(after.skills.length, SKILL_COUNT, 'manifest rebuilt with the clean current set');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -336,8 +336,8 @@ test('installer run from the CoalMine source repo does NOT drop a project config
     restore(rootCfg, cfgBefore);
     restore(newCfg, newCfgBefore);
     hookPaths.forEach((p, i) => restore(p, hooksBefore[i]));
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.rmSync(sandbox, { recursive: true, force: true });
+    removeTree(target);
+    removeTree(sandbox);
   }
 });
 
@@ -351,7 +351,7 @@ test('installer run from a real project (cwd ≠ source repo) creates the defaul
     assert.ok(fs.existsSync(path.join(proj, '.claude', 'coal', 'coalmine.json')), 'a real project still gets its default config (guard must not over-trigger) — at the new own-dir home');
     assert.ok(!fs.existsSync(path.join(proj, '.coalmine.json')), 'a fresh install must not perpetuate the legacy root shape');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -366,7 +366,7 @@ test('installer run from a real project that ALREADY has a legacy .coalmine.json
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(proj, '.coalmine.json'), 'utf8')).language, 'th', 'the existing legacy config is left untouched by install (only configure.mjs migrates on write)');
     assert.ok(!fs.existsSync(path.join(proj, '.claude', 'coal', 'coalmine.json')), 'no NEW default is created when one already exists anywhere in the read order');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -381,7 +381,7 @@ test('installer run from a real project that already has a .gemini/ dir (no .cla
     assert.ok(fs.existsSync(path.join(proj, '.gemini', 'coal', 'coalmine.json')), 'the default config nests under the agent dir the project ALREADY has');
     assert.ok(!fs.existsSync(path.join(proj, '.claude')), 'no foreign .claude/ is planted into a project that never used Claude Code');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -424,8 +424,8 @@ test('git hooks are installed where git will ACTUALLY read them (core.hooksPath 
     assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
     assert.ok(!fs.existsSync(path.join(moved, '.githooks', 'pre-commit')), 'uninstall removes the hook from the configured dir');
   } finally {
-    fs.rmSync(plain, { recursive: true, force: true });
-    fs.rmSync(moved, { recursive: true, force: true });
+    removeTree(plain);
+    removeTree(moved);
   }
 });
 
@@ -445,7 +445,7 @@ test('a pre-v2.4.0 CoalMine hook is recognised as OURS — never backed up as th
     assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
     assert.ok(!fs.existsSync(hookPath), 'uninstall removes our hook');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -479,7 +479,7 @@ test('a genuinely foreign hook is still backed up and restored (the ownership ch
     assert.equal(fs.readFileSync(hookPath, 'utf8'), FOREIGN_HOOK, 'the user\'s hook is restored');
     assert.ok(!fs.existsSync(hookPath + '.pre-coalmine'), 'the backup is consumed');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -511,7 +511,7 @@ test('CWK-158 item 2: the installed hook is a generic chain-only hook -- the pro
     assert.equal(run.status, 0, `a bare generic hook passes: ${run.stderr}`);
     assert.ok(!fs.existsSync(path.join(proj, 'ran-verify')) && !fs.existsSync(path.join(proj, 'ran-test')), 'the project\'s own scripts were not run');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -531,7 +531,7 @@ test('CWK-158 item 2: the user\'s prior hook is CHAINED -- it still runs, and it
     assert.ok(fs.existsSync(path.join(proj, 'user-hook-ran')), 'the user\'s hook actually ran');
     assert.ok(fs.existsSync(path.join(proj, 'arg1')), 'and received the hook arguments');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -551,7 +551,7 @@ test('CWK-158 item 2: a hook the repo TRACKS (core.hooksPath at a versioned dir)
     assert.equal(fs.readFileSync(path.join(proj, '.githooks', 'pre-commit'), 'utf8'), FOREIGN_HOOK, 'the tracked hook keeps its bytes');
     assert.ok(!fs.existsSync(path.join(proj, '.githooks', 'pre-commit.pre-coalmine')), 'and no backup is made of it');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -571,7 +571,7 @@ test('CWK-158 item 3: uninstall never restores the backup over a hook the user w
     assert.equal(fs.readFileSync(hookPath, 'utf8'), NEWER, 'the user\'s newer hook is untouched');
     assert.equal(fs.readFileSync(hookPath + '.pre-coalmine', 'utf8'), FOREIGN_HOOK, 'and the older backup stays for them to merge');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -592,8 +592,8 @@ test('CWK-158 item 4: core.hooksPath "~/..." expands the way git does -- the hoo
     assert.ok(!fs.existsSync(path.join(proj, '~')), 'no literal <project>/~ directory is created');
     assert.ok(fs.existsSync(path.join(sandbox, 'coalhooks', 'pre-commit')), 'the hook lands where git reads it: $HOME/coalhooks');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
-    fs.rmSync(sandbox, { recursive: true, force: true });
+    removeTree(proj);
+    removeTree(sandbox);
   }
 });
 
@@ -616,7 +616,7 @@ test('CWK-158 item 7: install keeps a dir a PLANTED manifest names but never has
     assert.match(res.stdout + res.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
     assert.notEqual(res.status, 0, 'loudly');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -637,7 +637,7 @@ test('CWK-158 item 7: install keeps a manifest-named dir whose recorded file was
     assert.ok(fs.existsSync(path.join(target, 'edited', 'SKILL.md')), 'a changed file makes the dir unproven');
     assert.ok(fs.existsSync(path.join(target, 'extra', 'mine.txt')), 'an unrecorded extra file makes the dir unproven');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -652,7 +652,7 @@ test('CWK-158 item 7: uninstall keeps a manifest-named dir that is not provably 
     assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the uninstall');
     assert.match(un.stdout + un.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -700,7 +700,7 @@ test('CWK-120 row 4: a failed backup blocks the overwrite -- a foreign hook is n
     assert.equal(fs.readFileSync(hookPath, 'utf8'), FOREIGN_HOOK, 'the foreign hook must survive a failed backup UNCHANGED');
     assert.ok(!fs.existsSync(hookPath + '.pre-coalmine'), 'no backup exists -- the copy itself is what failed');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -741,7 +741,7 @@ test('CWK-096: a tracked hook (core.hooksPath at a VERSIONED directory) SURVIVES
     assert.notEqual(un.status, 0, 'the refusal is loud: uninstall exits non-zero rather than reporting quiet success');
     assert.match(un.stdout + un.stderr, /\[refused\] pre-commit: core\.hooksPath points at a versioned directory/, 'the refusal names the file and the reason');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -765,7 +765,7 @@ test('detectPresentAgents: only agents whose marker dir exists; claude/cline nev
       assert.ok(!present.includes(k) && !absent.includes(k), `${k} excluded from 'all'`);
     }
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -794,7 +794,7 @@ test("`all` installs to every present agent dir, skips absent, never auto-seeds 
 
     assert.match(res.stdout, /detected:/, "reports what it detected");
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    removeTree(tmp);
   }
 });
 
@@ -811,7 +811,7 @@ function canFileSymlink(dir) {
 test('CWK-137: a .github junction escaping the project is REFUSED loudly -- the outside file keeps its bytes', (t) => {
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-junc-'));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-junc-out-'));
-  t.after(() => { fs.rmSync(proj, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  t.after(() => { removeTree(proj); removeTree(outside); });
   const SECRET = 'export SECRET_TOKEN=abc123\n';
   fs.writeFileSync(path.join(outside, 'copilot-instructions.md'), SECRET);
   fs.symlinkSync(outside, path.join(proj, '.github'), 'junction');
@@ -825,7 +825,7 @@ test('CWK-137: a .github junction escaping the project is REFUSED loudly -- the 
 test('CWK-137: a copilot-instructions.md symlink to a home dotfile is REFUSED -- the dotfile keeps its bytes (POSIX, or privileged Windows)', (t) => {
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-fsl-'));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-fsl-home-'));
-  t.after(() => { fs.rmSync(proj, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  t.after(() => { removeTree(proj); removeTree(home); });
   if (!canFileSymlink(proj)) { t.skip('file symlinks need privilege on this volume'); return; }
   const SECRET = 'export SECRET_TOKEN=abc123\n';
   const bashrc = path.join(home, '.bashrc');
@@ -854,7 +854,7 @@ test('R18: a planted manifest naming a CURRENT skill over foreign content keeps 
     assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/, 'and the refusal is reported');
     assert.notEqual(res.status, 0, 'loudly');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -873,7 +873,7 @@ test('R18: a file the user added inside an installed skill survives a re-install
     assert.doesNotMatch(out, /rot-canary holds non-CoalMine files/, 'not the foreign-folder wording, which is false here');
     assert.notEqual(res.status, 0, 'loudly');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -887,7 +887,7 @@ test('R18: a real earlier install (the manifest hashes match) re-installs cleanl
     assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/, 'nothing is refused');
     assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'SKILL.md')), 'and the skill is there');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -908,7 +908,7 @@ test('R18b: the refusal holds on the run after it -- an added file survives runs
     const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
     assert.ok(m.skills.includes(CURRENT_SKILL), 'the refused skill is carried forward in the manifest');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -924,7 +924,7 @@ test('R18b: an EDIT inside an installed skill survives runs 2 and 3 too', () => 
     assert.ok(fs.readFileSync(skill, 'utf8').includes('USER-EDIT-MARKER'), 'run 3 keeps the edit');
     assert.notEqual(r3.status, 0);
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -941,7 +941,7 @@ test('R18b: once the user moves the change aside, the carried-forward skill re-i
     assert.equal(res.status, 0, `after the file is gone the install must pass:\n${res.stdout}${res.stderr}`);
     assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/);
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -965,7 +965,7 @@ test('R18b: uninstall after a refusal keeps the user-edited skill folder and say
     fs.rmSync(mine);
     assert.equal(runInstall(target, proj).status, 0, 'once the file is gone the install is clean');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -995,7 +995,7 @@ test('R18b: a hashless manifest over a marker-less folder says to remove or rena
     fs.renameSync(dir, path.join(target, CURRENT_SKILL + '-mine'));
     assert.equal(runInstall(target, proj).status, 0, 'renaming the folder unblocks the install');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1008,7 +1008,7 @@ test('R18b: a skill folder that is a link is refused with link wording, and what
     const outside = path.join(proj, 'outside');
     fs.mkdirSync(outside);
     fs.writeFileSync(path.join(outside, 'data.txt'), 'outside data', 'utf8');
-    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    removeTree(path.join(target, CURRENT_SKILL));
     try { fs.symlinkSync(outside, path.join(target, CURRENT_SKILL), 'junction'); } catch (e) { t.skip(`cannot make a link here: ${e.code}`); return; }
     const res = runInstall(target, proj);
     const out = res.stdout + res.stderr;
@@ -1017,7 +1017,7 @@ test('R18b: a skill folder that is a link is refused with link wording, and what
     assert.doesNotMatch(out, /edited, added or unrecorded|changed, added or unrecorded/, 'not the edited-file wording');
     assert.notEqual(res.status, 0);
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1039,7 +1039,7 @@ test('R18b: a file over the size bound is unproven and refused even when the man
     assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/);
     assert.notEqual(res.status, 0);
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1067,7 +1067,7 @@ test('R19 LOW-C: a folder nothing proves is CoalMine\'s is refused with the SAME
       assert.ok(fs.existsSync(mine), 'run ' + run + ' leaves the user file');
     }
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1092,7 +1092,7 @@ test('R19 LOW-D: install keeps a plain file named like a skill, says so, and exi
     assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'and the message is true: it is a file');
     assert.ok(fs.existsSync(path.join(target, 'drift-canary', 'SKILL.md')), 'the other skills still install');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1101,7 +1101,7 @@ test('R19 LOW-D: a refresh keeps it too -- a clean install, the folder replaced 
   const target = path.join(proj, '.cursor', 'skills');
   try {
     assert.equal(runInstall(target, proj).status, 0);
-    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    removeTree(path.join(target, CURRENT_SKILL));
     const f = plantFileAtSkill(target, 'the users own file');
     for (let run = 1; run <= 2; run++) {
       const r = runInstall(target, proj);
@@ -1110,7 +1110,7 @@ test('R19 LOW-D: a refresh keeps it too -- a clean install, the folder replaced 
       assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'run ' + run + ' says so');
     }
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1125,13 +1125,13 @@ test('R19 LOW-D: uninstall keeps it with no manifest, and with a manifest that n
     fs.rmSync(f);
     // a manifest that names it
     assert.equal(runInstall(target, proj).status, 0);
-    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    removeTree(path.join(target, CURRENT_SKILL));
     plantFileAtSkill(target, 'the users own file');
     const un = runInstall(target, proj, ['--uninstall']);
     assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'manifest names it: the file survives the uninstall');
     assert.match(un.stdout + un.stderr, /\[kept\].*rot-canary/, 'and the keep is reported');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1176,7 +1176,7 @@ test('R20 LOW-E: an unreadable skill folder the manifest names is refused for th
     assert.doesNotMatch(out, /nothing proves/, 'nor the missing proof');
     assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1195,7 +1195,7 @@ test('R20 LOW-E: an unreadable skill folder with no manifest is refused for the 
     assert.doesNotMatch(out, /nothing proves/, 'it does not claim the marker is missing');
     assert.ok(fs.existsSync(path.join(dir, 'mine.txt')), 'the user file is untouched');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });
 
@@ -1223,6 +1223,6 @@ test('R20 LOW-G: a skill folder whose lstat fails (not ENOENT) is refused as unr
     assert.doesNotMatch(outBare, /nothing proves/, 'and does not claim the proof is missing');
     assert.deepEqual(fs.readdirSync(dir).sort(), before, 'still exactly as it was');
   } finally {
-    fs.rmSync(proj, { recursive: true, force: true });
+    removeTree(proj);
   }
 });

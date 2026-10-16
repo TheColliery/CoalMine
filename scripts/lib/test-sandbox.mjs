@@ -107,3 +107,24 @@ export async function startFifoWriter(fifo, readyFile, blockMs = 3000) {
   setTimeout(() => child.kill('SIGKILL'), blockMs).unref();
   return { exited };
 }
+
+// 16e item 4 (CWK2-041), ported from CoalWash's test-plan helper at its v1.12.4 (fire 63, PR #22; a file of the CoalWash repo, not of this one): the TEARDOWN removal of a fixture folder a test ran a
+// git, or an installer that runs git, in. Windows refuses to remove a directory a live process holds as its cwd. When a spawn's `timeout` kills Git for
+// Windows' launcher (or node running install.mjs), the real git.exe it started can live on with its cwd inside the fixture (2.9-7.6 s, CoalWash's n=6), and
+// spawnSync cannot wait for a grandchild: one plain rmSync then answers EBUSY, EPERM or ENOTEMPTY and fails the test for a reason that is not the test's.
+// So a teardown goes through removeTree: a loop of FRESH rmSync calls (Node's own maxRetries/retryDelay is not the instrument: CoalWash measured it clearing
+// one holding shape and raising EPERM at once on the other), retried ONLY on a held-folder code, until TEARDOWN_BUDGET_MS, then thrown, so a real leak stays loud.
+// The budget is CoalWash's figure (about 4x its longest measured linger, and inside this room's per-test clock of 120 s); it is a variable of that measurement,
+// not re-measured here. remove-tree.test.mjs proves it with a child that holds the tree as its cwd.
+export const TEARDOWN_BUDGET_MS = 30000;
+export const TEARDOWN_POLL_MS = 100;
+const HELD = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY']);
+export function removeTree(dir, { budgetMs = TEARDOWN_BUDGET_MS, pollMs = TEARDOWN_POLL_MS } = {}) {
+  const until = Date.now() + budgetMs;
+  for (;;) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); return; } catch (e) {
+      if (!(e && HELD.has(e.code)) || Date.now() >= until) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollMs); // a synchronous wait: teardowns run in finally blocks and t.after alike
+    }
+  }
+}
