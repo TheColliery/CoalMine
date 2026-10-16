@@ -24,14 +24,15 @@ import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
 import { gitEnv } from './lib/git-env.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
 import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
-import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, readRepoBytesBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { FOLDER_FIX, MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, readRepoBytesBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
 
 // CWK-137 -- every path below cwd is REPO-DERIVED, i.e. untrusted: a cloned repository can
 // plant `.github/copilot-instructions.md -> ~/.bashrc`, a junction on `.agents`, or a FIFO
 // at `.git`. Reads go through readRepoFileBounded, writes through writeRepoFile, and a
 // refusal is LOUD (a message naming the path and what to do, and exitCode 1) -- never a
 // silent skip, never a write through the link.
-const refuseMsg = (what, why) => `  [refused] ${what}: ${why} -- CoalMine will not write through a link or outside this project. Replace it with a regular file inside the project (or remove it) and re-run.`;
+// A refused FOLDER (a link, junction or file on the chain) already carries its own instruction (FOLDER_FIX); a refused FILE gets the file instruction (17a INSPECT LOW-1).
+const refuseMsg = (what, why) => why.includes(FOLDER_FIX) ? `  [refused] ${what}: ${why}.` : `  [refused] ${what}: ${why} -- CoalMine will not write through a link or outside this project. Replace it with a regular file inside the project (or remove it) and re-run.`;
 function lexists(p) {
   try { fs.lstatSync(p); return true; } catch { return false; }
 }

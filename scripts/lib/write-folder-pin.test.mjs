@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { writeRepoFile, mkdirRepoParents, checkRepoDirTarget, checkRepoWriteTarget, readRepoFileBounded, MAX_CONFIG_BYTES } from './repo-fs.mjs';
+import { FOLDER_FIX, writeRepoFile, mkdirRepoParents, checkRepoDirTarget, checkRepoWriteTarget, readRepoFileBounded, MAX_CONFIG_BYTES } from './repo-fs.mjs';
 import { removeTree } from './test-sandbox.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -30,6 +30,9 @@ function fixture(t) {
 const link = (target, at) => { fs.mkdirSync(path.dirname(at), { recursive: true }); fs.symlinkSync(target, at, 'junction'); };
 const names = (d) => fs.readdirSync(d).sort();
 const refused = (e) => e && e.code === 'COALMINE_WRITE_REFUSED';
+// 17a INSPECT LOW-1: a refused FOLDER tells the user to make it a real folder, never to "replace it with a regular file".
+const folderText = (m) => { assert.ok(m.includes(FOLDER_FIX), `the folder instruction is shown: ${m}`); assert.ok(!/regular file/.test(m), `and the file instruction is not: ${m}`); };
+const SPAWN_ENV = (home) => ({ PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, TEMP: home, TMP: home, TMPDIR: home });
 
 test('a .claude junction to a folder INSIDE the project is refused, and nothing is made behind it (the gap)', (t) => {
   const { proj } = fixture(t);
@@ -39,6 +42,9 @@ test('a .claude junction to a folder INSIDE the project is refused, and nothing 
   assert.deepEqual(names(real), [], 'nothing was made behind the link');
   assert.match(checkRepoDirTarget(path.dirname(path.join(proj, CFG)), proj) || '', /link or junction/, 'every caller\'s pre-check refuses too, before it writes anything');
   assert.match(checkRepoWriteTarget(path.join(proj, CFG), proj) || '', /link or junction/);
+  folderText(checkRepoDirTarget(path.dirname(path.join(proj, CFG)), proj));
+  folderText(checkRepoWriteTarget(path.join(proj, CFG), proj));
+  assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), (e) => { folderText(e.message); return true; });
 });
 
 test('a .claude junction to a folder OUTSIDE the project is still refused, and nothing is made outside (regression guard)', (t) => {
@@ -55,6 +61,7 @@ test('a junction at .claude/coal (the folder, not its parent) is refused and not
   link(real, path.join(proj, '.claude', 'coal'));
   assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), refused);
   assert.deepEqual(names(real), []);
+  folderText(checkRepoWriteTarget(path.join(proj, CFG), proj));
 });
 
 test('a missing parent chain inside the project is made, one real folder at a time, and the file is written and readable by the read pin', (t) => {
@@ -71,6 +78,7 @@ test('a regular FILE where a folder is needed is refused ("exists and is not a d
   const { proj } = fixture(t);
   fs.writeFileSync(path.join(proj, '.claude'), 'i am a file');
   assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), (e) => refused(e));
+  folderText(checkRepoWriteTarget(path.join(proj, CFG), proj));
   assert.equal(fs.readFileSync(path.join(proj, '.claude'), 'utf8'), 'i am a file', 'and the file is untouched');
 });
 
@@ -120,10 +128,23 @@ test('configure.mjs end to end: a .claude junction inside the project makes it e
   const home = path.join(base, 'home'); fs.mkdirSync(home);
   const r = spawnSync(process.execPath, ['--max-old-space-size=512', path.join(repo, 'scripts', 'configure.mjs'), '--updateMode', 'off'], {
     cwd: proj, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL',
-    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, TEMP: home, TMP: home, TMPDIR: home },
+    env: SPAWN_ENV(home),
   });
   assert.notEqual(r.status, 0, `configure refuses (${r.stdout.slice(0, 200)}${r.stderr.slice(0, 300)})`);
+  folderText(r.stdout + r.stderr);
   assert.deepEqual(names(real), [], 'no config was written behind the link');
+});
+
+test('install.mjs end to end: a .cursor junction inside the project is refused with the FOLDER instruction (the text the user sees)', (t) => {
+  const { base, proj } = fixture(t);
+  fs.mkdirSync(path.join(proj, '.git'));
+  const real = path.join(proj, 'realcursor'); fs.mkdirSync(real);
+  link(real, path.join(proj, '.cursor'));
+  const home = path.join(base, 'home'); fs.mkdirSync(home);
+  const r = spawnSync(process.execPath, ['--max-old-space-size=512', path.join(repo, 'scripts', 'install.mjs'), 'cursor'], { cwd: proj, encoding: 'utf8', timeout: 120000, killSignal: 'SIGKILL', env: SPAWN_ENV(home) });
+  assert.notEqual(r.status, 0, `install refuses (${r.stdout.slice(0, 200)}${r.stderr.slice(0, 300)})`);
+  folderText(r.stdout + r.stderr);
+  assert.deepEqual(names(real), [], 'nothing was installed behind the link');
 });
 
 // POSIX symlink legs, probed by capability (Windows without the privilege skips them visibly; CI runs them).
@@ -149,4 +170,14 @@ test('a symlink to a FILE at .claude is refused (no folder can be made behind it
   try { fs.symlinkSync(probe, path.join(proj, '.claude'), 'file'); } catch { t.skip('file symlinks need privilege on this volume'); return; }
   assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), refused);
   assert.equal(fs.readFileSync(probe, 'utf8'), 'x', 'the link target is untouched');
+  folderText(checkRepoWriteTarget(path.join(proj, CFG), proj));
+});
+test('a linked FILE (the config itself a symlink) keeps the FILE instruction, not the folder one', (t) => {
+  const { proj, base } = fixture(t);
+  const real = path.join(base, 'real.json'); fs.writeFileSync(real, '{}');
+  fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
+  try { fs.symlinkSync(real, path.join(proj, CFG), 'file'); } catch { t.skip('file symlinks need privilege on this volume'); return; }
+  const why = checkRepoWriteTarget(path.join(proj, CFG), proj) || '';
+  assert.match(why, /symbolic link/);
+  assert.ok(!why.includes(FOLDER_FIX), 'a linked file is not told to make a folder');
 });

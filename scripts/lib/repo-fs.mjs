@@ -132,7 +132,8 @@ export class RepoWriteRefused extends Error {
 // included (the read side refuses to read that very path, so a config written there would be ignored by the hooks). `root` itself is not walked (a project opened through a
 // linked path still works, as for reads). Measured at main (scratchpad/r17a/witness-042.mjs): the OUTSIDE escape was already refused (checkRepoWriteTarget resolves the
 // nearest existing ancestor by realpath BEFORE the make), so nothing was made outside; the gap was the in-project link.
-const FOLDER_FIX = 'make that path a real folder inside the project (remove the link or the file that sits there) and re-run';
+// What a user is told for a refused FOLDER (a link, a junction or a file on the chain); the callers keep their file instruction for a refused FILE (17a INSPECT LOW-1).
+export const FOLDER_FIX = 'make that path a real folder inside the project (remove the link or the file that sits there) and re-run';
 function escapesRoot(rel) { return rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel); }
 // The reason a folder chain is refused, or null: only existing components are judged (a missing one has nothing under it). Used by checkRepoDirTarget, so every caller's
 // pre-check refuses before anything is written, and by mkdirRepoParents below.
@@ -140,14 +141,14 @@ function folderChainWhy(dir, root) {
   if (root == null) return null;
   const rel = path.relative(root, dir);
   if (rel === '') return null;
-  if (escapesRoot(rel)) return `${dir} is outside the project root ${root}`;
+  if (escapesRoot(rel)) return `${dir} is outside the project root ${root} -- ${FOLDER_FIX}`;
   let cur = root;
   for (const part of rel.split(path.sep)) {
     cur = path.join(cur, part);
     let st;
-    try { st = fs.lstatSync(cur); } catch (e) { if (e.code === 'ENOENT') return null; return `${cur} could not be inspected (${e.code})`; }
-    if (st.isSymbolicLink()) return `${cur} is a link or junction on the path to ${dir}, and a link at any folder under the project root is refused wherever it points`;
-    if (!st.isDirectory()) return `${cur} exists and is not a directory`;
+    try { st = fs.lstatSync(cur); } catch (e) { if (e.code === 'ENOENT') return null; return `${cur} could not be inspected (${e.code}) -- ${FOLDER_FIX}`; }
+    if (st.isSymbolicLink()) return `${cur} is a link or junction on the path to ${dir}, and a link at any folder under the project root is refused wherever it points -- ${FOLDER_FIX}`;
+    if (!st.isDirectory()) return `${cur} exists and is not a directory -- ${FOLDER_FIX}`;
   }
   return null;
 }

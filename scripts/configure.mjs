@@ -8,7 +8,7 @@ import path from 'path';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
 import { stripJsonc } from './lib/jsonc.mjs';
 import { projectConfigPath, ownDirDefault, LEGACY_CONFIGS, isGlobalCfgFile } from './lib/config-paths.mjs';
-import { MAX_CONFIG_BYTES, readRepoFileBounded, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { FOLDER_FIX, MAX_CONFIG_BYTES, readRepoFileBounded, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
 
 // The three per-agent-dir shapes were added by the namespace campaign
 // (#69+#39, owner-designated 2026-08-08) alongside the LEGACY dotfile: a
@@ -171,7 +171,8 @@ function main() {
   const lexists = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
   const refuse = (p, why) => {
     console.error(`Error: refused to use the config file ${p}: ${why}.`);
-    console.error('CoalMine will not read, back up, or write a config through a link or outside the project. Replace it with a regular file inside the project (or delete it) and re-run.');
+    // a refused FOLDER already carries FOLDER_FIX in its reason; only a refused FILE gets the file instruction (17a INSPECT LOW-1)
+    if (!why.includes(FOLDER_FIX)) console.error('CoalMine will not read, back up, or write a config through a link or outside the project. Replace it with a regular file inside the project (or delete it) and re-run.');
     process.exitCode = 1;
   };
   if (!isGlobal) {
