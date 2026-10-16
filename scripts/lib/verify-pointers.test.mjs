@@ -14,6 +14,20 @@ import { gitEnv } from './git-env.mjs';
 const NL = String.fromCharCode(10);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+// 16e (CR PRRT_kwDOSxeWG86oZt-g and PRRT_kwDOSxeWG86rMDJ9, rows 4 and 24): every verify.mjs spawn of this file runs in a sandboxed environment (HOME, USERPROFILE, TEMP, TMP and
+// TMPDIR in a throwaway folder, never the operator's) and under a finite clock (testing.md: every spawnSync in a test passes `timeout`). 100 s, not the reviewer's 300 s: the
+// room's per-test clock is 120 s (and node 22 bounds the whole FILE), so a longer bound could never fire; the slowest verify.mjs run here is about 13 s alone.
+const VERIFY_TIMEOUT_MS = 100000;
+function sandboxEnv(dir, extra = {}) {
+  return { ...process.env, HOME: dir, USERPROFILE: dir, TEMP: dir, TMP: dir, TMPDIR: dir, ...extra };
+}
+function verifyRun(t, tmp) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  return () => spawnSync(process.execPath, ['--max-old-space-size=2048', path.join(tmp, 'scripts', 'verify.mjs')],
+    { encoding: 'utf8', env: sandboxEnv(home), timeout: VERIFY_TIMEOUT_MS, killSignal: 'SIGKILL' });
+}
+
 // verify.mjs 2.11 POINTER gate (CWK-075). Task #38's H1 for the FOURTH time, applied on
 // the same pass rather than a later one: pointer-check.test.mjs is fully non-vacuous on
 // its own and proves nothing about whether block 2.11 is WIRED. Reverting the block's
@@ -29,7 +43,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 //   (a) a citation that does not resolve at all;
 //   (b) a citation under a GITIGNORED root -- the sharp case, decided WITHOUT resolving,
 //       and the one the chair's ruling is actually about.
-test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fail the WHOLE gate -- proves the wiring, not just the module', () => {
+test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fail the WHOLE gate -- proves the wiring, not just the module', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-'));
   try {
     for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
@@ -64,7 +78,7 @@ test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fa
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
 
-    const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
+    const run = verifyRun(t, tmp);
 
     // The clean copy must reach the gate and be GREEN -- otherwise the FAILs below could
     // be this fixture's own noise rather than the plants.
@@ -132,7 +146,7 @@ const plantInTop = (text, plant) => { const end = topEntryEnd(text); return text
 // shapes, and only the second passed before: a new [Unreleased] entry citing a gitignored scratchpad/ path (the gitignored-root
 // check already covered every entry) and one citing a path that resolves to nothing (the resolve check was skipped for the
 // whole file). A released entry citing the same dead path stays exempt -- history is never fixed forward.
-test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FAILs the real gate, the same path in a released entry does not', () => {
+test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FAILs the real gate, the same path in a released entry does not', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-chlog-'));
   const TICK = String.fromCharCode(96);
   try {
@@ -159,7 +173,7 @@ test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FA
     git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
-    const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
+    const run = verifyRun(t, tmp);
     const chlog = path.join(tmp, 'CHANGELOG.md');
     const live = fs.readFileSync(chlog, 'utf8');
     for (const heading of TOP_HEADINGS) {
@@ -202,7 +216,7 @@ test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FA
 
 // R20 LOW-F, through the REAL gate: a '## [' heading quoted inside a code fence of the CHANGELOG top entry must not end
 // the checked span, so a dead path below the fence FAILs. It passed before the split became fence-aware.
-test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence of the CHANGELOG top entry does not exempt the dead path below it', () => {
+test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence of the CHANGELOG top entry does not exempt the dead path below it', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-fence-'));
   const TICK = String.fromCharCode(96);
   try {
@@ -226,7 +240,7 @@ test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence 
     git(['config', 'gc.auto', '0']);
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
-    const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
+    const run = verifyRun(t, tmp);
     const lines = (r) => (r.stdout.match(/^\s*FAIL CHANGELOG\.md.*$/gm) || []);
     const chlog = path.join(tmp, 'CHANGELOG.md');
     const live = fs.readFileSync(chlog, 'utf8');
@@ -257,7 +271,7 @@ test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence 
 // directory name never mentioned as a literal anywhere else in this repo's own prose --
 // deliberately not the NAMED BOUND's own worked example, so this test's own comments
 // stay inert against every other gitignored root this tree actually carries.
-test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gitignored root is checked non-locally, not exempt', () => {
+test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gitignored root is checked non-locally, not exempt', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-nonlocal-'));
   try {
     for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
@@ -284,7 +298,7 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
     git(['add', '-A']);
     git(['commit', '-q', '-m', 'baseline']);
 
-    const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
+    const run = verifyRun(t, tmp);
 
     // PLANT A alone: an extensionless citation under the gitignored root. Shape-rejected
     // at discovery, so the fixture's own live gate must not FAIL it while nothing else
@@ -363,100 +377,98 @@ test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gi
 // the pointer gate probes it at all. `git check-ignore -v --stdin` names the lone-CR
 // line as the matching pattern (`.gitignore:2:<TAB>root/`, rendered invisibly), so the
 // source is unambiguous, not a fluke of this one fixture.
-test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-matches an absent root under the bare feed; the injection-site feed and the real gate are immune', (t) => {
+// 16e (CR PRRT_kwDOSxeWG86kpnrR, row 2): the fixture of the lone-CR tests, shared by the two tests below. The one test this was used to be reported a PASS on a Git that does
+// not reproduce the quirk, because the quirk legs were skipped inside it by a `t.diagnostic`; the quirk legs are now their own test, which ends in a real `t.skip`.
+function loneCrFixture(t) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-lonecr-'));
-  try {
-    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
-      const src = path.join(repo, d);
-      if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
-    }
-    for (const d of ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'PRIVACY.md', 'CHANGELOG.md']) {
-      fs.copyFileSync(path.join(repo, d), path.join(tmp, d));
-    }
-    // A real pattern (`dist/`) so a genuine ignore still exists to control against,
-    // PLUS a lone-CR blank line -- the shape that actually false-matches. Written as
-    // raw bytes (not a JS template string) so the CR survives untouched through
-    // core.autocrlf's smudge filter on checkout, matching the head's own fixture.
-    fs.writeFileSync(path.join(tmp, '.gitignore'), Buffer.from('dist/\r\n\r\n', 'binary'));
-    // A citation to a root that is ABSENT from disk and named by no pattern -- the
-    // shape that reproduces (see the header comment). Under the bug this token would
-    // be swallowed into a FALSE "gitignored" FAIL instead of the silent out-of-scope
-    // skip it correctly gets when `totally-fake-root` is neither an ourRoot nor
-    // resolvable beside its citer -- CoalFace's "bogus FAIL" shape, reproduced here.
-    fs.appendFileSync(path.join(tmp, 'commands', 'stats.md'),
-      NL + 'See `totally-fake-root/notes.md` for details.' + NL);
-
-    const git = (args) => {
-      const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8', env: gitEnv(path.dirname(tmp)) });
-      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
-      return r.stdout;
-    };
-    git(['init', '-q', '-b', 'main']);
-    git(['config', 'user.email', 'test@test.invalid']);
-    git(['config', 'user.name', 'Test']);
-    git(['config', 'commit.gpgsign', 'false']);
-    git(['config', 'core.autocrlf', 'true']);
-    // `git commit` starts `git maintenance run --auto` as its own process (measured with
-    // GIT_TRACE2_EVENT: cmd_name "maintenance" follows "commit"); it is not ours to wait on,
-    // and a CI leg (ubuntu node 22, git 2.55) failed this test's cleanup with ENOTEMPTY on
-    // .git. The fixture never wants it.
-    git(['config', 'maintenance.auto', 'false']);
-    git(['config', 'gc.auto', '0']);
-    git(['add', '-A']);
-    git(['commit', '-q', '-m', 'baseline']);
-    assert.ok(fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8').includes('\r\n\r\n'),
-      'the working-tree .gitignore must actually carry the lone-CR blank line -- the shape this fixture exists to test');
-    assert.ok(!fs.existsSync(path.join(tmp, 'totally-fake-root')),
-      'the probed root must be genuinely absent -- that absence is what the false match depends on');
-
-    // THE DISCRIMINATING PAIR, at the git level, on the SAME real fixture -- no
-    // source-code substitution needed, since the bare feed and the probe feed are
-    // both real, independent git invocations.
-    // CWK-120 row 21: this repo's CI matrix does not pin a Git version, and lone-CR
-    // .gitignore parsing is not a documented, universal Git contract -- a different
-    // runner's Git can legitimately answer status 1 here (correctly NOT ignored,
-    // i.e. this quirk simply does not reproduce on that Git). That is an
-    // ENVIRONMENT difference, not a CoalMine defect, so it is a visible skip of the
-    // quirk-specific assertions only -- any OTHER non-zero status is still a real
-    // fixture failure (git missing, the .gitignore fixture itself broken) and stays
-    // fatal. The CONTROL and END-TO-END assertions below run unconditionally either
-    // way, so every runner still tests the actual CoalMine behavior.
-    const bare = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/\n' });
-    if (bare.status === 1) {
-      t.diagnostic('this Git does not reproduce the lone-CR false-match (bare.status === 1) -- skipping the quirk-specific assertions only; control + end-to-end still run below');
-    } else {
-      assert.equal(bare.status, 0,
-        `RED: the bare feed must reproduce the false match on THIS fixture (or answer 1 if this Git version does not) -- got status ${bare.status}, a genuine fixture failure`);
-      const probed = spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/.pointer-check-probe\n' });
-      assert.equal(probed.status, 1,
-        'the injection-site feed correctly reports the SAME root as NOT ignored');
-      const verbose = spawnSync('git', ['check-ignore', '-v', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'totally-fake-root/\n' });
-      assert.match(verbose.stdout, /\.gitignore:2:/,
-        'the matching pattern must be the lone-CR line (line 2), naming the source unambiguously');
-    }
-
-    // CONTROL: a genuinely-ignored root still matches under BOTH feeds -- the probe
-    // loses no true positive.
-    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'dist/\n' }).status, 0);
-    assert.equal(spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input: 'dist/.pointer-check-probe\n' }).status, 0);
-
-    // A MERELY-CRLF pattern line (the old fixture's own shape) does NOT reproduce it
-    // on this box/git version -- kept as the honest, re-aimed sentence (see the header
-    // comment); not re-asserted as a second fixture here, since this box's own real
-    // lone-CR fixture already proves the point it stands beside.
-
-    // END-TO-END: the real gate, as fixed, must not be fooled by this fixture -- the
-    // absent-root citation is silently out of scope (never even resolves), never the
-    // false "gitignored" FAIL the bare feed would have produced.
-    const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
-    const r = run();
-    assert.doesNotMatch(r.stdout, /totally-fake-root.*gitignored/i,
-      'the gate must never report the absent-root citation as gitignored -- the exact false FAIL the bare feed would have produced');
-    assert.doesNotMatch(r.stdout, /FAIL.*totally-fake-root/,
-      'the absent-root citation must not FAIL at all -- it is silently out of scope, not "gitignored" and not "does not resolve"');
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+    const src = path.join(repo, d);
+    if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
   }
+  for (const d of ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'PRIVACY.md', 'CHANGELOG.md']) {
+    fs.copyFileSync(path.join(repo, d), path.join(tmp, d));
+  }
+  // A real pattern (`dist/`) so a genuine ignore still exists to control against,
+  // PLUS a lone-CR blank line -- the shape that actually false-matches. Written as
+  // raw bytes (not a JS template string) so the CR survives untouched through
+  // core.autocrlf's smudge filter on checkout, matching the head's own fixture.
+  fs.writeFileSync(path.join(tmp, '.gitignore'), Buffer.from('dist/\r\n\r\n', 'binary'));
+  // A citation to a root that is ABSENT from disk and named by no pattern -- the
+  // shape that reproduces (see the header comment). Under the bug this token would
+  // be swallowed into a FALSE "gitignored" FAIL instead of the silent out-of-scope
+  // skip it correctly gets when `totally-fake-root` is neither an ourRoot nor
+  // resolvable beside its citer -- CoalFace's "bogus FAIL" shape, reproduced here.
+  fs.appendFileSync(path.join(tmp, 'commands', 'stats.md'),
+    NL + 'See `totally-fake-root/notes.md` for details.' + NL);
+
+  const git = (args) => {
+    const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8', env: gitEnv(path.dirname(tmp)) });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.error?.message}`);
+    return r.stdout;
+  };
+  git(['init', '-q', '-b', 'main']);
+  git(['config', 'user.email', 'test@test.invalid']);
+  git(['config', 'user.name', 'Test']);
+  git(['config', 'commit.gpgsign', 'false']);
+  git(['config', 'core.autocrlf', 'true']);
+  // `git commit` starts `git maintenance run --auto` as its own process (measured with
+  // GIT_TRACE2_EVENT: cmd_name "maintenance" follows "commit"); it is not ours to wait on,
+  // and a CI leg (ubuntu node 22, git 2.55) failed this test's cleanup with ENOTEMPTY on
+  // .git. The fixture never wants it.
+  git(['config', 'maintenance.auto', 'false']);
+  git(['config', 'gc.auto', '0']);
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'baseline']);
+  assert.ok(fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8').includes('\r\n\r\n'),
+    'the working-tree .gitignore must actually carry the lone-CR blank line -- the shape this fixture exists to test');
+  assert.ok(!fs.existsSync(path.join(tmp, 'totally-fake-root')),
+    'the probed root must be genuinely absent -- that absence is what the false match depends on');
+  return { tmp, git };
+}
+
+// THE QUIRK LEGS, their own test (row 2). CWK-120 row 21: this repo's CI matrix does not pin a Git version, and lone-CR .gitignore parsing is not a documented,
+// universal Git contract -- a different runner's Git can legitimately answer status 1 here (correctly NOT ignored, i.e. this quirk simply does not reproduce on that
+// Git). That is an ENVIRONMENT difference, not a CoalMine defect, so it is a VISIBLE SKIP of these quirk-specific assertions only (a real `t.skip`, reported as a
+// skip, never as a pass) -- any OTHER non-zero status is still a real fixture failure (git missing, the .gitignore fixture itself broken) and stays fatal.
+test('verify.mjs 2.11 pointers: FIX 2 (git quirk) -- the lone-CR .gitignore line false-matches an absent root under the bare feed; the injection-site feed is immune', (t) => {
+  const { tmp } = loneCrFixture(t);
+  // THE DISCRIMINATING PAIR, at the git level, on the SAME real fixture -- no source-code substitution needed, since the bare feed and the probe feed are both real,
+  // independent git invocations.
+  const check = (input, extra = []) => spawnSync('git', ['check-ignore', ...extra, '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input, timeout: 60000, killSignal: 'SIGKILL' });
+  const bare = check('totally-fake-root/\n');
+  if (bare.status === 1) {
+    t.skip('this Git does not reproduce the lone-CR false-match (bare.status === 1); the control and end-to-end legs run in the next test');
+    return;
+  }
+  assert.equal(bare.status, 0,
+    `RED: the bare feed must reproduce the false match on THIS fixture (or answer 1 if this Git version does not) -- got status ${bare.status}, a genuine fixture failure`);
+  const probed = check('totally-fake-root/.pointer-check-probe\n');
+  assert.equal(probed.status, 1,
+    'the injection-site feed correctly reports the SAME root as NOT ignored');
+  const verbose = check('totally-fake-root/\n', ['-v']);
+  assert.match(verbose.stdout, /\.gitignore:2:/,
+    'the matching pattern must be the lone-CR line (line 2), naming the source unambiguously');
+});
+
+// CONTROL and END-TO-END, which run on every Git. CONTROL: a genuinely-ignored root still matches under BOTH feeds -- the probe loses no true positive. END-TO-END: the
+// real gate, as fixed, must not be fooled by this fixture -- the absent-root citation is silently out of scope (never even resolves), never the false "gitignored"
+// FAIL the bare feed would have produced.
+test('verify.mjs 2.11 pointers: FIX 2 (control, end to end) -- a genuinely ignored root still matches under both feeds, and the real gate is immune to the lone-CR line', (t) => {
+  const { tmp } = loneCrFixture(t);
+  const check = (input) => spawnSync('git', ['check-ignore', '--stdin'], { cwd: tmp, env: gitEnv(path.dirname(tmp)), encoding: 'utf8', input, timeout: 60000, killSignal: 'SIGKILL' });
+  assert.equal(check('dist/\n').status, 0);
+  assert.equal(check('dist/.pointer-check-probe\n').status, 0);
+
+  // A MERELY-CRLF pattern line (the old fixture's own shape) does NOT reproduce it
+  // on this box/git version -- kept as the honest, re-aimed sentence (see the header
+  // comment); not re-asserted as a second fixture here, since this box's own real
+  // lone-CR fixture already proves the point it stands beside.
+  const r = verifyRun(t, tmp)();
+  assert.doesNotMatch(r.stdout, /totally-fake-root.*gitignored/i,
+    'the gate must never report the absent-root citation as gitignored -- the exact false FAIL the bare feed would have produced');
+  assert.doesNotMatch(r.stdout, /FAIL.*totally-fake-root/,
+    'the absent-root citation must not FAIL at all -- it is silently out of scope, not "gitignored" and not "does not resolve"');
 });
 
 // verify.mjs 2.11 POINTER gate degrade path (CWK-079): git unavailable must SKIP, never
@@ -472,11 +484,11 @@ test('verify.mjs 2.11 pointers: FIX 2 -- the lone-CR .gitignore line false-match
 // dir -- verified separately that a bare `spawnSync('node', ...)` under the same
 // override fails with ENOENT on this platform too, which is why the outer command must
 // be the absolute path and not the bare name.
-test('verify.mjs 2.11 pointers: git unavailable degrades to a NAMED SKIP, never a FAIL -- proven with a capability probe, not a name filter', () => {
+test('verify.mjs 2.11 pointers: git unavailable degrades to a NAMED SKIP, never a FAIL -- proven with a capability probe, not a name filter', (t) => {
   const emptyPath = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-emptypath-'));
   try {
     const r = spawnSync(process.execPath, [path.join(repo, 'scripts', 'verify.mjs')],
-      { env: { ...process.env, PATH: emptyPath }, encoding: 'utf8' });
+      { env: sandboxEnv(emptyPath, { PATH: emptyPath }), encoding: 'utf8', timeout: VERIFY_TIMEOUT_MS, killSignal: 'SIGKILL' });
     assert.equal(r.status, 0, `git-unavailable must still exit 0 (nothing else in this repo depends on git), got:${NL}${r.stdout}${r.stderr}`);
     assert.match(r.stdout, /pointers:\n\s+--\s+pointer check: git unavailable.*skipped/,
       'the pointers block must print a visible, named SKIP -- never a silent carve-out and never a FAIL');

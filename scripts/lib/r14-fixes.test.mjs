@@ -147,6 +147,8 @@ test('ci.yml skips CI only for root files no gate reads: every file verify.mjs r
   const m = /DOCS_GLOBS: "([^"]*)"/.exec(ci);
   assert.ok(m, 'DOCS_GLOBS found');
   const skipped = m[1].split(/\s+/).filter(Boolean);
+  // 16e (CR PRRT_kwDOSxeWG86rMDJ6, row 23): the loop below tests literal membership, which equals the shell `case` match only while no entry is a pattern.
+  assert.ok(skipped.every((g) => !/[*?[]/.test(g)), 'a pattern in DOCS_GLOBS needs a shell-case matcher here, written with it');
   // DERIVED, not named: every single-file row of the pointer gate's surface plan, plus CHANGELOG.md, which
   // dist-changelog.mjs parses. A new file added to the plan joins this set by construction.
   const read = new Set(DEFAULT_SURFACE_PLAN.filter((r) => !r.dir).map((r) => r.root));

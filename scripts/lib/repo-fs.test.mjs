@@ -31,12 +31,14 @@ function canFileSymlink(dir) {
   const probe = path.join(dir, '.probe-link');
   try { fs.symlinkSync(path.join(dir, 'x'), probe, 'file'); fs.unlinkSync(probe); return true; } catch { return false; }
 }
+// 16e (CR PRRT_kwDOSxeWG86oZt-n, row 5): the capability is probed, never decided by the platform name. Git for Windows' own `mkfifo` can make a regular file, so
+// `isFIFO()` on what it made is what keeps Windows correct; the probe is removed in `finally`.
 function canMkfifo(dir) {
-  if (process.platform === 'win32') return false;
-  const r = spawnSync('mkfifo', [path.join(dir, '.probe-fifo')]);
-  if (r.status !== 0) return false;
-  fs.unlinkSync(path.join(dir, '.probe-fifo'));
-  return true;
+  const p = path.join(dir, '.probe-fifo');
+  try {
+    if (spawnSync('mkfifo', [p], { timeout: 10000 }).status !== 0) return false;
+    return fs.lstatSync(p).isFIFO();
+  } catch { return false; } finally { try { fs.rmSync(p, { force: true }); } catch { /* nothing to remove */ } }
 }
 
 test('the hooks carry the SAME two bounds as repo-fs.mjs (the copy the hooks cannot import)', () => {

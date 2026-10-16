@@ -39,7 +39,7 @@ test('verify.mjs fails a tree whose plugin/README.md is missing, stale, or under
   const skip = new Set(['.git', 'scratchpad', '.claude', 'node_modules', 'dist-claude-ai']);
   fs.cpSync(repo, dir, { recursive: true, filter: (src) => !skip.has(path.basename(src)) });
   const run = () => spawnSync(process.execPath, [path.join(dir, 'scripts', 'verify.mjs')], {
-    cwd: dir, encoding: 'utf8', timeout: 110000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=2048', TEMP: dir, TMP: dir, TMPDIR: dir },
+    cwd: dir, encoding: 'utf8', timeout: 110000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=2048', HOME: dir, USERPROFILE: dir, TEMP: dir, TMP: dir, TMPDIR: dir },
   });
   assert.equal(run().status, 0, 'control: the copied tree verifies clean');
   const dist = path.join(dir, 'plugin', 'README.md');

@@ -33,12 +33,14 @@ function runHook(script, input, tmp) {
     env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp, USERPROFILE: tmp, HOME: tmp, NODE_OPTIONS: '--max-old-space-size=2048' },
   });
 }
+// 16e (CR PRRT_kwDOSxeWG86oZt-n, row 5): the capability is probed, never decided by the platform name. Git for Windows' own `mkfifo` can make a regular file, so
+// `isFIFO()` on what it made is what keeps Windows correct; the probe is removed in `finally`.
 function canMkfifo(dir) {
-  if (process.platform === 'win32') return false;
   const p = path.join(dir, '.probe-fifo');
-  if (spawnSync('mkfifo', [p], { timeout: 10000 }).status !== 0) return false;
-  fs.unlinkSync(p);
-  return true;
+  try {
+    if (spawnSync('mkfifo', [p], { timeout: 10000 }).status !== 0) return false;
+    return fs.lstatSync(p).isFIFO();
+  } catch { return false; } finally { try { fs.rmSync(p, { force: true }); } catch { /* nothing to remove */ } }
 }
 function stopInput(sid) { return JSON.stringify({ session_id: sid, stop_hook_active: false }); }
 
