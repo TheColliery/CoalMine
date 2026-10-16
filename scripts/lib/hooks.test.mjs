@@ -2522,14 +2522,18 @@ function canMkfifoHere(dir) {
   return true;
 }
 
-// R12 bounce 2, MEDIUM-1 (reviewer witness): an IN-ROOT symlinked config (the link rule allows it:
-// its realpath lies inside the project) whose TARGET is mode 0 is genuinely unreadable and must
+// 15b5b (CI red fix) TEST PROVEN WRONG, CHANGED IN ITS OWN NAMED STEP: the fixture linked the config to <proj>/cfg-target.json, a target OUTSIDE the
+// link's own folder. The 15b5 folder pin (entryInsideItsFolder: the entry's realpath must stay inside its OWN folder) refuses that link on purpose, so the
+// config read as absent and no line printed (ubuntu and macOS, `0 !== 1`; never ran on Windows, file symlinks skip there). What R12 bounce 2 protects
+// stays: an ALLOWED link (target inside .claude/coal/) to an unreadable file is still UNREADABLE. The refusal itself is pinned by the next test.
+// R12 bounce 2, MEDIUM-1 (reviewer witness): an IN-FOLDER symlinked config (the link rule allows it:
+// its realpath lies inside its own folder .claude/coal) whose TARGET is mode 0 is genuinely unreadable and must
 // be reported `unreadable`. The first R12 fix re-asked the denied open with lstat, which does not
 // follow the link, so this went silent. POSIX non-root only (chmod 0, file symlinks).
-test('R12: an in-root symlinked config whose target is unreadable is still reported UNREADABLE (POSIX)', (t) => {
+test('R12: an in-folder symlinked config whose target is unreadable is still reported UNREADABLE (POSIX)', (t) => {
   const { proj, home } = projectAndHome(t);
   fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
-  const targetFile = path.join(proj, 'cfg-target.json');
+  const targetFile = path.join(proj, '.claude', 'coal', 'cfg-target.json');
   fs.writeFileSync(targetFile, '{"skipOnboarding": true}');
   const link = path.join(proj, '.claude', 'coal', 'coalmine.json');
   try { fs.symlinkSync(targetFile, link, 'file'); } catch { t.skip('no file symlinks here'); return; }
@@ -2541,6 +2545,23 @@ test('R12: an in-root symlinked config whose target is unreadable is still repor
   const got = unreadableLines(r.stdout);
   assert.equal(got.length, 1, `one UNREADABLE line for the in-root link to an unreadable file: ${JSON.stringify(got)}`);
   assert.ok(got[0].includes('(unreadable)'), `the reason is unreadable: ${got[0]}`);
+});
+
+// 15b5b: the refusal half. The same link with its target OUTSIDE its own folder (inside the project, one level up) is refused by the folder pin: the
+// config reads as absent, so NO UNREADABLE line prints (the pin decides before any open). POSIX non-root, same probe as above.
+test('15b5b: a symlinked config whose target is OUTSIDE its own folder is refused by the pin -- absent, no UNREADABLE line (POSIX)', (t) => {
+  const { proj, home } = projectAndHome(t);
+  fs.mkdirSync(path.join(proj, '.claude', 'coal'), { recursive: true });
+  const targetFile = path.join(proj, 'cfg-target.json');
+  fs.writeFileSync(targetFile, '{"skipOnboarding": true}');
+  const link = path.join(proj, '.claude', 'coal', 'coalmine.json');
+  try { fs.symlinkSync(targetFile, link, 'file'); } catch { t.skip('no file symlinks here'); return; }
+  const how = denyRead(targetFile);
+  if (how !== 'chmod') { restoreRead(targetFile, how); t.skip('chmod 0 does not deny the owner a read here (root, or a volume that ignores mode)'); return; }
+  let r;
+  try { r = runHook(CONDUCTOR, '', home, [], proj); } finally { restoreRead(targetFile, how); }
+  assert.equal(r.status, 0);
+  assert.deepEqual(unreadableLines(r.stdout), [], 'an out-of-folder link is refused by the pin, never reported as an unreadable config');
 });
 
 // A mode-0 FIFO swapped in after the path checks: the open is DENIED (EACCES), and on HEAD that
