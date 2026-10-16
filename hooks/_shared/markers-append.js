@@ -6,7 +6,11 @@ function appendMarker(file, text) {
   let fd;
   try {
     fd = fs.openSync(file, MARKER_APPEND_FLAGS, 0o600);
-    if (!fs.fstatSync(fd).isFile()) return false;
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return false;
+    // 16f row 18 (CWK2-044; PR #36 thread, the reviewer's cure): the read side (readMarker) returns null for a marker over MARKER_MAX_BYTES, so an append that would cross the bound
+    // makes the WHOLE touched list unreadable at stop time. Refuse the append that would cross it: the new entry is dropped silently (Phoenix #4), the list already written stays readable.
+    if (st.size + Buffer.byteLength(text) > MARKER_MAX_BYTES) return false;
     fs.writeSync(fd, text);
     return true;
   } catch { return false; } finally {

@@ -30,6 +30,7 @@ const TESTS = [
   'scripts/lib/remove-tree.test.mjs',
   // 16f (CWK2-044): the autoFixMode clamp and its emitted line (row 17) and the bounded marker append (row 18).
   'scripts/lib/autofix-clamp.test.mjs',
+  'scripts/lib/marker-append-bound.test.mjs',
   'scripts/lib/hooks.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',
