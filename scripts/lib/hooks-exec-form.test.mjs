@@ -69,7 +69,9 @@ for (const file of FILES) {
       const at = `${file} ${event}`;
       assert.equal(r.status, 0, `${at}: exit 0 (${r.stderr.slice(0, 200)})`);
       assert.equal(r.stderr, '', `${at}: no stderr (Phoenix #13)`);
-      if (event === 'SessionStart') assert.ok(r.stdout.startsWith('[CoalMine]') || r.stdout.includes('[CoalMine]'), `${at}: the conductor context is the sanctioned stdout`);
+      // 15b5 CWK2-039: the WHOLE stdout is held to the sanctioned shape (CoalFace 0cbce52): the header line, then only "- " rule lines (no trailing newline), nothing
+      // before, between or after (an earlier version accepted any output that merely CONTAINED the tag, so stray text ahead of the context passed).
+      if (event === 'SessionStart') assert.match(r.stdout, /^\[CoalMine\] 9 quality canaries installed\.[^\n]*(?:\n- [^\n]*)+$/, `${at}: the conductor context is the sanctioned stdout, exactly`);
       else if (event === 'PostToolUse') assert.equal(r.stdout, '', `${at}: touch stays silent`);
       else assert.ok(r.stdout === '' || (() => { try { JSON.parse(r.stdout); return true; } catch { return false; } })(), `${at}: silent or one JSON object`);
     }
