@@ -2,6 +2,19 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+A project config can no longer turn on automatic fixes
+
+A cloned repository's config could set `autoFixMode: safe` and make the agent edit files without the menu; that now needs your own global config. `plugin/` moves, so this is a PATCH release. (Provisional wording, finalized at DOCS 1.)
+
+### Security
+- **`autoFixMode` from a project config may only lower it.** `safe` counts only when it comes from the user's global config (``/.claude/.coalmine.json`); a project value can keep the mode or lower it, never raise it (CR row 17, CWK2-044). This reverses on purpose the 3.22.3 sentence that a project config you did not write can set it to `safe`.
+
+### Fixed
+- **The touch hook's marker append is bounded by `MARKER_MAX_BYTES`** (CR row 18): an append that would pass the bound is refused, so the marker never grows unreadable.
+- **The Antigravity Stop hook resolves the project from `workspacePaths`** (CR row 22), as the touch hook and the conductor already do.
+
 ## [3.23.3] - 2026-10-16
 
 Config folder links are refused wherever they point
