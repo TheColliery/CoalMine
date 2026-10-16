@@ -45,7 +45,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  # The job id is the status-check context GitHub reports. `check` is link-check.yml's job and a required check in the rooms' rulesets, so this
+  # job carries its own name: a required match must never be met by the wrong job (CoalHearth's INSPECT, order 17a).
+  front-door-links:
     runs-on: ubuntu-latest
     # testing.md: a finite clock. The engine gives each request 10 s, one retry after 2 s on a transient answer, so forty links that all time
     # out twice take about 15 minutes; a front door that long is its own finding.
