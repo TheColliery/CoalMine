@@ -196,6 +196,24 @@ try {
   Remove-Item -LiteralPath $cw, $cwOut -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# ---- 16f row 17 (CWK2-044): autoFixMode joins the safer-value-wins merge, Node parity (a project config may only LOWER it; `safe` counts only from the global) ----
+$af1 = Test-SaferMerge -GlobalCfg $null -ProjectCfg @{ autoFixMode = 'safe' }
+Check 'autoFixMode: a project safe with NO global is lowered to the factory default interactive' ($af1.autoFixMode -eq 'interactive')
+$af2 = Test-SaferMerge -GlobalCfg @{ autoFixMode = 'safe' } -ProjectCfg @{ autoFixMode = 'safe' }
+Check 'autoFixMode: a global safe and a project safe stays safe' ($af2.autoFixMode -eq 'safe')
+$af3 = Test-SaferMerge -GlobalCfg @{ autoFixMode = 'safe' } -ProjectCfg @{ autoFixMode = 'off' }
+Check 'autoFixMode: a global safe and a project off is off (a project may lower)' ($af3.autoFixMode -eq 'off')
+$af4 = Test-SaferMerge -GlobalCfg $null -ProjectCfg @{ autoFixMode = 'off' }
+Check 'autoFixMode: a project off with no global is off' ($af4.autoFixMode -eq 'off')
+$af5 = Test-SaferMerge -GlobalCfg @{ autoFixMode = 'safe' } -ProjectCfg @{ skipOnboarding = $true }
+Check 'autoFixMode: a global safe the project does not mention stays safe' ($af5.autoFixMode -eq 'safe')
+$af6 = Test-SaferMerge -GlobalCfg @{ autoFixMode = 'safe' } -ProjectCfg @{ autoFixMode = 'ultra' }
+Check 'autoFixMode: a junk project value is dropped, the global safe decides' ($af6.autoFixMode -eq 'safe')
+$af7 = Test-SaferMerge -GlobalCfg $null -ProjectCfg @{ autoFixMode = 'SAFE' }
+Check 'autoFixMode: a project SAFE in another case is still lowered (the clamp decision is case-folded)' ($af7.autoFixMode -eq 'interactive')
+$af8 = Test-SaferMerge -GlobalCfg @{ autoFixMode = 'off' } -ProjectCfg @{ autoFixMode = 'safe' }
+Check 'autoFixMode: a global off and a project safe stays off' ($af8.autoFixMode -eq 'off')
+
 Write-Host ''
 Write-Host "PS results: $pass passed, $fail failed, $skip skipped"
 if ($fail -gt 0) { exit 1 } else { exit 0 }

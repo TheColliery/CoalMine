@@ -28,6 +28,8 @@ const TESTS = [
   'scripts/lib/verify-pointers.test.mjs',
   // 16e item 4 (CWK2-041): removeTree, the retrying teardown of a fixture a killed git child can hold (test-sandbox.mjs), proven with a child that holds the tree as its cwd.
   'scripts/lib/remove-tree.test.mjs',
+  // 16f (CWK2-044): the autoFixMode clamp and its emitted line (row 17) and the bounded marker append (row 18).
+  'scripts/lib/autofix-clamp.test.mjs',
   'scripts/lib/hooks.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',

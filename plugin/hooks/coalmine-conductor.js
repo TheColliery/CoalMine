@@ -349,10 +349,11 @@ function cfgOpenVerdict(file) {
 // hook (the conductor) and drives a real consent escalation (an 'auto' check
 // spends tokens + networks unsolicited) — an untrusted project config must not
 // be able to flip an explicit global 'off' up to 'auto'. Guarded below,
-// mirroring CoalWash's mergeSafety (config-load.mjs). `autoFixMode` is the one
-// true exception: it is read by the AGENT from the raw file, never by any hook
-// via this merge, so a hook-side guard for IT would protect nothing — that half
-// of the old verdict stands.
+// mirroring CoalWash's mergeSafety (config-load.mjs). `autoFixMode` joined the
+// merge at 16f (CWK2-044 row 17): the AGENT still reads it itself, so the merge
+// clamps what the HOOKS compute and EMIT (autoFixLine, in the conductor and the stop hook) and the skill text
+// applies the same rule to the agent's own read -- a MITIGATION, never "closed"
+// (hooks-safety.md section 9, THE CEILING). A project value may only LOWER it.
 // TWO DEFECTS CLOSED (board #112, 2026-08-13 — audited CoalWash's current
 // `mergeSafety`/config-load.mjs and CoalBoard's current
 // hooks/coalboard-conductor.js SAFER_ENUM before writing this, per
@@ -447,6 +448,9 @@ const SAFER_ENUM = {
   // QUIETEN (`true`→`false`). No legacy alias: the key is new, it has never shipped under
   // another name.
   scanEverything: { order: [false, true], default: false },
+  // autoFixMode (16f, CWK2-044 row 17; the chief's ruling (a)): `safe` (auto-apply fixes) is the LOUDEST value, so index 0 is `off`. A project config may only move it toward
+  // safer, `safe` counts only from the user's own global config, and an absent global is the schema default `interactive` (not "anything goes"). No legacy alias.
+  autoFixMode: { order: ['off', 'interactive', 'safe'], default: 'interactive' },
 };
 // UNION-MERGE KEYS (hooks-safety.md section 9): a strArr key here is QUIETEN-only —
 // more entries can only REDUCE what a hook acts on, never escalate spend/consent — so
@@ -527,6 +531,21 @@ function loadCfg(base) {
         merged[key] = result;
         if (legacy) merged[legacy] = result; // mirror so an OR-shaped read site (enableConductor/conductor) can't be fooled by a stale legacy field
       }
+      // 16f row 17: what the merge decided for autoFixMode, for autoFixLine() in the conductor and the stop hook. Only when a config sets the key at all.
+      try {
+        const spec = SAFER_ENUM.autoFixMode;
+        const gRaw = globalCfg ? globalCfg.autoFixMode : undefined;
+        const pRaw = projectCfg ? projectCfg.autoFixMode : undefined;
+        if (gRaw !== undefined || pRaw !== undefined) {
+          const m = fold(merged.autoFixMode);
+          const mode = spec.order.includes(m) ? m : spec.default; // an unknown value (a junk GLOBAL, an absent one) reads as the schema default
+          const pValid = pRaw !== undefined && spec.order.includes(fold(pRaw));
+          const gValid = gRaw !== undefined && spec.order.includes(fold(gRaw));
+          const lowered = pValid && fold(pRaw) !== mode ? String(fold(pRaw)) : '';
+          const from = pValid && !lowered ? 'project' : gValid && fold(gRaw) === mode ? 'global' : 'default';
+          Object.defineProperty(merged, 'autoFixNote', { value: { mode, from, lowered, ignored: pRaw !== undefined && !pValid }, enumerable: false }); // not a config key: the conductor and the stop hook format it (autoFixLine)
+        }
+      } catch {}
       // Same effective-value resolution as SAFER_ENUM above (via either the
       // new or legacy key name), but the safer direction for an array is
       // UNION (dedup), not "pick one side" — either side may add.
@@ -795,11 +814,24 @@ function hasVerifiedStamp(root) {
 // platforms) — else a verified-stamp repo can still draw a redundant onboarding offer because
 // the check looked in the wrong directory. Self-contained fail-safe (never throws, defaults to
 // NOT suppressing on any internal error, same as the pre-carve default).
+// 16f row 17 (CWK2-044): the one line a hook EMITS so the agent reads the effective autoFixMode instead of merging it itself (hooks-safety.md section 9: where the hook already
+// computes the clamped value, emit it). Empty unless a config sets the key. It lives here and in the stop hook, not in the shared region, because the touch hook never reads it.
+function autoFixLine(cfg) {
+  const a = cfg && cfg.autoFixNote;
+  if (!a) return '';
+  const why = a.lowered ? `a project "${a.lowered}" is lowered to "${a.mode}"; "safe" counts only from the global config`
+    : a.ignored ? 'an unusable project value is ignored; "safe" counts only from the global config'
+    : a.from === 'project' ? 'from the project config; "safe" counts only from the global config'
+    : a.from === 'global' ? 'from the global config' : 'the factory default';
+  return `[CoalMine] autoFixMode in effect: ${a.mode} (${why})`;
+}
+
 function buildLines(cfg, base) {
   let skipOnboarding = false;
   try { skipOnboarding = !!(cfg && cfg.skipOnboarding === true) || hasVerifiedStamp(findGitRoot(base)); } catch {}
   let notes = [];
   try { notes = configPathNotes(findGitRoot(base)); } catch {}
+  try { const af = autoFixLine(cfg); if (af) notes.push('- ' + af); } catch {}
   return skipOnboarding ? [...CONDUCTOR_HEAD, ...notes, ...CONDUCTOR_TAIL] : [...CONDUCTOR_HEAD, ONBOARDING, ...notes, ...CONDUCTOR_TAIL];
 }
 

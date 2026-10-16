@@ -145,10 +145,10 @@ function Load-CoalmineConfig {
   # conductor) and drives a real consent escalation (an 'auto' check spends
   # tokens + networks unsolicited) — an untrusted project config must not flip
   # an explicit global 'off' up to 'auto'. Guarded below (Node≡PS parity),
-  # mirroring CoalWash's mergeSafety. `autoFixMode` is the one true exception:
-  # read by the AGENT from the raw file, never by any hook via this merge, so a
-  # hook-side guard for IT would protect nothing — that half of the old verdict
-  # stands.
+  # mirroring CoalWash's mergeSafety. `autoFixMode` joined at 16f (CWK2-044 row 17,
+  # Node parity): the AGENT still reads it itself, so the merge clamps what the hooks
+  # compute and the skill text applies the same rule to the agent's own read (a
+  # mitigation, never "closed"). A project value may only LOWER it.
   # TWO DEFECTS CLOSED (board #112, 2026-08-13, Node≡PS parity with `47b25bc`):
   # (1) `if (-not $globalCfg) { return $projectCfg }` returned the RAW project
   # config with ZERO merge/clamp applied — worse than the Node original, since
@@ -209,6 +209,7 @@ function Load-CoalmineConfig {
     updateMode = @{ order = @('off', 'remind', 'ask', 'auto'); default = 'ask' } # index 0 = safest; default = config-schema.mjs's declared factory default
     rotCanaryMode = @{ order = @('off', 'manual', 'auto'); default = 'auto'; legacy = 'mode' }
     enableConductor = @{ order = @($false, $true); default = $true; legacy = 'conductor' } # boolean pair -- compared directly below, never .ToLower()'d
+    autoFixMode = @{ order = @('off', 'interactive', 'safe'); default = 'interactive' } # `safe` is the loudest: index 0 = off (16f row 17, Node parity)
   }
   foreach ($key in $saferEnum.Keys) {
     $spec = $saferEnum[$key]
