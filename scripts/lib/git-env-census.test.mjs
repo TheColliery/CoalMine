@@ -74,8 +74,21 @@ test('censusGitSpawns is the findings-only view, and collectScriptsMjs walks scr
     const findings = censusGitSpawns(files);
     assert.equal(findings.length, 1);
     assert.match(findings[0], /^scripts\/a\.mjs:2 /);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeTree(dir); }
 });
+
+// Teardown of a tree git children just used: on Windows a git.exe that outlives its launcher by a few seconds still holds the tree, and one plain rmSync
+// answers EBUSY, EPERM or ENOTEMPTY, failing the test for a reason that is not the test's (CoalWash e63, measured: a loop of fresh calls clears it, the
+// retry options of one call do not; order 16i item 6). A tree still held past the budget throws: a real leak stays loud.
+function removeTree(dir, budgetMs = 30000) {
+  const until = Date.now() + budgetMs;
+  for (;;) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); return; } catch (e) {
+      if (!['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(e && e.code) || Date.now() >= until) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+  }
+}
 
 test('the lexer reads a quote inside a regex and a backtick inside a template without losing the line (F41), and a shebang is not code', () => {
   const toks = lex("#!/usr/bin/env node\nconst r = /['\"]/g; const t = `a ${'b'} c`; marker('git');\n");
