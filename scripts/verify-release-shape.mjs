@@ -52,6 +52,19 @@ function main() {
     process.exitCode = 1;
     return;
   }
+  // JSON that parses is still not a Release: 'null', a list or a bare value has no name or body to read, and a name or body that is not a string would be compared as an empty one (14h, CoalMine PR #36 oZt-9)
+  if (published === null || typeof published !== 'object' || Array.isArray(published)) {
+    console.error(`verify-release-shape: the published Release JSON is not an object (got ${published === null ? 'null' : Array.isArray(published) ? 'a list' : typeof published}) -- feed it \`gh release view "$TAG" --json name,body\``);
+    process.exitCode = 1;
+    return;
+  }
+  for (const field of ['name', 'body']) {
+    if (typeof published[field] !== 'string') {
+      console.error(`verify-release-shape: the published Release's ${field} is not a string (got ${published[field] === null ? 'null' : Array.isArray(published[field]) ? 'a list' : typeof published[field]}) -- the Release was not read back, so it is not cleared`);
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   // Trim BOTH sides the same way, never only the intended one -- release-title.txt/
   // release-body.md are written by release-notes.mjs with no guaranteed trailing newline
@@ -61,8 +74,8 @@ function main() {
   // mismatch (which would block every future release under this mechanism) while still
   // catching a real corruption -- a substituted character mid-body, the exact same-length
   // em-dash-to-hyphen shape this rail exists for, trims away to nothing and still differs.
-  const titleMatch = sha256(published.name?.trim() ?? '') === sha256(intendedTitle.trim());
-  const bodyMatch = sha256(published.body?.trim() ?? '') === sha256(intendedBody.trim());
+  const titleMatch = sha256(published.name.trim()) === sha256(intendedTitle.trim());
+  const bodyMatch = sha256(published.body.trim()) === sha256(intendedBody.trim());
 
   // A signal, never a refusal (RELEASE-PATTERN.md "The title"): outside the summary-length band the rail names it and goes on.
   const band = titleBandWarning(intendedTitle.trim());

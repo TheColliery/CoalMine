@@ -67,9 +67,9 @@
 //   4. a helper's returned expression is read, not its callers: a helper that returns a clean literal and is then
 //      handed to code that mutates it by another route (a closure, a getter, a Proxy) is not seen;
 //   5. only spawnSync/execFileSync called with the literal command 'git', 'git.exe' or a template holding just git are
-//      spawns: a command held in a variable, spawn(), execFile(), exec(), a spawn reached by `const run = spawnSync`
-//      or by member access on a module object (cp['spawnSync']) are not counted (an import or a destructure under
-//      another name IS a finding, X3); neither is a spawner whose NAME is written with a unicode escape sequence (a
+//      spawns: a command held in a variable, spawn(), execFile(), exec(), a spawn reached
+//      by member access on a module object (cp['spawnSync']) are not counted (an import or a destructure under
+//      another name, or `const run = spawnSync`, IS a finding, X3, B8); neither is a spawner whose NAME is written with a unicode escape sequence (a
 //      backslash, u and four hex digits standing for one of its letters): the lexer reads the name as it is written, so it is
 //      not spawnSync to the census although it is to the engine, and the spawn runs with whatever env it is given (X4);
 //   6. eval, new Function, a `with` block and a Proxy over process.env are not seen;
@@ -467,7 +467,7 @@ function hasEscapeKey(toks, k, me) {
 function buildCtx(text, force = null, rel = '') {
   const { toks, amb, bad } = lexAmb(text, force);
   const m = bracketMap(toks);
-  const decls = new Map(); // name -> [{ n, init }]  (init = index of the first token after `=`, or -1)
+  const decls = new Map(); // name -> [{ n, kind, init, exported }]  (init = index of the first token after `=`, or -1; exported = declared with `export`)
   const funcs = new Map(); // name -> [index of the name token of `function NAME`]
   let envImport = false;
   let processAlias = false;
@@ -485,7 +485,7 @@ function buildCtx(text, force = null, rel = '') {
       if ((t.v === 'gitEnv' || t.v === 'gitTestEnv') && isP(toks[n + 1], '=') && !(isId(p, 'const') || isId(p, 'let') || isId(p, 'var'))) gitEnvAssigned = true;
       if (isId(p) && (p.v === 'const' || p.v === 'let' || p.v === 'var')) {
         const list = decls.get(t.v) || [];
-        list.push({ n, kind: p.v, init: isP(toks[n + 1], '=') ? n + 2 : -1 });
+        list.push({ n, kind: p.v, init: isP(toks[n + 1], '=') ? n + 2 : -1, exported: isId(toks[n - 2], 'export') });
         decls.set(t.v, list);
       } else if (isId(p, 'function')) {
         const list = funcs.get(t.v) || [];
@@ -796,6 +796,7 @@ function judgeIdent(ctx, n, st) {
   const name = ctx.toks[n].v;
   const ds = ctx.decls.get(name) || [];
   if (ds.length !== 1 || ds[0].init < 0) return `${name} is not declared exactly once here with an initializer (a parameter, an import, a destructured or a repeated name)`;
+  if (ds[0].exported) return `${name} is exported, so another module can import the env object and write a GIT_ name into it after this file's spawn (14h, CoalBoard #101)`;
   if (ds[0].kind === 'var') return `${name} is a var: its declaration is hoisted, so at the spawn it can still be undefined, which hands the child the whole environment`;
   if (ds[0].n > st.at) return `${name} is declared after the spawn that uses it, so it is undefined there (and undefined hands the child the whole environment)`;
   const r = usesCheck(ctx, name, st.sites, 'env');
@@ -867,7 +868,14 @@ function judgeCall(ctx, a, b, st) {
   if (typeof rets === 'string') return rets;
   ctx.memo.add(name);
   try {
-    for (const [ra, rb] of rets) { const r = judgeExpr(ctx, ra, rb, st); if (r) return `${name}() returns an env the census refuses: ${r}`; }
+    for (const [ra, rb] of rets) {
+      // each return is judged on its own: with the flags shared, one return's GIT_CONFIG_NOSYSTEM covered every other return of the helper (14h, CoalMine 09a row 12)
+      const sub = { ...st, ambient: false, nosys: false, trusted: false };
+      const r = judgeExpr(ctx, ra, rb, sub);
+      if (r) return `${name}() returns an env the census refuses: ${r}`;
+      if (rets.length > 1 && sub.ambient && !sub.nosys && !sub.trusted) return `${name}() has a return that reads process.env but sets no GIT_CONFIG_NOSYSTEM: '1' (the helper has ${rets.length} returns, and each is judged alone)`;
+      st.ambient = st.ambient || sub.ambient; st.nosys = st.nosys || sub.nosys; st.trusted = st.trusted || sub.trusted;
+    }
   } finally { ctx.memo.delete(name); }
   return null;
 }

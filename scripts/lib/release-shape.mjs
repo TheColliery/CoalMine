@@ -55,12 +55,13 @@ export function extractChangelogEntry(changelogText, tagVersion, { previousStabl
   const headingIdx = lines.findIndex((l) => /^##\s*\[/.test(l));
   if (headingIdx === -1) throw new ChangelogShapeError('CHANGELOG.md has no version heading ("## [X.Y.Z] - YYYY-MM-DD")');
 
+  // the unfinished entry is named before the date is read: the standard `## [Unreleased]` carries no date, so reaching the date check first reported it as a malformed heading (14h, CoalLedger #8)
+  if (/^##\s*\[\s*unreleased\s*\]/i.test(lines[headingIdx])) {
+    throw new ChangelogShapeError('top entry is still [Unreleased] -- the CHANGELOG entry is written and finalized BEFORE the tag (RELEASE-PATTERN.md "The chain around the press", step 1)');
+  }
   const m = lines[headingIdx].match(/^##\s*\[([^\]]+)\]\s*-\s*(\d{4}-\d{2}-\d{2})\s*$/);
   if (!m) throw new ChangelogShapeError(`top heading "${lines[headingIdx].trim()}" is not "## [X.Y.Z] - YYYY-MM-DD"`);
   const [, version, date] = m;
-  if (version.toLowerCase() === 'unreleased') {
-    throw new ChangelogShapeError('top entry is still [Unreleased] -- the CHANGELOG entry is written and finalized BEFORE the tag (RELEASE-PATTERN.md "The chain around the press", step 1)');
-  }
   if (version !== tagVersion) {
     throw new ChangelogShapeError(`top entry is [${version}] but the pushed tag is v${tagVersion} -- the CHANGELOG entry must match the tag it is cut for`);
   }

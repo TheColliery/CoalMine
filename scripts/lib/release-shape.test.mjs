@@ -34,9 +34,15 @@ test('extractChangelogEntry: version mismatch (tag cut without updating CHANGELO
   assert.throws(() => extractChangelogEntry(CL, '3.20.1'), (e) => e instanceof ChangelogShapeError && /pushed tag is v3\.20\.1/.test(e.message));
 });
 
-test('extractChangelogEntry: [Unreleased] top entry fails loud (RED before this rule existed)', () => {
-  const cl = '## [Unreleased]\n\nsomething\n';
-  assert.throws(() => extractChangelogEntry(cl, '1.0.0'), (e) => e instanceof ChangelogShapeError && /Unreleased/.test(e.message));
+// 14h (item 14, courier 10; CoalLedger PR #20 #8): the standard `## [Unreleased]` heading carries no date, so it used to throw from the DATE check, whose message merely quotes the heading;
+// the test matched /Unreleased/, which that message holds, so it stayed green with the [Unreleased] branch deleted. The test now holds the branch's own message, for the standard and the dated heading.
+test('extractChangelogEntry: [Unreleased] top entry fails loud with the rule\'s own message, dated or not -- RED before 14h (10 #8)', () => {
+  for (const heading of ['## [Unreleased]', '## [unreleased]', '## [Unreleased] - 2026-10-14', '##[Unreleased]']) {
+    const cl = `${heading}\n\nsomething\n`;
+    assert.throws(() => extractChangelogEntry(cl, '1.0.0'), (e) => e instanceof ChangelogShapeError && /top entry is still \[Unreleased\] -- the CHANGELOG entry is written and finalized BEFORE the tag/.test(e.message), heading);
+  }
+  // control: a top heading that is neither Unreleased nor dated keeps the date message
+  assert.throws(() => extractChangelogEntry('## [1.0.0]\n\nsomething\n', '1.0.0'), (e) => e instanceof ChangelogShapeError && /is not "## \[X\.Y\.Z\] - YYYY-MM-DD"/.test(e.message));
 });
 
 test('extractChangelogEntry: no version heading at all fails loud, not a crash', () => {

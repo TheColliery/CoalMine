@@ -11,22 +11,29 @@
 // Needs GITHUB_TOKEN (contents: write -- the same permission the calling job already holds
 // to create the Release and upload assets) and GITHUB_REPOSITORY ("owner/repo"), both standard
 // GitHub Actions environment variables -- never invented ad hoc.
+import { pathToFileURL } from 'node:url';
 import { selectAssetsToPrune } from './lib/release-prune.mjs';
 
 const API = 'https://api.github.com';
+const PER_PAGE = 100;
+const MAX_PAGES = 50; // 5,000 Releases: a repository past this is refused, never read halfway
 
-async function listReleases(repo, token) {
+// Every page until a SHORT one (the last page may be exactly full: the next is then empty and ends the read). A pager that stopped at a fixed page count handed the selection a list missing
+// Releases, and a destructive step that reasons over "the older stable Releases" must never reason over a partial list (14h, CoalFace #9 = CoalLedger #7): at the cap on a full page this FAILS.
+export async function listReleases(repo, token, fetchFn = fetch, maxPages = MAX_PAGES) {
   const releases = [];
-  for (let page = 1; page < 10; page++) {
-    const r = await fetch(`${API}/repos/${repo}/releases?per_page=100&page=${page}`, {
+  for (let page = 1; page <= maxPages; page++) {
+    const r = await fetchFn(`${API}/repos/${repo}/releases?per_page=${PER_PAGE}&page=${page}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(30000),
     });
     if (!r.ok) throw new Error(`GET releases page ${page} -> HTTP ${r.status}`);
-    const page_ = await r.json();
-    releases.push(...page_);
-    if (page_.length < 100) break;
+    const body = await r.json();
+    if (!Array.isArray(body)) throw new Error(`GET releases page ${page} returned something that is not a list`);
+    releases.push(...body);
+    if (body.length < PER_PAGE) return releases;
   }
-  return releases;
+  throw new Error(`the Releases list is still full at page ${maxPages} (${releases.length} read): refusing to prune from a list that may be missing Releases`);
 }
 
 async function deleteAsset(repo, token, id) {
@@ -70,7 +77,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(`prune-release-zips: ${e.message}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => {
+    console.error(`prune-release-zips: ${e.message}`);
+    process.exitCode = 1;
+  });
+}
