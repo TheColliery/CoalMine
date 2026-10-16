@@ -1,0 +1,70 @@
+name: front-door-links
+
+# UMB3-035 row C9 (order 16i): every outward link of a FRONT DOOR (the files a visitor reads before anything else) answers at the page it names.
+# link-check.yml checks the links INSIDE the repository; this one reads the links that LEAVE it, on every change to a front door and on a weekly
+# clock, because a docs page rots while the README stands still (six READMEs said "publishing soon" about pages that were live). The engine,
+# scripts/front-door-links.mjs, fails loud on a 404, a page that no longer answers, a redirect that drops the page a deep link names, and a
+# "publishing soon" note beside a page that is live. It is copied from the canon (TheColliery/.github, templates/published-code) by blob.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'SECURITY.md'
+      - 'CONTRIBUTING.md'
+      - 'PRIVACY.md'
+      - 'CODE_OF_CONDUCT.md'
+      - 'GOVERNANCE.md'
+      - 'ACCESSIBILITY.md'
+      - 'scripts/front-door-links.mjs'
+      - 'scripts/lib/front-door-links.mjs'
+      - '.github/workflows/front-door-links.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'SECURITY.md'
+      - 'CONTRIBUTING.md'
+      - 'PRIVACY.md'
+      - 'CODE_OF_CONDUCT.md'
+      - 'GOVERNANCE.md'
+      - 'ACCESSIBILITY.md'
+      - 'scripts/front-door-links.mjs'
+      - 'scripts/lib/front-door-links.mjs'
+      - '.github/workflows/front-door-links.yml'
+  schedule:
+    - cron: '17 6 * * 1' # weekly, Monday 06:17 UTC; an off-the-hour minute, as GitHub's own scheduling advice asks
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# cancel-in-progress: TRUE -- the job reads files and fetches pages; it publishes nothing, so a superseded run leaves nothing half-done.
+concurrency:
+  group: front-door-links-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # testing.md: a finite clock. The engine gives each request 10 s, one retry after 2 s on a transient answer, so forty links that all time
+    # out twice take about 15 minutes; a front door that long is its own finding.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job pushes nothing, so the workflow token has no business staying in .git/config for the
+          # rest of the job, readable by every later step (SKILL-REPO-PATTERN.md, Layer 5).
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # The front doors that exist here, the same list the paths: filters above name. An empty list is a failure, never a green run that read nothing.
+      - name: Front-door links answer at the page they name
+        run: |
+          files=""
+          for f in README.md SECURITY.md CONTRIBUTING.md PRIVACY.md CODE_OF_CONDUCT.md GOVERNANCE.md ACCESSIBILITY.md; do
+            if [ -f "$f" ]; then files="$files $f"; fi
+          done
+          if [ -z "$files" ]; then echo "::error::no front door found, nothing was checked"; exit 1; fi
+          node scripts/front-door-links.mjs $files || exit 1

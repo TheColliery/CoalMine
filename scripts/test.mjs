@@ -31,6 +31,8 @@ const TESTS = [
   // 16f (CWK2-044): the autoFixMode clamp and its emitted line (row 17) and the bounded marker append (row 18).
   'scripts/lib/autofix-clamp.test.mjs',
   'scripts/lib/marker-append-bound.test.mjs',
+  // 16f part B: the canon's front-door-links engine test (adopted by blob from .github templates/published-code).
+  'scripts/front-door-links.test.mjs',
   'scripts/lib/hooks.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',
