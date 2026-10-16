@@ -2,6 +2,17 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+Config folder links are refused wherever they point
+
+A link at a folder of the project-config chain was followed when its target stayed inside the project; any such link is now refused. `plugin/` moved (the three hooks), so this is a PATCH release.
+
+### Security
+- **A link at a config folder is refused, wherever it points.** Before: a Windows junction or POSIX symlink at a folder of the project-config chain (`.claude`, `.claude/coal`, any component between the project root and the file's own folder) was followed when its target stayed inside the project, so a planted in-project link could redirect which in-project file was read as the config or rule file (found by the sibling CoalLedger's sweep, CWK2-037; never outside the project). Now: any link at any such component is refused, and the file's own realpath must stay inside its own folder; the project root itself is not walked. Surfaces: the three hooks (`hooks/coalmine-conductor.js`, `hooks/rot-canary-stop.js`, `hooks/rot-canary-touch.js`, through `hooks/_shared/node-config.js`) and `scripts/lib/repo-fs.mjs` (`repoEntryKind`, used by `install.mjs` and `configure.mjs`). Two named consequences: a `.claude/rules` folder that is a junction to another folder of the project is no longer walked, and `install.mjs` refuses a link in the folder chain of the trigger files it reads (the Cursor, Copilot and Antigravity rules files). Not covered: a link swapped in between the check and the open. Windows junction legs ran locally; the POSIX symlink legs run in CI. See the follow-up record under CWK-137 in `SECURITY.md`. — test: `scripts/lib/folder-pin.test.mjs`
+- **Internal —** `scripts/verify.mjs` now fails a Claude Code hook entry whose `type` is not `command` (and any entry that is not the exec form), and the exec-form test holds the conductor's stdout to the sanctioned output exactly (`scripts/lib/verify-hooks-manifest.test.mjs`, `scripts/lib/hooks-exec-form.test.mjs`); this ships nothing in `plugin/`.
+- **`SECURITY.md`'s SkillSpector section describes the v3.23.2 scan** (SkillSpector v2.12.0 pinned at `2226747`, 27 findings, 44 of 49 files covered, all adjudicated).
+
 ## [3.23.2] - 2026-10-15
 
 Hooks run in exec form; installer cleans every kill point
