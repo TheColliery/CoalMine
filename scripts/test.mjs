@@ -33,6 +33,8 @@ const TESTS = [
   'scripts/lib/marker-append-bound.test.mjs',
   // 16f part B: the canon's front-door-links engine test (adopted by blob from .github templates/published-code).
   'scripts/front-door-links.test.mjs',
+  // 17a (CWK2-042): the project-write folder pin (writeRepoFile / mkdirRepoParents), the write twin of folder-pin.test.mjs.
+  'scripts/lib/write-folder-pin.test.mjs',
   'scripts/lib/hooks.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',

@@ -127,6 +127,52 @@ export class RepoWriteRefused extends Error {
   constructor(message) { super(message); this.code = 'COALMINE_WRITE_REFUSED'; }
 }
 
+// 17a (CWK2-042, the project-write folder pin; CoalLedger's mkdirRepoParents, v0.15.0-beta.7, ported). The write side follows the same literal pin as the 15b read side
+// (repoEntryKind): a link or junction at ANY component between the project root and the target's folder is refused wherever it points, a target INSIDE the project
+// included (the read side refuses to read that very path, so a config written there would be ignored by the hooks). `root` itself is not walked (a project opened through a
+// linked path still works, as for reads). Measured at main (scratchpad/r17a/witness-042.mjs): the OUTSIDE escape was already refused (checkRepoWriteTarget resolves the
+// nearest existing ancestor by realpath BEFORE the make), so nothing was made outside; the gap was the in-project link.
+const FOLDER_FIX = 'make that path a real folder inside the project (remove the link or the file that sits there) and re-run';
+function escapesRoot(rel) { return rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel); }
+// The reason a folder chain is refused, or null: only existing components are judged (a missing one has nothing under it). Used by checkRepoDirTarget, so every caller's
+// pre-check refuses before anything is written, and by mkdirRepoParents below.
+function folderChainWhy(dir, root) {
+  if (root == null) return null;
+  const rel = path.relative(root, dir);
+  if (rel === '') return null;
+  if (escapesRoot(rel)) return `${dir} is outside the project root ${root}`;
+  let cur = root;
+  for (const part of rel.split(path.sep)) {
+    cur = path.join(cur, part);
+    let st;
+    try { st = fs.lstatSync(cur); } catch (e) { if (e.code === 'ENOENT') return null; return `${cur} could not be inspected (${e.code})`; }
+    if (st.isSymbolicLink()) return `${cur} is a link or junction on the path to ${dir}, and a link at any folder under the project root is refused wherever it points`;
+    if (!st.isDirectory()) return `${cur} exists and is not a directory`;
+  }
+  return null;
+}
+// Make `dir` (and its missing parents) under `root`, one component at a time with a plain NON-recursive mkdir, lstat-ing each component after it exists, so a refused target
+// makes nothing past a checked component. `root = null` (a user-chosen folder that is its own root) keeps the plain recursive make. Residual, named: the walk and the later write
+// are separate steps, so a folder swapped for a junction by a local process after the last re-check is caught only by writeRepoFile's realpath check on the nearest ancestor.
+export function mkdirRepoParents(dir, root) {
+  if (root == null) { fs.mkdirSync(dir, { recursive: true }); return; }
+  const rel = path.relative(root, dir);
+  if (rel === '') return;
+  if (escapesRoot(rel)) throw new RepoWriteRefused(`${dir} is outside the project root ${root} -- ${FOLDER_FIX}.`);
+  let cur = root;
+  for (const part of rel.split(path.sep)) {
+    cur = path.join(cur, part);
+    let st = null;
+    try { st = fs.lstatSync(cur); } catch (e) { if (e.code !== 'ENOENT') throw new RepoWriteRefused(`${cur} could not be inspected (${e.code}) -- ${FOLDER_FIX}.`); }
+    if (st === null) {
+      try { fs.mkdirSync(cur); } catch (e) { if (e.code !== 'EEXIST') throw new RepoWriteRefused(`${cur}: its folder could not be made (${e.code}) -- ${FOLDER_FIX}.`); }
+      try { st = fs.lstatSync(cur); } catch (e) { throw new RepoWriteRefused(`${cur} could not be inspected after it was made (${e.code}) -- ${FOLDER_FIX}.`); }
+    }
+    if (st.isSymbolicLink()) throw new RepoWriteRefused(`${cur} is a link or junction on the path to ${dir}, and a link at any folder under the project root is refused wherever it points -- ${FOLDER_FIX}.`);
+    if (!st.isDirectory()) throw new RepoWriteRefused(`${cur} exists and is not a directory -- ${FOLDER_FIX}.`);
+  }
+}
+
 function nearestExistingAncestor(p) {
   let dir = p;
   for (;;) {
@@ -147,7 +193,7 @@ export function checkRepoDirTarget(dir, root) {
   let ancReal;
   try { ancReal = fs.realpathSync.native(anc); } catch { return `${anc} is a link that does not resolve`; }
   if (!isContained(ancReal, rootReal)) return `${anc} resolves to ${ancReal}, outside ${rootReal}`;
-  return null;
+  return folderChainWhy(path.resolve(dir), path.resolve(root)); // 17a: a link anywhere under the root is refused, in-project included
 }
 
 // Is `target` a file CoalMine may (re)write inside `root`? null = yes, else the reason.
@@ -173,7 +219,7 @@ export function checkRepoWriteTarget(target, root) {
 export function writeRepoFile(target, content, root) {
   const why = checkRepoWriteTarget(target, root);
   if (why) throw new RepoWriteRefused(why);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
+  mkdirRepoParents(path.dirname(path.resolve(target)), path.resolve(root)); // 17a (CWK2-042): one component at a time, a link at any component refused
   const tmp = `${target}.coalmine-tmp-${process.pid}`;
   fs.writeFileSync(tmp, content, { encoding: 'utf8', flag: 'wx' });
   try {
