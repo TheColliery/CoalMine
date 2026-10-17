@@ -26,6 +26,8 @@ const TESTS = [
   // 15b5b: render.test.mjs split at its seams (the 14 tests that spawn the real verify.mjs went to these two) so no file nears node 22's per-file clock.
   'scripts/lib/verify-wiring.test.mjs',
   'scripts/lib/verify-pointers.test.mjs',
+  // 17e BUILD 2: verify-pointers split again (the git half: FIX 2 pair + git-unavailable) after it crossed node 22's per-file 120 s clock on CI.
+  'scripts/lib/verify-pointers-git.test.mjs',
   // 16e item 4 (CWK2-041): removeTree, the retrying teardown of a fixture a killed git child can hold (test-sandbox.mjs), proven with a child that holds the tree as its cwd.
   'scripts/lib/remove-tree.test.mjs',
   // 16f (CWK2-044): the autoFixMode clamp and its emitted line (row 17) and the bounded marker append (row 18).
