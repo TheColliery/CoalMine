@@ -170,16 +170,15 @@ test('verify.mjs 2.11 pointers: FIX 2 (control, end to end) -- a genuinely ignor
   // lone-CR fixture already proves the point it stands beside.
   const r = verifyRun(t, tmp)();
   // 17e BUILD 3 (E1 t169): the doesNotMatch asserts below are vacuous on a run that never reached the pointers gate (a crash at import, a timeout, an earlier gate exiting first).
-  // So assert the run finished and printed the pointers block, then judge that block. Status 0 is NOT asserted: the trimmed fixture may fail unrelated gates.
+  // So assert the run finished and printed the pointers block, then judge the WHOLE stdout (a slice between 'hooks:' substrings can be cut short by a line that merely holds one; INSPECT bounce 1). Status 0 is NOT asserted: the trimmed fixture may fail unrelated gates.
   assert.ok(!r.error, `verify.mjs ran to the end (no spawn error, no timeout): ${r.error && r.error.message}`);
   const out = String(r.stdout);
   const start = out.indexOf('pointers:');
   const end = out.indexOf('hooks:');
-  assert.ok(start !== -1 && end > start, `the pointers block was printed and is delimited by a following hooks: block, got:${NL}${out}${r.stderr}`);
-  const pointersBlock = out.slice(start, end);
-  assert.doesNotMatch(pointersBlock, /totally-fake-root.*gitignored/i,
+  assert.ok(start !== -1 && end > start, `the pointers block was printed, followed by hooks:, got:${NL}${out}${r.stderr}`);
+  assert.doesNotMatch(out, /totally-fake-root.*gitignored/i,
     'the gate must never report the absent-root citation as gitignored -- the exact false FAIL the bare feed would have produced');
-  assert.doesNotMatch(pointersBlock, /FAIL.*totally-fake-root/,
+  assert.doesNotMatch(out, /FAIL.*totally-fake-root/,
     'the absent-root citation must not FAIL at all -- it is silently out of scope, not "gitignored" and not "does not resolve"');
 });
 
