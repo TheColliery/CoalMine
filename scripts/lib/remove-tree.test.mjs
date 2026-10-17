@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { removeTree } from './test-sandbox.mjs';
+import { removeTree, blockingSleep } from './test-sandbox.mjs';
 
 const HOLDER = 'console.log("ready"); setTimeout(() => {}, Number(process.argv[1]))';
 
@@ -100,4 +100,11 @@ test('removeTree removes an ordinary tree and tolerates a path that is not there
   removeTree(dir);
   assert.ok(!fs.existsSync(dir));
   removeTree(dir);
+});
+
+test('the default sleep blocks for at least the time asked (a lower bound only: a no-op sleep would busy-loop the retry)', () => {
+  const t0 = process.hrtime.bigint();
+  blockingSleep(120);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms >= 100, `it waited (${ms} ms), not zero`); // 100 not 120: the clock reads and the wait's own rounding may shave a little off
 });

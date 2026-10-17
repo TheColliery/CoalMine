@@ -35,7 +35,7 @@ const JUNCTION_OK = (() => {
     fs.rmSync(d, { recursive: true, force: true });
   }
 })();
-const jtest = (name, fn) => test(name, { skip: JUNCTION_OK ? false : 'junctions cannot be made on this volume (probed)' }, fn);
+const jtest = (name, fn) => test(name, (t) => { if (!JUNCTION_OK) { t.skip('junctions cannot be made on this volume (probed)'); return; } return fn(t); });
 const link = (target, at) => { fs.mkdirSync(path.dirname(at), { recursive: true }); fs.symlinkSync(target, at, 'junction'); };
 const names = (d) => fs.readdirSync(d).sort();
 const refused = (e) => e && e.code === 'COALMINE_WRITE_REFUSED';
@@ -108,12 +108,17 @@ test('a ".." segment that leaves the project is refused by the make, and nothing
 
 // The make is its own line of defence: writeRepoFile's pre-check (checkRepoWriteTarget) refuses these first, so only a direct call proves the walk itself (and the
 // race, a folder swapped for a link between the check and the make, is the case where the walk is the only guard left).
-jtest('mkdirRepoParents on its own: an in-project junction on the chain throws and makes nothing behind it; a file on the chain throws', (t) => {
+jtest('mkdirRepoParents on its own: an in-project junction on the chain throws and makes nothing behind it', (t) => {
   const { proj } = fixture(t);
   const real = path.join(proj, 'realclaude'); fs.mkdirSync(real);
   link(real, path.join(proj, '.claude'));
   assert.throws(() => mkdirRepoParents(path.join(proj, '.claude', 'coal', 'deeper'), proj), (e) => refused(e) && /link or junction/.test(e.message));
   assert.deepEqual(names(real), [], 'nothing was made behind the link');
+});
+
+// 17e (t157 (2)): needs no junction, so it runs everywhere
+test('mkdirRepoParents on its own: a file on the chain throws', (t) => {
+  const { proj } = fixture(t);
   fs.writeFileSync(path.join(proj, 'afile'), 'x');
   assert.throws(() => mkdirRepoParents(path.join(proj, 'afile', 'sub'), proj), (e) => refused(e) && /not a directory/.test(e.message));
 });
