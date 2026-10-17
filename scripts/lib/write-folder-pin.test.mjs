@@ -27,6 +27,15 @@ function fixture(t) {
   fs.mkdirSync(proj); fs.mkdirSync(outside);
   return { base, proj, outside };
 }
+// CWK2-053 (t148 (1)): the junction capability is PROBED once, in a throwaway folder, never assumed; a volume that cannot make one skips the legs that need it VISIBLY.
+const JUNCTION_OK = (() => {
+  const d = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-wpin-probe-'));
+  try { fs.mkdirSync(path.join(d, 'target')); fs.symlinkSync(path.join(d, 'target'), path.join(d, 'at'), 'junction'); return true; } catch { return false; } finally {
+    try { fs.unlinkSync(path.join(d, 'at')); } catch { /* not made */ }
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+})();
+const jtest = (name, fn) => test(name, { skip: JUNCTION_OK ? false : 'junctions cannot be made on this volume (probed)' }, fn);
 const link = (target, at) => { fs.mkdirSync(path.dirname(at), { recursive: true }); fs.symlinkSync(target, at, 'junction'); };
 const names = (d) => fs.readdirSync(d).sort();
 const refused = (e) => e && e.code === 'COALMINE_WRITE_REFUSED';
@@ -34,7 +43,7 @@ const refused = (e) => e && e.code === 'COALMINE_WRITE_REFUSED';
 const folderText = (m) => { assert.ok(m.includes(FOLDER_FIX), `the folder instruction is shown: ${m}`); assert.ok(!/regular file/.test(m), `and the file instruction is not: ${m}`); };
 const SPAWN_ENV = (home) => ({ PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, TEMP: home, TMP: home, TMPDIR: home });
 
-test('a .claude junction to a folder INSIDE the project is refused, and nothing is made behind it (the gap)', (t) => {
+jtest('a .claude junction to a folder INSIDE the project is refused, and nothing is made behind it (the gap)', (t) => {
   const { proj } = fixture(t);
   const real = path.join(proj, 'realclaude'); fs.mkdirSync(real);
   link(real, path.join(proj, '.claude'));
@@ -47,7 +56,7 @@ test('a .claude junction to a folder INSIDE the project is refused, and nothing 
   assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), (e) => { folderText(e.message); return true; });
 });
 
-test('a .claude junction to a folder OUTSIDE the project is still refused, and nothing is made outside (regression guard)', (t) => {
+jtest('a .claude junction to a folder OUTSIDE the project is still refused, and nothing is made outside (regression guard)', (t) => {
   const { proj, outside } = fixture(t);
   link(outside, path.join(proj, '.claude'));
   assert.throws(() => writeRepoFile(path.join(proj, CFG), '{}', proj), refused);
@@ -57,7 +66,7 @@ test('a .claude junction to a folder OUTSIDE the project is still refused, and n
   folderText(checkRepoWriteTarget(path.join(proj, CFG), proj));
 });
 
-test('a junction at .claude/coal (the folder, not its parent) is refused and nothing is made behind it', (t) => {
+jtest('a junction at .claude/coal (the folder, not its parent) is refused and nothing is made behind it', (t) => {
   const { proj } = fixture(t);
   const real = path.join(proj, 'elsewhere'); fs.mkdirSync(real);
   fs.mkdirSync(path.join(proj, '.claude'));
@@ -99,7 +108,7 @@ test('a ".." segment that leaves the project is refused by the make, and nothing
 
 // The make is its own line of defence: writeRepoFile's pre-check (checkRepoWriteTarget) refuses these first, so only a direct call proves the walk itself (and the
 // race, a folder swapped for a link between the check and the make, is the case where the walk is the only guard left).
-test('mkdirRepoParents on its own: an in-project junction on the chain throws and makes nothing behind it; a file on the chain throws', (t) => {
+jtest('mkdirRepoParents on its own: an in-project junction on the chain throws and makes nothing behind it; a file on the chain throws', (t) => {
   const { proj } = fixture(t);
   const real = path.join(proj, 'realclaude'); fs.mkdirSync(real);
   link(real, path.join(proj, '.claude'));
@@ -109,7 +118,7 @@ test('mkdirRepoParents on its own: an in-project junction on the chain throws an
   assert.throws(() => mkdirRepoParents(path.join(proj, 'afile', 'sub'), proj), (e) => refused(e) && /not a directory/.test(e.message));
 });
 
-test('the ROOT itself reached through a link still writes (the root is not walked, as for reads)', (t) => {
+jtest('the ROOT itself reached through a link still writes (the root is not walked, as for reads)', (t) => {
   const { base, proj } = fixture(t);
   const viaLink = path.join(base, 'rootlink');
   link(proj, viaLink);
@@ -123,7 +132,7 @@ test('root = null (a user-chosen folder that is its own root) keeps the plain re
   assert.ok(fs.lstatSync(path.join(base, 'a', 'b', 'c')).isDirectory());
 });
 
-test('configure.mjs end to end: a .claude junction inside the project makes it exit non-zero and write nothing behind the link', (t) => {
+jtest('configure.mjs end to end: a .claude junction inside the project makes it exit non-zero and write nothing behind the link', (t) => {
   const { base, proj } = fixture(t);
   fs.mkdirSync(path.join(proj, '.git'));
   const real = path.join(proj, 'realclaude'); fs.mkdirSync(real);
@@ -138,7 +147,7 @@ test('configure.mjs end to end: a .claude junction inside the project makes it e
   assert.deepEqual(names(real), [], 'no config was written behind the link');
 });
 
-test('install.mjs end to end: a .cursor junction inside the project is refused with the FOLDER instruction (the text the user sees)', (t) => {
+jtest('install.mjs end to end: a .cursor junction inside the project is refused with the FOLDER instruction (the text the user sees)', (t) => {
   const { base, proj } = fixture(t);
   fs.mkdirSync(path.join(proj, '.git'));
   const real = path.join(proj, 'realcursor'); fs.mkdirSync(real);

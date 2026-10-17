@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { removeTree, TEARDOWN_BUDGET_MS } from './test-sandbox.mjs';
+import { removeTree } from './test-sandbox.mjs';
 
 const HOLDER = 'console.log("ready"); setTimeout(() => {}, Number(process.argv[1]))';
 
@@ -52,32 +52,44 @@ test('the class: a plain rmSync of a tree a live child holds as its cwd fails (E
   await h.stop();
 });
 
-test('removeTree clears a held tree once the holder exits, inside the budget', async (t) => {
+// A counting rm over the real one, and a fake clock that only the injected sleep advances: the retry count and the budget are observed, never timed.
+function counted() {
+  const c = { rm: 0, sleeps: 0, clock: 0 };
+  return { c, opts: { rm: (d) => { c.rm++; fs.rmSync(d, { recursive: true, force: true }); }, now: () => c.clock, sleep: (ms) => { c.sleeps++; c.clock += ms; } } };
+}
+
+test('removeTree clears a held tree once the holder exits: the tree is gone and it retried (the first attempt failed)', async (t) => {
   const held = await plainRmFailsOnHeld(t);
   if (held === null) { t.skip('the class cannot be provoked here (plain rmSync succeeds on a held tree)'); return; }
   const h = await heldTree(t, 1500);
-  const t0 = Date.now();
-  removeTree(h.dir);
-  const ms = Date.now() - t0;
+  const { c, opts } = counted();
+  removeTree(h.dir, { rm: opts.rm }); // real clock and sleep: the holder exits by itself, the budget is the default
   assert.ok(!fs.existsSync(h.dir), 'the tree is gone');
-  assert.ok(ms >= 500 && ms < TEARDOWN_BUDGET_MS, `it waited for the holder (${ms} ms), not zero and not the whole budget`);
+  assert.ok(c.rm >= 2, `the first attempt hit the held folder and a later one cleared it (${c.rm} attempts)`);
 });
 
-test('removeTree is LOUD: a tree still held past the budget throws the held-folder code, near the budget and not before it', async (t) => {
+test('removeTree is LOUD: a tree still held when the budget is spent throws the held-folder code after budget/poll retries; nothing is dropped', async (t) => {
   const held = await plainRmFailsOnHeld(t);
   if (held === null) { t.skip('the class cannot be provoked here (plain rmSync succeeds on a held tree)'); return; }
   const h = await heldTree(t, 30_000);
-  const t0 = Date.now();
-  assert.throws(() => removeTree(h.dir, { budgetMs: 600, pollMs: 50 }), (e) => ['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(e.code));
-  const ms = Date.now() - t0;
-  assert.ok(ms >= 550 && ms < 5000, `it kept retrying for the budget (${ms} ms), then threw`);
+  const { c, opts } = counted();
+  assert.throws(() => removeTree(h.dir, { budgetMs: 600, pollMs: 50, ...opts }), (e) => ['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(e.code));
+  assert.equal(c.sleeps, 12, 'it slept once per poll until the fake clock reached the 600 ms budget');
+  assert.equal(c.rm, 13, 'one attempt per poll plus the first and the last');
   assert.ok(fs.existsSync(h.dir), 'the tree is still there: nothing is silently dropped');
 });
 
 test('removeTree retries ONLY a held-folder code: any other error is thrown at once, never waited out', () => {
-  const t0 = Date.now();
-  assert.throws(() => removeTree(12345, { budgetMs: 5000, pollMs: 50 }), (e) => e.code === 'ERR_INVALID_ARG_TYPE');
-  assert.ok(Date.now() - t0 < 1000, 'a non-held error does not enter the retry loop');
+  const { c, opts } = counted();
+  assert.throws(() => removeTree(12345, { budgetMs: 5000, pollMs: 50, ...opts }), (e) => e.code === 'ERR_INVALID_ARG_TYPE');
+  assert.equal(c.sleeps, 0, 'a non-held error does not enter the retry loop');
+  assert.equal(c.rm, 1);
+});
+
+test('removeTree retries a held code with a stubbed rm until it clears, then returns (no held tree needed)', () => {
+  let left = 3; const c = { sleeps: 0 };
+  removeTree('x', { rm: () => { if (left-- > 0) throw Object.assign(new Error('held'), { code: 'EBUSY' }); }, now: () => 0, sleep: () => { c.sleeps++; } });
+  assert.equal(c.sleeps, 3, 'three held answers, three sleeps, the fourth attempt cleared');
 });
 
 test('removeTree removes an ordinary tree and tolerates a path that is not there', (t) => {
