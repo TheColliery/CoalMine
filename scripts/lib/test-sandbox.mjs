@@ -120,7 +120,7 @@ export const TEARDOWN_BUDGET_MS = 30000;
 export const TEARDOWN_POLL_MS = 100;
 const HELD = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY']);
 // CWK2-053: rm, now and sleep are injection points for remove-tree.test.mjs (a counted retry loop and a fake clock instead of wall-clock asserts); the defaults are today's behaviour.
-export const blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); // a synchronous wait: teardowns run in finally blocks and t.after alike
+const blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); // a synchronous wait: teardowns run in finally blocks and t.after alike
 const realRm = (dir) => fs.rmSync(dir, { recursive: true, force: true });
 export function removeTree(dir, { budgetMs = TEARDOWN_BUDGET_MS, pollMs = TEARDOWN_POLL_MS, rm = realRm, now = Date.now, sleep = blockingSleep } = {}) {
   const until = now() + budgetMs;
