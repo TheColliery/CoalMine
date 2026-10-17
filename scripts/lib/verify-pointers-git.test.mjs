@@ -104,7 +104,10 @@ function loneCrFixture(t) {
   // skip it correctly gets when `totally-fake-root` is neither an ourRoot nor
   // resolvable beside its citer -- CoalFace's "bogus FAIL" shape, reproduced here.
   fs.appendFileSync(path.join(tmp, 'commands', 'stats.md'),
-    NL + 'See `totally-fake-root/notes.md` for details.' + NL);
+    NL + 'See `totally-fake-root/notes.md` for details.' + NL +
+    // 18a (E1 t171): a SENTINEL citation, in scope (`commands/` is a tracked root) and dead, so the gate prints a FAIL line that NAMES this citing file. verify.mjs prints no per-file
+    // or scanned-count line for a clean file, so a finding is the smallest real signal that commands/stats.md was scanned at all.
+    'And see `commands/sentinel-18a-missing.md` as the in-scope sentinel.' + NL);
 
   const git = (args) => {
     const r = spawnSync('git', args, { cwd: tmp, encoding: 'utf8', env: gitEnv(path.dirname(tmp)) });
@@ -176,6 +179,8 @@ test('verify.mjs 2.11 pointers: FIX 2 (control, end to end) -- a genuinely ignor
   const start = out.indexOf('pointers:');
   const end = out.indexOf('hooks:');
   assert.ok(start !== -1 && end > start, `the pointers block was printed, followed by hooks:, got:${NL}${out}${r.stderr}`);
+  assert.match(out, /FAIL commands\/stats\.md cites `commands\/sentinel-18a-missing\.md`, which does not resolve/,
+    'POSITIVE: the citing file commands/stats.md was scanned (its in-scope sentinel citation is reported by name), so the doesNotMatch asserts below judged a real scan');
   assert.doesNotMatch(out, /totally-fake-root.*gitignored/i,
     'the gate must never report the absent-root citation as gitignored -- the exact false FAIL the bare feed would have produced');
   assert.doesNotMatch(out, /FAIL.*totally-fake-root/,
