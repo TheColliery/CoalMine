@@ -46,8 +46,10 @@ concurrency:
 
 jobs:
   # The job id is the status-check context GitHub reports. `check` is link-check.yml's job and a required check in the rooms' rulesets, so this
-  # job carries its own name: a required match must never be met by the wrong job (CoalHearth's INSPECT, order 17a).
+  # job carries its own name: a required match must never be met by the wrong job (CoalHearth's INSPECT, order 17a). The name: equals the id, so the
+  # context stays the same and zizmor's anonymous-definition is answered (CoalFace's courier, order 18a).
   front-door-links:
+    name: front-door-links
     runs-on: ubuntu-latest
     # testing.md: a finite clock. The engine gives each request 10 s, one retry after 2 s on a transient answer, so forty links that all time
     # out twice take about 15 minutes; a front door that long is its own finding.
@@ -64,9 +66,9 @@ jobs:
       # The front doors that exist here, the same list the paths: filters above name. An empty list is a failure, never a green run that read nothing.
       - name: Front-door links answer at the page they name
         run: |
-          files=""
+          files=()
           for f in README.md SECURITY.md CONTRIBUTING.md PRIVACY.md CODE_OF_CONDUCT.md GOVERNANCE.md ACCESSIBILITY.md; do
-            if [ -f "$f" ]; then files="$files $f"; fi
+            if [ -f "$f" ]; then files+=("$f"); fi
           done
-          if [ -z "$files" ]; then echo "::error::no front door found, nothing was checked"; exit 1; fi
-          node scripts/front-door-links.mjs $files || exit 1
+          if [ "${#files[@]}" -eq 0 ]; then echo "::error::no front door found, nothing was checked"; exit 1; fi
+          node scripts/front-door-links.mjs "${files[@]}" || exit 1

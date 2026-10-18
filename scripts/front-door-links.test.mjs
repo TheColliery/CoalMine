@@ -25,7 +25,6 @@ const routes = (req, res) => {
     case '/docs/tools/x': return redirect('/docs/tools/x/index'); // kept: the final path still holds the segment
     case '/root1': return redirect('/');                      // a one-segment link may land on a root (a stable entry link)
     case '/loop': return redirect('/loop');
-    case '/slow': return; // never answers
     case '/flaky': flakyHits++; if (flakyHits % 2 === 1) { res.writeHead(503); return res.end(); } return ok();
     case '/limited': res.writeHead(429); return res.end();
     case '/bad-location': res.writeHead(302, { location: 'http://' }); return res.end();
@@ -38,7 +37,12 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.closeAllConnections?.(); server.close(); });
-const fast = { timeoutMs: 300, retryMs: 10 };
+// No assertion in this file depends on how fast the loopback server answers (17c): a loaded windows runner answered a probe late and the 300 ms clock of 16i
+// read it as no answer (CoalMine run 64c3ffb and twice more, CoalWash 3 of 4 pushes). Every real-server probe gets a clock far beyond any load (the file's own
+// clock still catches a true hang), and the timeout itself is proved against a fetch that NEVER answers and only honours the abort signal, so it fires on time
+// whatever the box is doing.
+const LONG = { timeoutMs: 60000, retryMs: 10 };
+const neverAnswers = (u, o) => new Promise((_, reject) => o.signal.addEventListener('abort', () => reject(o.signal.reason)));
 
 test('extractLinks: markdown links, autolinks and HTML hrefs are read with their line; fenced blocks, inline code, relative paths, mailto and titled links behave', () => {
   const text = [
@@ -52,15 +56,15 @@ test('extractLinks: markdown links, autolinks and HTML hrefs are read with their
 });
 
 test('probe: follows a chain by hand and reports the final status and URL; a loop, a timeout and an unreadable location are errors, never throws', async () => {
-  assert.deepEqual(await probe(fetch, `${base}/moved`, fast), { status: 200, finalUrl: `${base}/ok`, hops: 1 });
-  assert.deepEqual(await probe(fetch, `${base}/missing`, fast), { status: 404, finalUrl: `${base}/missing`, hops: 0 });
-  const loop = await probe(fetch, `${base}/loop`, fast);
+  assert.deepEqual(await probe(fetch, `${base}/moved`, LONG), { status: 200, finalUrl: `${base}/ok`, hops: 1 });
+  assert.deepEqual(await probe(fetch, `${base}/missing`, LONG), { status: 404, finalUrl: `${base}/missing`, hops: 0 });
+  const loop = await probe(fetch, `${base}/loop`, LONG);
   assert.match(loop.error, /more than 5 redirects/);
-  const slow = await probe(fetch, `${base}/slow`, fast);
+  const slow = await probe(neverAnswers, 'http://never.example/', { timeoutMs: 300, retryMs: 10 });
   assert.equal(slow.status, 0); assert.equal(slow.error, 'timeout');
-  const dead = await probe(fetch, 'http://127.0.0.1:1/x', fast);
+  const dead = await probe(fetch, 'http://127.0.0.1:1/x', LONG);
   assert.equal(dead.status, 0); assert.ok(dead.error, 'a refused connection names its error');
-  assert.match((await probe(fetch, `${base}/bad-location`, fast)).error, /unreadable location/);
+  assert.match((await probe(fetch, `${base}/bad-location`, LONG)).error, /unreadable location/);
 });
 
 test('judge: the C9 shapes are findings (a 404, a dropped deep link, a stale publishing-soon note, no answer, a 429); a kept redirect, a root landing and a live page are not', () => {
@@ -84,12 +88,12 @@ test('judge: the C9 shapes are findings (a 404, a dropped deep link, a stale pub
   assert.equal(judge(link('https://h/ok#frag'), { status: 200, finalUrl: 'https://h/ok', hops: 0 }), null, 'a fragment is not part of the page');
 });
 
-test('checkFiles: one fetch per distinct URL, a transient answer gets ONE retry, a skipped host is counted and not fetched, findings carry file and line -- RED before 16i (no engine)', async () => {
+test('checkFiles: one fetch per distinct URL, a transient answer gets ONE retry, a skipped host is counted and not fetched, findings carry file and line', async () => {
   flakyHits = 0;
   const text = [`[a](${base}/ok)`, `[b](${base}/ok#x) and [c](${base}/missing)`, `[d](${base}/flaky)`, `[e](${base}/tools/x) *(publishing soon)*`, '[s](https://skip.example/p)', '[z](http://127.0.0.1:1/dead)'].join('\n');
   let calls = 0;
   const counting = (u, o) => { calls++; return fetch(u, o); };
-  const r = await checkFiles([{ name: 'README.md', text }], { ...fast, fetchFn: counting, skipHosts: ['skip.example'] });
+  const r = await checkFiles([{ name: 'README.md', text }], { ...LONG, fetchFn: counting, skipHosts: ['skip.example'] });
   assert.equal(r.links, 7); assert.equal(r.fetched, 5, 'ok and ok#x are one fetch; the skipped host and nothing else is left out'); assert.deepEqual(r.skipped, ['https://skip.example/p']);
   assert.equal(flakyHits, 2, 'the 503 was retried once and answered');
   assert.equal(calls, 5 + 1 + 1 + 1, 'five distinct pages, one hop for the redirect, one retry for the 503 and one for the dead host: a line that repeats a URL costs no fetch');
@@ -98,13 +102,21 @@ test('checkFiles: one fetch per distinct URL, a transient answer gets ONE retry,
     ['README.md', 4, `redirected to ${base}/tools, which dropped "x": the page the link names is not there`],
     ['README.md', 6, 'no answer (...)'],
   ]);
-  assert.deepEqual((await checkFiles([{ name: 'x', text: '[u](https://%zz/)' }], fast)).findings.map((f) => f.message), ['not a readable URL']);
+  assert.deepEqual((await checkFiles([{ name: 'x', text: '[u](https://%zz/)' }], LONG)).findings.map((f) => f.message), ['not a readable URL']);
 });
 
 // The child is awaited, never spawnSync: the server it fetches from lives in THIS process, and a synchronous wait would starve it (measured: every
 // request timed out). The spawn carries its own timeout, as every spawn in a test must.
+// The child's environment is named keys and a sandbox for HOME and the temp folders, never a copy of the operator's own (CoalGob t147, 17b).
+const CHILD_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fdl-home-'));
+after(() => fs.rmSync(CHILD_HOME, { recursive: true, force: true }));
+const childEnv = (extra = {}) => ({
+  ...Object.fromEntries(['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'ComSpec'].filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),
+  HOME: CHILD_HOME, USERPROFILE: CHILD_HOME, TEMP: CHILD_HOME, TMP: CHILD_HOME, TMPDIR: CHILD_HOME,
+  FRONT_DOOR_LINKS_TIMEOUT_MS: '60000', FRONT_DOOR_LINKS_RETRY_MS: '10', ...extra,
+});
 const run = (args, env = {}) => new Promise((resolve) => {
-  const child = spawn(process.execPath, ['--max-old-space-size=512', CLI, ...args], { timeout: 60000, env: { ...process.env, FRONT_DOOR_LINKS_TIMEOUT_MS: '3000', FRONT_DOOR_LINKS_RETRY_MS: '10', ...env } });
+  const child = spawn(process.execPath, ['--max-old-space-size=512', CLI, ...args], { timeout: 60000, env: childEnv(env) });
   let stdout = ''; let stderr = '';
   child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
   child.on('close', (status) => resolve({ status, stdout, stderr }));

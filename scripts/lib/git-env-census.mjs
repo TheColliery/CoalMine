@@ -868,14 +868,19 @@ function judgeCall(ctx, a, b, st) {
   if (typeof rets === 'string') return rets;
   ctx.memo.add(name);
   try {
+    // each return is judged on its own: with the flags shared, one return's GIT_CONFIG_NOSYSTEM covered every other return of the helper (14h, CoalMine 09a row 12).
+    // The helper's cover is then the cover of EVERY return: a covered return beside a bare {} once lent its cover to the whole call, so
+    // { ...h(x), PATH: process.env.PATH } passed while the {} path spawned git on the system config (CoalFace 18a, census-vec.mjs).
+    let ambient = false, nosys = false, trusted = false, covered = true;
     for (const [ra, rb] of rets) {
-      // each return is judged on its own: with the flags shared, one return's GIT_CONFIG_NOSYSTEM covered every other return of the helper (14h, CoalMine 09a row 12)
       const sub = { ...st, ambient: false, nosys: false, trusted: false };
       const r = judgeExpr(ctx, ra, rb, sub);
       if (r) return `${name}() returns an env the census refuses: ${r}`;
       if (rets.length > 1 && sub.ambient && !sub.nosys && !sub.trusted) return `${name}() has a return that reads process.env but sets no GIT_CONFIG_NOSYSTEM: '1' (the helper has ${rets.length} returns, and each is judged alone)`;
-      st.ambient = st.ambient || sub.ambient; st.nosys = st.nosys || sub.nosys; st.trusted = st.trusted || sub.trusted;
+      ambient = ambient || sub.ambient; nosys = nosys || sub.nosys; trusted = trusted || sub.trusted; covered = covered && (sub.nosys || sub.trusted);
     }
+    st.ambient = st.ambient || ambient;
+    if (covered) { st.nosys = st.nosys || nosys; st.trusted = st.trusted || trusted; }
   } finally { ctx.memo.delete(name); }
   return null;
 }
