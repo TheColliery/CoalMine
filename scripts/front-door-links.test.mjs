@@ -42,7 +42,13 @@ after(() => { server.closeAllConnections?.(); server.close(); });
 // clock still catches a true hang), and the timeout itself is proved against a fetch that NEVER answers and only honours the abort signal, so it fires on time
 // whatever the box is doing.
 const LONG = { timeoutMs: 60000, retryMs: 10 };
-const neverAnswers = (u, o) => new Promise((_, reject) => o.signal.addEventListener('abort', () => reject(o.signal.reason)));
+// A fetch that answers only when probe's own signal aborts it. If no abort reaches it, it fails the case at its own assertion (a named error in
+// slow.error) after a bound it owns, never at the runner's deadline (CoalHearth t190, order 18c). The bound is a ceiling for a regression, never a measured time.
+const neverAnswers = (u, o) => new Promise((_, reject) => {
+  const own = setTimeout(() => reject(Object.assign(new Error('no abort reached the fetch'), { name: 'NoAbortReachedFetch' })), 3000);
+  own.unref();
+  o.signal.addEventListener('abort', () => { clearTimeout(own); reject(o.signal.reason); });
+});
 
 test('extractLinks: markdown links, autolinks and HTML hrefs are read with their line; fenced blocks, inline code, relative paths, mailto and titled links behave', () => {
   const text = [
