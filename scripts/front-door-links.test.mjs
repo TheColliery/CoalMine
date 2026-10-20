@@ -44,9 +44,11 @@ after(() => { server.closeAllConnections?.(); server.close(); });
 const LONG = { timeoutMs: 60000, retryMs: 10 };
 // A fetch that answers only when probe's own signal aborts it. If no abort reaches it, it fails the case at its own assertion (a named error in
 // slow.error) after a bound it owns, never at the runner's deadline (CoalHearth t190, order 18c). The bound is a ceiling for a regression, never a measured time.
+// The ceiling timer is NOT unref'd (CoalBoard t202, CoalMine t197, CoalFace t204, order 20a): AbortSignal.timeout's own timer is unref'd, so with this one
+// unref'd too nothing holds the event loop and the process ends with the case unsettled (exit 13) instead of failing at its line. The abort, which
+// is due at 300 ms and cancels this timer, always runs before the 3 s ceiling even when a loaded runner stalls the loop past both (timers run in expiry order).
 const neverAnswers = (u, o) => new Promise((_, reject) => {
   const own = setTimeout(() => reject(Object.assign(new Error('no abort reached the fetch'), { name: 'NoAbortReachedFetch' })), 3000);
-  own.unref();
   o.signal.addEventListener('abort', () => { clearTimeout(own); reject(o.signal.reason); });
 });
 
