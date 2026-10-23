@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      # One fixed weekly slot, the same in every repository of the organization.
+      day: thursday
+      time: "11:30"
+      timezone: Asia/Bangkok
     cooldown:
       default-days: 7
     commit-message:
@@ -12,9 +16,19 @@ updates:
     # a "participating" event, delivered at any watch level). Human still merges.
     assignees:
       - HetCreep
-    # Group all github/codeql-action/* paths (init/analyze/upload-sarif) into ONE PR
-    # so they bump together -> no init/analyze version skew (which reds CodeQL).
+    # ONE weekly PR for every patch and minor action bump. Sibling PRs that touch the
+    # same workflow file race: the first merges, the second is then behind main and its
+    # auto-merge is refused (GITHUB_TOKEN may not write workflow content outside its own
+    # diff). A major bump stays its own PR for a human; the codeql-action group still
+    # holds its majors together (a split init/analyze bump reds CodeQL). Dependabot puts
+    # a dependency in the FIRST group it matches.
     groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
       codeql-action:
         patterns:
           - "github/codeql-action*"
