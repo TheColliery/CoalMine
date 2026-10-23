@@ -7,6 +7,15 @@
 #   2. reviews.path_instructions that restate this org's written CONTRACTS. Each block names the
 #      document it restates. There is no tone_instructions key and no taste in any block: an
 #      instruction here may encode a contract, never a preference.
+#   3. knowledge_base: the Learnings posture (BB-82, owner 2026-10-08). Learnings stay repository-local and wait the
+#      maximum approval delay, so the owner approves or rejects each one in the dashboard before it applies. The
+#      knowledge-base switch itself (data retention) is the organization's dashboard setting and the owner's click;
+#      this file never flips it, so opt_out is not set here (a private repository sets opt_out: true in its own file).
+#      THE OWNER'S LAW ON TEACHING, 2026-10-08, verbatim: ถ้าจะสอน CodeRabbit อย่าสอนให้เข้าพวก เพราะตัวตรวจจับ จะไม่เป็นตัวตรวจจับอีกต่อไป
+#      -- an instruction or a learning encodes a fact or a contract (what a file is, where its fix lands, which
+#      standard binds); it never tells the reviewer to stay quiet on a class, never grants an exception and never
+#      carries our conclusion about a finding. A learning that would lower the number of findings is rejected at
+#      the approval step. A detector taught to agree with its subject is no longer a detector.
 #
 # PRECEDENCE, from the vendor (docs.coderabbit.ai/guides/configuration-overview, "Understanding
 # configuration priority"): "Configuration sources don't merge by default." The repository
@@ -19,6 +28,16 @@
 # below this file would REPLACE the organization's other settings with schema defaults instead of adding
 # to them. Read the merged result on any pull request with the comment: @coderabbitai configuration
 inheritance: true
+knowledge_base:
+  learnings:
+    scope: local
+    approval_delay: 30
+  code_guidelines:
+    # Off, on the owner's law of 2026-10-08 (the header above): since 2026-10-05 CodeRabbit reads a SKILL.md at skills/<name>/
+    # in the repository root as an Agent Skill code guideline, so the product under review becomes the reviewer's own rule
+    # (14 pull requests in the org list one, UMB3-066). filePatterns can only add patterns, never drop a default, so this
+    # switch is the only way to stop it (docs.coderabbit.ai/knowledge-base/code-guidelines, read 2026-10-21).
+    enabled: false
 reviews:
   profile: assertive
   path_instructions:
@@ -30,14 +49,14 @@ reviews:
         - Zero dependencies: Node built-in modules only, nothing that needs npm install.
         - No network: local filesystem only.
         - Deterministic: the same input gives the same output.
-        - Sandboxed: reads and writes stay inside the OS temp directory and the tool's own state directory under the user's agent config directory, except reading the project's own config file from the project root, and except writing the tool's own project-scoped state folder (<project root>/.<agent-dir>/<tool>/) through a realpath-containment helper that resolves both the project root and the candidate with fs.realpathSync.native, refuses a candidate that is not inside that folder itself (not merely inside the project root), fails closed, and is named in the room's SECURITY.md or the README. Any other write to the project is a finding.
+        - Sandboxed: reads and writes stay inside the OS temp directory and the tool's own state directory under the user's agent config directory, except reading the project's own config file from the project root, and except writing the tool's own project-scoped state folder (<project root>/.<agent-dir>/<tool>/) through a realpath-containment helper that resolves both the project root and the candidate with fs.realpathSync.native, refuses a candidate that is not inside that folder itself (not merely inside the project root), fails closed, and is named in the room's SECURITY.md or the README; a delete under it pins each owned directory to its literal realpath and sweeps nothing in a directory it refuses. Any other write to the project is a finding.
     # Restates scripts-quality.md section 1 (fail loud) and hooks-safety.md section 6, commandment 2 (zero dependencies).
     - path: "scripts/**"
       instructions: |
         Report a change that breaks any of these:
         - Node built-in modules only: no npm install, no dependency declared in a manifest.
         - A user-invoked script exits non-zero when any unit of work fails, and its done-summary line reports the failed count.
-        - A gate script wraps every per-item check, so one bad input produces a "FAIL <item>: <reason>" line while the remaining checks still run, and never a raw stack trace.
+        - A gate script wraps every per-item check, so one bad input produces a FAIL <item>: <reason> line while the remaining checks still run, and never a raw stack trace.
     # Restates DOC-PATTERN.md: "Data is verbatim from its source, never invented" and "a behaviour claim = the code".
     - path: "{README,SECURITY,CONTRIBUTING}.md"
       instructions: |
@@ -49,3 +68,7 @@ reviews:
         - Every third-party action is pinned to a full 40-character commit SHA with a version comment, never a bare tag or branch.
         - Every workflow has a concurrency group. cancel-in-progress is true for CI, lint and CodeQL, and never true for a job that uploads a Release or tag asset.
         - A checkout that pushes nothing sets persist-credentials: false.
+    # Restates the scanner canon's parity contract (the umbrella's scripts/scanner-parity.mjs): these four files are byte-equal copies of one source room's scanner and gate, and a copy is never edited locally.
+    - path: "scripts/{lib/secret-scan.mjs,secret-scan.test.mjs,secret-gate.mjs,secret-gate.test.mjs}"
+      instructions: |
+        These files are byte-equal copies of the organization's scanner canon, held equal to their source by a parity check; a local edit breaks the parity on purpose. Review them on their merits exactly as any other file and report every finding at its severity. Add to each finding that the fix is made at the canon's source and arrives here by blob id at the next sync, so the author routes it there instead of editing this copy. Never lower a severity, drop a finding or accept a local patch because the file is a copy.
