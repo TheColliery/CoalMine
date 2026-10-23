@@ -169,7 +169,9 @@ export async function runWaves(opts) {
     if (realCwd === null) return f;
     let rel;
     try { rel = path.relative(realCwd, fs.realpathSync.native(path.resolve(cwd, f))); } catch { return f; }
-    return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : f;
+    // a relative path leaves the root when its FIRST SEGMENT is `..`; a lexical startsWith('..') also read a real folder named `..cfg` as outside (CWK2-050, the exemplar's escapesRoot)
+    const escapes = rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel);
+    return rel && !escapes ? rel.split(path.sep).join('/') : f;
   };
 
   const results = new Map();

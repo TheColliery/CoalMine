@@ -552,3 +552,13 @@ test('display fails closed: a file outside the folder, and a path that cannot be
     fs.rmSync(outside, { recursive: true, force: true });
   }
 });
+
+// CWK2-050 (17b): a file under a real folder named `..cfg` is INSIDE the root; the lexical startsWith('..') read it as outside and printed the absolute path. The test is on the first segment.
+test('display: a test file under a folder whose name starts with two dots is shown relative to the root, not as an absolute path -- RED before 17b', async () => {
+  const dotty = path.join(SANDBOX, '..cfg');
+  fs.mkdirSync(dotty, { recursive: true });
+  fs.copyFileSync(path.join(SANDBOX, 'pass.fixture.mjs'), path.join(dotty, 'pass.fixture.mjs'));
+  const r = await runWaves({ files: [path.join(dotty, 'pass.fixture.mjs')], cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
+  assert.equal(r.results[0].status, STATUS.PASS);
+  assert.equal(r.results[0].name, '..cfg/pass.fixture.mjs');
+});
