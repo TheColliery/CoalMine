@@ -16,19 +16,13 @@ updates:
     # a "participating" event, delivered at any watch level). Human still merges.
     assignees:
       - HetCreep
-    # ONE weekly PR for every patch and minor action bump. Sibling PRs that touch the
-    # same workflow file race: the first merges, the second is then behind main and its
-    # auto-merge is refused (GITHUB_TOKEN may not write workflow content outside its own
-    # diff). A major bump stays its own PR for a human; the codeql-action group still
-    # holds its majors together (a split init/analyze bump reds CodeQL). Dependabot puts
-    # a dependency in the FIRST group it matches.
+    # ONE weekly PR for every action bump, whatever its size. Two PRs that touch the same
+    # workflow file race: the first merges, the second is then behind main and GitHub
+    # refuses its auto-merge (GITHUB_TOKEN may not write workflow content outside its own
+    # diff). Any second group re-opens that race, so there is one. A group holding a major
+    # bump reads as major and waits for a human (the auto-merge allowlist); the group also
+    # keeps every github/codeql-action/* path in step (a split init/analyze bump reds CodeQL).
     groups:
       github-actions:
         patterns:
           - "*"
-        update-types:
-          - minor
-          - patch
-      codeql-action:
-        patterns:
-          - "github/codeql-action*"
