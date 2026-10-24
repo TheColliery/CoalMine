@@ -15,9 +15,9 @@ permissions:
 # (skills/**/SKILL.md, commands/*.md) MUST run CI, because verify.mjs checks dist-sync.
 # Only a root file NO gate reads is exempt: verify.mjs reads README.md, CONTRIBUTING.md, SECURITY.md and
 # PRIVACY.md (the pointer gate's DEFAULT_SURFACE_PLAN rows) and CHANGELOG.md (dist-changelog.mjs), and it
-# declares LICENSE out. A test (r14-fixes.test.mjs, B-u1-16) derives that set and fails if one is listed here.
+# declares LICENSE and NOTICE out. A test (r14-fixes.test.mjs, B-u1-16) derives that set and fails if one is listed here.
 env:
-  DOCS_GLOBS: "LICENSE"
+  DOCS_GLOBS: "LICENSE NOTICE"
 
 # cancel-in-progress: TRUE -- ci.yml only reads, tests and compares; it publishes nothing and
 # touches no external state, so a superseded run has nothing to leave half-done.

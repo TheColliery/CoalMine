@@ -17,7 +17,7 @@ permissions:
 # dist-sync. Two different questions, two different exempt sets; collapsing them into one
 # shared list would be wrong for whichever workflow lost.
 env:
-  DOCS_GLOBS: "*.md **/*.md LICENSE"
+  DOCS_GLOBS: "*.md **/*.md LICENSE NOTICE"
 
 # cancel-in-progress: TRUE -- a superseded CodeQL run simply never uploads its SARIF, and the
 # previous analysis stands; nothing is left half-written. The newer push analyzes the newer tree,
@@ -203,7 +203,7 @@ jobs:
             {
               echo "### analyze (javascript): NO ANALYSIS RAN -- this is not a clean bill of health"
               echo ""
-              echo "Every changed path is markdown or LICENSE, which CodeQL does not analyze, so"
+              echo "Every changed path is markdown, LICENSE or NOTICE, which CodeQL does not analyze, so"
               echo "**no query was executed and no SARIF was uploaded.** The previous analysis for"
               echo "this branch is unchanged and still stands; nothing new was scanned."
               echo ""
