@@ -14,6 +14,7 @@
 
 ## Rule lifecycle artifacts
 - **Stamp** (FILL writes, RE-VALIDATE refreshes): `<!-- coalmine: verified 2026-06-12 · exemplar npm-provenance-docs · revalidate 90d -->` placed on the line above the rule heading.
+- **Stamp date semantics:** the date vouches only for content checked on that date. A FILL or RE-VALIDATE that checks only some sections leaves the file-level stamp as it was, its date and its exemplars, and writes a new stamp, carrying the new exemplars and date, on the line above each section it checked. A file may carry both. Re-dating a file-level stamp over sections nobody re-read over-claims their freshness.
 - **Why 30d vs 90d:** 30d fits fast-moving surfaces that ship weekly-to-daily (agent platforms, model/API versions); 90d is still stricter than every authoritative anchor (OWASP ~4y, NIST/FISMA annual) — a cheap early warning, not a compliance floor. CVE/advisory rules follow the Dependabot pattern: the advisory EVENT re-validates first, the 30d stamp is only the staleness backstop.
 - **Tombstone** (RETIRE writes, one line in the project's memory/decision log): `retired <rule-name> 2026-06-12: <reason — subject removed / platform dead / merged into <other rule>>`.
 - Before FILL adds any rule, grep the decision log for a tombstone with the same subject — resurrect only on explicit user override.
