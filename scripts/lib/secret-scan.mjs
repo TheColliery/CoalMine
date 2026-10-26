@@ -36,11 +36,13 @@
 //
 // Also for the generic rule only: a BARE (unquoted) value that reads as code is not judged (the
 // five conditions are at CODE_VALUE below), so a bare secret that is itself words and brackets AND
-// joined by `_`, `.` or camelCase humps, for example `Alpha_beta(gamma`, escapes; a quoted one is
-// always judged, and so is a passphrase of plain words joined by `(` or `[` (it has no `_`, `.` or
+// joined by `_`, `.` or camelCase humps, for example `Correct_horse(battery_staple7_mountain` after a
+// secret name, escapes; the same value quoted is found (a quoted one is always judged),
+// and so is a passphrase of plain words joined by `(` or `[` (it has no `_`, `.` or
 // hump). Random keys do not read as code: of 100,000 per named generator, none did.
-// A value also stops at a closing tag, `</name>`, so a secret that itself contains one is judged
-// only up to it.
+// A value also stops at a closing tag, `</name>`, that is followed by the end of the line, whitespace or `<`;
+// what follows such a tag is not judged as part of the value. A tag followed by any other character
+// does not stop it.
 //
 // Also for the generic rule only (LWK-277): a constant that NAMES the environment variable of a secret is not judged. Three
 // conditions, all required: a left name that says it holds a name (it ends in `_ENV`, `_VAR`, `_VARIABLE`, `_ENVIRONMENT`, `_NAME`,
@@ -51,9 +53,9 @@
 // secret: a machine-generated secret is random, and random capitals-and-digits seldom split into pronounceable word segments that
 // also hold a secret word (measured, 10,000 lines per carrier: 0 of 58,296 random 20-character keys over A-Z, 0-9 and `_` went
 // quiet on a left name of this kind, and none of every other random generator swept). A human passphrase is the one real secret of
-// this shape, and its residue is stated, not hidden: a passphrase of capitalised words joined by `_` that holds a short
+// this shape, and its residue is stated, not hidden: a passphrase of ALL-CAPS words joined by `_` that holds a short
 // letter-and-digit token (`R2`) AND a word that is itself secret-named (`PASSWORD`, `TOKEN`), assigned to a left name that ends in
-// one of those words, is not found. A passphrase without a secret word is found, short token or not. The price runs the other
+// one of those words, is not found. A mixed-case passphrase (`Correct_Horse_R2_Password`) is not an environment-variable name and is found. A passphrase without a secret word is found, short token or not. The price runs the other
 // way: an environment-variable name with no secret word in it (`AWS_S3_BUCKET_NAME_V2`) on such a left name is judged as it was
 // before, so it can false-alarm; it never escapes.
 //
