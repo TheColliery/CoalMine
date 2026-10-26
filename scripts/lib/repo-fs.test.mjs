@@ -180,6 +180,17 @@ test('writeRepoFile falls back to an in-place write when the rename is refused (
   assert.deepEqual(fs.readdirSync(root), ['pre-commit'], 'the temp file is cleaned up');
 });
 
+// F12 (CoalLedger r12, LOW): the fallback truncates before it writes. A shorter replacement over a longer file must not keep the
+// old tail (JSON.parse would then call the file malformed). MUTANT: delete the fs.ftruncateSync(fd, 0) line in writeRepoFile -- this test must go red.
+test('writeRepoFile fallback truncates first: a shorter replacement leaves no stale tail', (t) => {
+  const root = tmpDir(t, 'wefalltail');
+  const target = path.join(root, 'config.json');
+  fs.writeFileSync(target, '{"longer":"original content that is well past the replacement"}');
+  withRenameFault(t, 'EPERM');
+  writeRepoFile(target, '{}', root);
+  assert.equal(fs.readFileSync(target, 'utf8'), '{}', 'exact bytes: nothing of the longer original survives');
+});
+
 test('writeRepoFile does NOT fall back when the refused target is hard-linked -- the other name keeps its bytes', (t) => {
   const root = tmpDir(t, 'wepermh');
   const other = path.join(root, 'other.txt');
@@ -189,6 +200,33 @@ test('writeRepoFile does NOT fall back when the refused target is hard-linked --
   withRenameFault(t, 'EPERM');
   assert.throws(() => writeRepoFile(target, 'NEW', root), /EPERM/);
   assert.equal(fs.readFileSync(other, 'utf8'), 'KEEP');
+});
+
+// F3 (CoalLedger r12, MEDIUM): a leftover temp at the pid name is a human refusal, never a raw EEXIST, and it is not ours to delete.
+test('writeRepoFile: a leftover temp at the pid name is a human RepoWriteRefused, never a raw EEXIST, and it is not deleted', (t) => {
+  const root = tmpDir(t, 'wetmpleft');
+  const target = path.join(root, 'config.json');
+  fs.writeFileSync(target, 'OLD');
+  const planted = `${target}.coalmine-tmp-${process.pid}`;
+  fs.writeFileSync(planted, 'PLANTED');
+  assert.throws(() => writeRepoFile(target, 'NEW', root), (e) => e instanceof RepoWriteRefused && e.code === 'COALMINE_WRITE_REFUSED'
+    && e.message.includes(planted) && /remove/.test(e.message), 'the refusal names the leftover and what to do');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'OLD', 'the target bytes are unchanged');
+  assert.equal(fs.readFileSync(planted, 'utf8'), 'PLANTED', 'the planted file was not ours, so it is not deleted');
+});
+
+// F3 (CoalLedger r12, MEDIUM): a write that fails mid-flight (a full disk) leaves no temp behind, and the original error is rethrown.
+test('writeRepoFile: a write that fails mid-flight removes its temp and rethrows the original error (ENOSPC)', (t) => {
+  const root = tmpDir(t, 'wenospc');
+  const target = path.join(root, 'config.json');
+  fs.writeFileSync(target, 'OLD');
+  const origWriteFile = fs.writeFileSync;
+  // A disk that fills mid-write: the first two bytes land, then the write throws. Patched on the shared export, restored in t.after.
+  fs.writeFileSync = (p, data, opts) => { origWriteFile(p, String(data).slice(0, 2), opts); throw Object.assign(new Error('ENOSPC: simulated'), { code: 'ENOSPC' }); };
+  t.after(() => { fs.writeFileSync = origWriteFile; });
+  assert.throws(() => writeRepoFile(target, 'NEW', root), (e) => e.code === 'ENOSPC');
+  assert.deepEqual(fs.readdirSync(root).sort(), ['config.json'], 'no *.coalmine-tmp-* file is left behind');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'OLD', 'the target bytes are unchanged');
 });
 
 // CWK-137 carry-over, CodeQL #69 (js/file-system-race): the EPERM fallback's check must

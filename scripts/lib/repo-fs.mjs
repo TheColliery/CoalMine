@@ -223,8 +223,23 @@ export function writeRepoFile(target, content, root) {
   const why = checkRepoWriteTarget(target, root);
   if (why) throw new RepoWriteRefused(why);
   mkdirRepoParents(path.dirname(path.resolve(target)), path.resolve(root)); // 17a (CWK2-042): one component at a time, a link at any component refused
+  // The pid, not a random suffix: the installer's leftover sweep reads the pid to tell a dead writer's temp from a live one (render.mjs sweepInstallLeftovers).
   const tmp = `${target}.coalmine-tmp-${process.pid}`;
-  fs.writeFileSync(tmp, content, { encoding: 'utf8', flag: 'wx' });
+  let fd;
+  try { fd = fs.openSync(tmp, 'wx'); }
+  catch (e) {
+    // A leftover we did not create: never unlinked here, only named to the user.
+    if (e.code === 'EEXIST') throw new RepoWriteRefused(`${target}: a leftover file ${tmp} is in the way -- remove that file and re-run`);
+    throw e;
+  }
+  try {
+    fs.writeFileSync(fd, content, 'utf8');
+    fs.closeSync(fd);
+  } catch (e) {
+    try { fs.closeSync(fd); } catch { /* already closed */ }
+    try { fs.unlinkSync(tmp); } catch { /* best effort: this temp is ours, the write just failed */ }
+    throw e;
+  }
   try {
     fs.renameSync(tmp, target);
   } catch (e) {
