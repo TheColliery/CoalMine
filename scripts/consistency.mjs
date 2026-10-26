@@ -22,7 +22,8 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const USAGE = [
   'Usage: node scripts/consistency.mjs [--base <dir>]',
   '  (no flag)     check this repo. The doctrine-mirror check compares the rule homes it resolves:',
-  '                the cwd when the cwd holds one, else the repo, else its parent.',
+  '                the cwd when it holds a rule home and is not this repo; otherwise the repo if it holds',
+  '                both homes, else its parent.',
   '  --base <dir>  compare the rule homes under <dir>. Fails loud when neither home is there.',
   '  -h, --help    print this usage and exit 0.',
   'Report a problem: https://github.com/TheColliery/CoalMine/issues',
@@ -46,15 +47,23 @@ function parseArgs(argv) {
   return { base };
 }
 
+// True when `dir` is this repo, compared by realpath on both sides (a cwd spelled through a link or an 8.3 name still matches).
+// A dir that does not resolve counts as NOT this repo, so it keeps the cwd rule it had before this check existed.
+function isThisRepo(dir) {
+  try { return fs.realpathSync.native(dir) === fs.realpathSync.native(repo); } catch { return false; }
+}
+
 function main(argv) {
   const parsed = parseArgs(argv);
   if (parsed.help) { console.log(USAGE); return 0; }
   if (parsed.error) { console.error(`consistency: ${parsed.error}\n${USAGE}`); return 1; }
 
-  // The mirror base: an explicit --base, else the cwd when the cwd holds a rule home (an umbrella
-  // run), else null, which is today's default (the repo, or its parent, via resolveMirrorBase).
+  // The mirror base: an explicit --base, else the cwd when it holds a rule home and is NOT this repo
+  // (an umbrella run), else null, which is today's default (the repo, or its parent, via resolveMirrorBase).
+  // The NOT-this-repo half is load-bearing (INSPECT F1): CI and the hooks run bare from the repo root, and a
+  // repo holding ONE stray rule tree must keep resolveMirrorBase's M2 widening to the parent, not compare itself.
   const cwd = process.cwd();
-  const chosen = parsed.base !== null ? parsed.base : (hasRuleHome(cwd) ? cwd : null);
+  const chosen = parsed.base !== null ? parsed.base : (!isThisRepo(cwd) && hasRuleHome(cwd) ? cwd : null);
 
   // A chosen base with NO rule home compares nothing. That is a FAIL, never a PASS over zero files.
   const extra = [];
