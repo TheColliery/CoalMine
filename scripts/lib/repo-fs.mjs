@@ -98,6 +98,7 @@ export function readRepoFileBounded(file, root, maxBytes, prefixOnly = false) {
 
 // The same read, as raw bytes -- for a caller that hashes (a utf8 round trip would
 // change the digest of any non-UTF-8 byte sequence).
+// Residual, accepted: a regular file swapped in between the lstat above and the open may lie outside the project -- SECURITY.md, "Not covered, named".
 export function readRepoBytesBounded(file, root, maxBytes, prefixOnly = false) {
   if (repoEntryKind(file, root) !== 'file') return null;
   let fd;
