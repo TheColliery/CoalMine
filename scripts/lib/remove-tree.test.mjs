@@ -102,11 +102,18 @@ test('removeTree removes an ordinary tree and tolerates a path that is not there
   removeTree(dir);
 });
 
-test('removeTree waits through its DEFAULT sleep between held-folder retries (a lower bound only: a no-op default would spin)', () => {
+test('removeTree waits through its DEFAULT sleep between held-folder retries (E1 t208 #3: a spy on Atomics.wait, not the clock)', () => {
+  // The default sleep is test-sandbox's blockingSleep, which looks Atomics.wait up at call time. Swapping it for a spy
+  // records each wait without any real delay; the original is restored in finally so no other test sees the spy.
   let left = 2, calls = 0;
-  const t0 = process.hrtime.bigint();
-  removeTree('x', { pollMs: 60, rm: () => { calls++; if (left-- > 0) throw Object.assign(new Error('held'), { code: 'EBUSY' }); } });
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  const waits = [];
+  const realWait = Atomics.wait;
+  Atomics.wait = (buf, idx, expected, ms) => { waits.push(ms); return 'timed-out'; };
+  try {
+    removeTree('x', { pollMs: 60, rm: () => { calls++; if (left-- > 0) throw Object.assign(new Error('held'), { code: 'EBUSY' }); } });
+  } finally {
+    Atomics.wait = realWait;
+  }
   assert.equal(calls, 3, 'two held answers, then it cleared');
-  assert.ok(ms >= 100, `two polls of 60 ms were really waited (${ms} ms)`); // 100 not 120: leaves room for timer rounding
+  assert.deepEqual(waits, [60, 60], 'the default sleep waited pollMs before each retry; a no-op default records no waits and fails here');
 });
