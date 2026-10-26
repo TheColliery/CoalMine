@@ -42,6 +42,8 @@ const TESTS = [
   'scripts/lib/configure.test.mjs',
   'scripts/lib/regions.test.mjs',
   'scripts/lib/consistency.test.mjs',
+  // CWK-142: the consistency CLI's --base / cwd / fail-loud / usage surface, spawned against temp fixtures.
+  'scripts/lib/consistency-cli.test.mjs',
   'scripts/lib/jsonc.test.mjs',
   'scripts/lib/conductor-update.test.mjs',
   'scripts/lib/conductor-config-path.test.mjs',

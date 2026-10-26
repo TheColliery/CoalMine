@@ -64,7 +64,7 @@ import { listSkills } from './render.mjs';
 // `.claude` counterpart — it is the trigger table for agents that do not receive
 // triggers from the plugin, and Claude does. It sits OUTSIDE `ecc/`, so this
 // ecc-scoped walk never sees it; that placement IS the mechanism, not an oversight.
-const MIRROR_ROOTS = ['.claude/rules/ecc', '.agents/rules/ecc'];
+export const MIRROR_ROOTS = ['.claude/rules/ecc', '.agents/rules/ecc'];
 const TOMBSTONE = 'RETIRED.md';
 
 // WHERE the two doctrine rule homes actually live is NOT always `repo`. CoalMine
@@ -621,8 +621,17 @@ export function checkTracked(repo) {
 // ".agents/rules/ecc/x.md" points nowhere inside CoalMine once the real check ran one
 // directory up. checkDoctrineMirrors itself stays untouched (still just "compare two
 // roots"); the disclosure lives here, next to the topology decision that makes it necessary.
-export function checkAll(repo) {
-  const mirrorBase = resolveMirrorBase(repo);
+// CWK-142: true when `base` holds at least one rule home. The CLI's fail-loud rule uses it:
+// a base with neither home compares nothing, so it must be a FAIL, never a PASS.
+export function hasRuleHome(base) {
+  return MIRROR_ROOTS.some((r) => {
+    try { return fs.statSync(path.join(base, r)).isDirectory(); } catch { return false; }
+  });
+}
+
+// CWK-142: `opts.mirrorBase` names the base the doctrine-mirror check compares (the CLI's --base
+// or an umbrella cwd); absent, it is resolveMirrorBase(repo) exactly as before.
+export function checkAll(repo, { mirrorBase = resolveMirrorBase(repo) } = {}) {
   const mirrorFindings = checkDoctrineMirrors(mirrorBase).map((f) => (
     mirrorBase === repo ? f : { ...f, msg: `${f.msg} [checked at ${mirrorBase}]` }
   ));
