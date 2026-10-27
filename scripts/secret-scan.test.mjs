@@ -104,7 +104,7 @@ test('a long identifier on the right of a secret-named left side is code, not a 
   assert.deepStrictEqual(scanLine('path' + `_key = ${id}(x) api` + `_key=${RAND264}`), G264, 'a real key behind a call');
 });
 
-// Round 2. The repair may widen nothing: a real, machine-generated secret that the rule caught before must still be
+// The repair may widen nothing: a real, machine-generated secret that the rule caught before must still be
 // caught. Some generators draw from an alphabet that holds `(` or `[` (a default web-framework secret key; a password manager
 // with symbols), so a bare real secret CAN start with an identifier-looking run followed by `(`. Each fixture below is a
 // synthetic key of that kind, placed ON one edge of the guard that reads a bare value as code: where the code charset ends,
@@ -301,7 +301,7 @@ test('a ghs_ body of 99 characters is not a hit, and one of exactly 100 is: the 
   }
 });
 
-// ONE MATCH MAY NEVER HIDE ANOTHER ON THE SAME LINE (a second-round rule). Every value on a line is a
+// ONE MATCH MAY NEVER HIDE ANOTHER ON THE SAME LINE. Every value on a line is a
 // hit of its own with its own fingerprint, so neither a failed check nor an acknowledgment of one
 // value can silence a different value beside it.
 test('a decoy that fails a pattern check cannot hide a real value later on the same line', () => {
@@ -393,14 +393,14 @@ test('rangeArgs: deletion skips, new branch and unknown remote scan against all 
   assert.deepStrictEqual(rangeArgs(ref(a, b2), () => true, 'origin'), [`${b2}..${a}`]);
 });
 
-// ------------------------------------------------------------ ROUND 3 (the first INSPECT bounce)
+// ------------------------------------------------------------ SCAN COST AND ESCAPED INPUT
 const BS = cc(92);
 
 // F1. A regex runs synchronously, so an in-process test timeout cannot interrupt a hung scan. The
 // scans run in a child with a hard kill. NO WALL-CLOCK ASSERTION (a slow or loaded runner would turn it red with no code change):
 // two guards that do not depend on the host's speed replace it.
-// THE DECLARED TRADE (N-1, routed by a carrier's reviewer). This test used to assert a ceiling in milliseconds per shape. That
-// assert is gone on purpose, and a carrier's reviewer should read what replaced it as follows. MEASURED: the characters each regex
+// THE DECLARED TRADE. This test used to assert a ceiling in milliseconds per shape. That
+// assert is gone on purpose, and a reader of this file should see what replaced it as follows. MEASURED: the characters each regex
 // call reads, as a growth ratio between N/2 and N, per shape (the work guard), and whether the scan finishes inside the child's kill
 // timeout at all (the hang guard). NOT MEASURED: elapsed time of any one shape, so a slow-but-linear regression (a constant factor,
 // even 10x) passes unless it nears the kill timeout; backtracking steps inside a single regex call, which the meter charges as one span,
@@ -517,6 +517,50 @@ test('a provider key right after a literal backslash-n/r/t or a %XX escape is st
     assert.deepStrictEqual(scanLine(pre + aws), ['aws-access-key-id'], pre);
   }
   assert.deepStrictEqual(scanLine('xyz' + aws), [], 'a key glued to an ordinary word character is still not a key');
+});
+
+// Two valid keys written with no separator, or joined by `_` or `-`, each lose the other's boundary guard. Each key is
+// assembled at run time, and the second key differs from the first, so the two hits can be told apart. One test per
+// shape, so one shape's failure cannot hide the state of the others.
+const GLUE_AWS_A = SAMPLES['aws-access-key-id'];
+const GLUE_AWS_B = cc(65, 75, 73, 65) + 'TESTFAKEKEY00001';
+const GLUE_GH_A = SAMPLES['github-token'];
+const GLUE_GH_B = 'gh' + 'p_' + 'B2c3'.repeat(9);
+const GLUE_G_A = SAMPLES['google-api-key'];
+const GLUE_G_B = 'AI' + 'za' + 'B2c3D4e5F6'.repeat(3) + 'G7h8J';
+const GLUE_SHAPES = [
+  ['aws back to back', GLUE_AWS_A + GLUE_AWS_B, 'aws-access-key-id'],
+  ['aws joined by -', GLUE_AWS_A + '-' + GLUE_AWS_B, 'aws-access-key-id'],
+  ['aws joined by _', GLUE_AWS_A + '_' + GLUE_AWS_B, 'aws-access-key-id'],
+  ['github back to back', GLUE_GH_A + GLUE_GH_B, 'github-token'],
+  ['github joined by -', GLUE_GH_A + '-' + GLUE_GH_B, 'github-token'],
+  ['github joined by _', GLUE_GH_A + '_' + GLUE_GH_B, 'github-token'],
+  ['google back to back', GLUE_G_A + GLUE_G_B, 'google-api-key'],
+  ['google joined by -', GLUE_G_A + '-' + GLUE_G_B, 'google-api-key'],
+  ['google joined by _', GLUE_G_A + '_' + GLUE_G_B, 'google-api-key'],
+];
+for (const [label, line, name] of GLUE_SHAPES) {
+  test(`two provider keys, ${label}: both are found`, () => {
+    assert.deepStrictEqual(scanLine(`v ${line} e`), [name, name]);
+  });
+}
+
+// A key-shaped run followed by a PREFIX of the next key, and not the whole key, is not a second key: the end guard
+// accepts a next key only when it is complete. Each probe is pinned at zero hits.
+const GLUE_PREFIX_PROBES = [
+  ['aws run then ASIA', GLUE_AWS_A + 'ASIAN'],
+  ['aws run then AKIA and a fragment', GLUE_AWS_A + 'AKIAxyz'],
+  ['github run then ghp_ and a fragment', GLUE_GH_A + 'ghp_xyz'],
+  ['google run then -AIza and a fragment', GLUE_G_A + '-AIzaQ1w'],
+];
+for (const [label, line] of GLUE_PREFIX_PROBES) {
+  test(`a prefix of the next key, not the key, is not a hit: ${label}`, () => {
+    assert.deepStrictEqual(scanLine(`v ${line} e`), [], label);
+  });
+}
+
+test('two provider keys separated by a space stay two hits (the control)', () => {
+  assert.deepStrictEqual(scanLine(`v ${GLUE_AWS_A} ${GLUE_AWS_B} e`), ['aws-access-key-id', 'aws-access-key-id']);
 });
 
 // Real git from here on: throwaway repos under the OS temp dir, every delete path-asserted.

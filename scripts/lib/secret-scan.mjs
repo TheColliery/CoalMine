@@ -25,7 +25,9 @@
 //
 // LIMITS, stated: a line scanner cannot see a key split across lines, a credential inside a URL
 // (scheme://user:pass@host), a key in a file NAME (names are escaped for printing, never scanned),
-// a provider key glued to a following word character, or a value whose body is hex-only or
+// a provider key glued to a following word character
+// (two keys of ONE provider glued together are found, see GLUED KEYS; two keys of DIFFERENT providers glued together are not,
+// e.g. aws then github or google then aws: the guards are per provider, a named limit), or a value whose body is hex-only or
 // single-case (the generic rule excludes hex; the `sk-` pattern requires mixed case). For the
 // generic rule only, two residues (THREE STEPS, below): a key inside a secret-named value is
 // reported only if the whole value passes the content test; and a secret name glued onto the end
@@ -80,9 +82,19 @@ const hasMix = (s) => /[0-9]/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s);
 // letter is a word character) or a %XX escape (a URL-encoded value). A key glued to an ordinary
 // word character is still not a key.
 const L = b`(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))`;
+// GLUED KEYS: two keys of one provider written back to back, or joined by `_` or `-`. The start guard also accepts the
+// exact shape of the key just before (`prev`, with an optional `_`), and the end guard, where a key is named, also
+// accepts the next key only when that key is WHOLE, so a prefix alone is not a key. Each adjacency is one alternative
+// naming its own provider, so a word that merely holds a prefix stays refused.
+const GLUE_START = (prev) => b`(?:${L}|(?<=${prev}))`;
+const AWS_PREFIX = b`(?:AK` + b`IA|AS` + b`IA)`;
+const AWS_KEY = AWS_PREFIX + b`[0-9A-Z]{16}`;
+const GH_KEY = b`gh[pousr]_[A-Za-z0-9]{36,255}`;
+const GOOGLE_PREFIX = b`AI` + b`za`;
+const GOOGLE_KEY = GOOGLE_PREFIX + b`[0-9A-Za-z_-]{35}[_-]?`;
 
 export const PATTERNS = Object.freeze([
-  { name: 'aws-access-key-id', re: new RegExp(L + b`(?:AK` + b`IA|AS` + b`IA)[0-9A-Z]{16}\b`) },
+  { name: 'aws-access-key-id', re: new RegExp(GLUE_START(b`${AWS_KEY}_?`) + AWS_PREFIX + b`[0-9A-Z]{16}(?:\b|(?=_?${AWS_KEY}))`) },
   // Two shapes. The classic token: a prefix and 36-255 base62 characters. The stateless App installation token: `ghs_APPID_JWT`,
   // about 520 characters (GitHub's changelogs of 2026-10-02 and 2026-05-15, its 2026-04-24 notice and its installation-token docs,
   // read 2026-10-04). None of those pages says what APPID is, and the vendor's own recommended pattern, `ghs_[A-Za-z0-9\.\-_]{36,}`,
@@ -90,7 +102,7 @@ export const PATTERNS = Object.freeze([
   // `-`) with a floor of 100, far above the 40-character legacy form; it never asks for an APPID alphabet. The cost: a snake_case
   // identifier of 100 or more characters right after `ghs_` also fires. The run is open-ended on purpose (no `\b`, no upper bound): a
   // bound would let a longer token through, and a match starts only at the prefix, so the cost stays linear.
-  { name: 'github-token', re: new RegExp(L + b`gh` + b`(?:[pousr]_[A-Za-z0-9]{36,255}\b|s_[A-Za-z0-9_.-]{100,})`) },
+  { name: 'github-token', re: new RegExp(GLUE_START(b`${GH_KEY}_?`) + b`gh` + b`(?:[pousr]_[A-Za-z0-9]{36,255}(?:\b|(?=_?${GH_KEY}))|s_[A-Za-z0-9_.-]{100,})`) },
   { name: 'github-fine-grained-pat', re: new RegExp(L + b`github` + b`_pat_[A-Za-z0-9_]{50,255}\b`) },
   { name: 'gitlab-pat', re: new RegExp(L + b`gl` + b`pat-[A-Za-z0-9_-]{20,}`) },
   { name: 'sendgrid-api-key', re: new RegExp(L + b`S` + b`G\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b`) },
@@ -103,7 +115,7 @@ export const PATTERNS = Object.freeze([
   { name: 'openai-style-api-key', re: new RegExp(L + b`sk` + b`-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`), check: hasMix },
   { name: 'slack-token', re: new RegExp(L + b`xo` + b`x[abprs]-[A-Za-z0-9-]{10,}`) },
   { name: 'stripe-live-key', re: new RegExp(L + b`(?:sk|rk)` + b`_live_[A-Za-z0-9]{24,}\b`) },
-  { name: 'google-api-key', re: new RegExp(L + b`AI` + b`za[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])`) },
+  { name: 'google-api-key', re: new RegExp(GLUE_START(GOOGLE_KEY) + GOOGLE_PREFIX + b`[0-9A-Za-z_-]{35}(?:(?![0-9A-Za-z_-])|(?=[_-]?${GOOGLE_PREFIX}[0-9A-Za-z_-]{35}))`) },
   { name: 'private-key-pem', re: new RegExp(DASH5 + b`BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?` + DASH5) },
 ]);
 
