@@ -4,12 +4,12 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [3.23.6] - 2026-10-27
 
-The scanner agent loads in Antigravity again: its tools list is a YAML list
+The scanner agent loads in Antigravity: its tools list is a YAML list
 
 The `coalmine-scanner` agent declared its `tools:` field as a comma-separated string, which Antigravity's loader cannot read as a list, so agy skipped the agent with an error. The field is now a YAML list. Claude Code accepts either form, so Claude Code users see no change. Nothing else in `plugin/` changed behaviour.
 
 ### Fixed
-- **The `coalmine-scanner` agent loads in Antigravity.** Before: agy 1.4.8 validate reported `the frontmatter isn't valid YAML: failed to unmarshal frontmatter YAML: yaml: unmarshal errors: line 7: cannot unmarshal !!str 'Read, G...' into []string. The loader skips this agent` and counted `components.agents` as 0. The `tools:` field is now a YAML list, and agy validate counts one agent with no error. Claude Code accepts both forms in its subagent frontmatter (code.claude.com/docs/en/sub-agents: "as a comma-separated string such as `Read, Grep, Bash` or a YAML list"). — test: scripts/agy-validate.test.mjs
+- **The `coalmine-scanner` agent loads in Antigravity.** Before: agy 1.4.8 validate reported ``the frontmatter isn't valid YAML: failed to unmarshal frontmatter YAML: yaml: unmarshal errors: line 7: cannot unmarshal !!str `Read, G...` into []string. The loader skips this agent`` and counted `components.agents` as 0. The `tools:` field is now a YAML list, and agy validate counts one agent with no error. Claude Code accepts both forms in its subagent frontmatter (code.claude.com/docs/en/sub-agents: "as a comma-separated string such as `Read, Grep, Bash` or a YAML list"). — test: scripts/agy-validate.test.mjs
 
 ## [3.23.5] - 2026-10-24
 
