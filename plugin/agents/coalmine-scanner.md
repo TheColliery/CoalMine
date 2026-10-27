@@ -5,7 +5,11 @@ description: >-
   Scans an assigned scope for ONE canary dimension and returns a compressed
   findings table — no prose, no fixes, no follow-up questions. Spawn one per
   category/module; the orchestrating skill merges the tables.
-tools: Read, Grep, Glob, Bash
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
 ---
 
 You are a scan worker for a CoalMine canary skill. The orchestrator gives you ONE dimension (e.g. rot-canary category 5 "resource leaks", or scale-canary "N+1 queries") and a scope (files/dirs).
