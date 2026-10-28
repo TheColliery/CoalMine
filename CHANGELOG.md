@@ -2,12 +2,23 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.23.7] - 2026-10-29
+
+Config and link parsing stay linear; autoFixMode line is exact
+
+A malformed or oversized project config no longer slows the hooks, the conductor's autoFixMode line reports only the effective mode, link extraction in the docs check stays linear, and generated skill references are never written through a link. The hooks in `plugin/` changed, so this is a PATCH release.
 
 ### Fixed
 - **A config with many unclosed comment or string openers no longer slows the hooks.** Before: the JSONC comment strip scanned to the end of the input once per unclosed opener, so a 48 KB config of unclosed openers took about 190 ms and 600 ms to strip. The strip is now one pass over the input, and a malformed config still fails to parse as before. — test: scripts/lib/jsonc-linear.test.mjs
 - **A project config over 1048576 bytes is refused before it is parsed.** The config read is bounded by bytes before the strip: the hooks skip an over-bound config and use their defaults, and `verify.mjs` names the bound in its failure line. — test: scripts/lib/verify-config-bound.test.mjs
 - **The conductor's autoFixMode line reports only the effective mode.** A project config that supplied its own `autoFixNote` value no longer changes the line the conductor and the stop hook print. — test: scripts/lib/autofix-note.test.mjs
+- **Link extraction in the docs check stays linear.** Before: a document with many unclosed `[` brackets took seconds to scan (48 KB of `[` took about 3.5 s). The link label now stops at the next `[`, and the same input scans in a few milliseconds. — test: scripts/lib/link-check-linear.test.mjs
+- **Generated skill references are never written through a link.** The skill-tree build refuses a link at the path it writes a shared or injected reference to, with a named error, and no longer writes through it. — test: scripts/lib/render-write-through.test.mjs
+
+### Changed
+- **Internal — the orphan-test notice quotes file names.** The test runner's notice for an on-disk test missing from the suite, and for a listed test missing on disk, quotes each name, so a name with a line break reads as one name. — test: scripts/lib/test-notice.test.mjs
+- **Internal — the agy checks run under a temporary HOME.** The agy probe and the validate test start agy with a temporary HOME and temp folders, never the real profile. — test: scripts/lib/agy-env.test.mjs
+- **Internal — the scanner and its test are re-copied** (`scripts/lib/secret-scan.mjs` and `scripts/secret-scan.test.mjs`, Bankfire `b7ad2ef`).
 
 ## [3.23.6] - 2026-10-27
 
