@@ -26,10 +26,11 @@
 // LIMITS, stated: a line scanner cannot see a key split across lines, a credential inside a URL
 // (scheme://user:pass@host), a key in a file NAME (names are escaped for printing, never scanned),
 // a provider key glued to a following word character
-// (two keys of ONE provider glued together are found, see GLUED KEYS; two keys of DIFFERENT providers glued together are not,
+// (a glued run of keys of ONE provider is found, one hit per key, for aws, github classic, google, sendgrid, stripe-live and the PEM header,
+// and as one hit for the open-ended providers (github fine-grained is the exception, see GLUED KEYS); two keys of DIFFERENT providers glued together are not,
 // e.g. aws then github or google then aws: the guards are per provider, a named limit), or a value whose body is hex-only or
 // single-case (the generic rule excludes hex; the `sk-` pattern requires mixed case). For the
-// generic rule only, two residues (THREE STEPS, below): a key inside a secret-named value is
+// generic rule only, two residues (THREE STEPS, below): a generic key inside a secret-named value is
 // reported only if the whole value passes the content test; and a secret name glued onto the end
 // of the preceding value, with no whitespace, quote, `,` `;` `)` or `&` between, is read as part
 // of that value, so the key after it is missed. Against the previous single-regex version, fewer
@@ -45,6 +46,16 @@
 // A value also stops at a closing tag, `</name>`, that is followed by the end of the line, whitespace or `<`;
 // what follows such a tag is not judged as part of the value. A tag followed by any other character
 // does not stop it.
+//
+// Also for the generic rule only (C5; 1028b, 2026-10-28): a BARE value that opens with `/` and whose regex literal, read forward from that
+// slash, is followed by a terminator or the end of the line AND holds one of `\ [ ] ( ) { } | ? * ^ $`, is a regex literal, not a secret, and
+// is not judged (the umbrella's house-backup shape: constants that hold a regex). The forward read crosses spaces and terminators both inside
+// and outside a class: a backslash escapes the next character, a `/` inside `[...]` does not end the literal, and the literal ends at the first
+// unescaped `/` outside a class anywhere later on the line, then takes flags `[dgimsuyv]*`. It gives up after LITERAL_SCAN_MAX (4,096)
+// characters, and a literal that does not close within that bound is judged as a value. The residue, stated: a bare secret that opens with
+// `/`, closes with `/` and flags before a terminator, and holds one of those characters, escapes. Two shapes are the measured cases (INSPECT,
+// 1028b): `R2`, a bare value holding a `,` with the close after it; and `R3`, a bare value, then a space, then text that holds a metacharacter
+// and a later `/`. A literal followed directly by `<` is judged, not skipped (the safe direction). A quoted value is always judged.
 //
 // Also for the generic rule only (LWK-277): a constant that NAMES the environment variable of a secret is not judged. Three
 // conditions, all required: a left name that says it holds a name (it ends in `_ENV`, `_VAR`, `_VARIABLE`, `_ENVIRONMENT`, `_NAME`,
@@ -86,12 +97,24 @@ const L = b`(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))`;
 // exact shape of the key just before (`prev`, with an optional `_`), and the end guard, where a key is named, also
 // accepts the next key only when that key is WHOLE, so a prefix alone is not a key. Each adjacency is one alternative
 // naming its own provider, so a word that merely holds a prefix stays refused.
+// WIRED PER PROVIDER (C5; the pair counts were measured on the lib before and after): aws, github classic, google, sendgrid
+// and stripe-live are FOUND AS A GLUED RUN, one hit per key, on all three joins. The open-ended runs swallow a glued run as ONE hit: gitlab,
+// the two square shapes, anthropic, openai-style and slack do not stop at a key boundary, so back to back and joined by `_` they read as
+// one hit; joined by `-` gitlab reads one. GITHUB FINE-GRAINED IS THE EXCEPTION, a stated limit pinned by a test: a glued PAIR back to back or
+// by `_` reads one hit, a glued RUN of three or more back to back or by `_` reads ZERO (its body cap ends inside the run, never on a word
+// boundary), and joined by `-` it reads one hit per key. No provider finds a glued pair at zero; github fine-grained finds none for a run of three or more.
 const GLUE_START = (prev) => b`(?:${L}|(?<=${prev}))`;
 const AWS_PREFIX = b`(?:AK` + b`IA|AS` + b`IA)`;
 const AWS_KEY = AWS_PREFIX + b`[0-9A-Z]{16}`;
 const GH_KEY = b`gh[pousr]_[A-Za-z0-9]{36,255}`;
 const GOOGLE_PREFIX = b`AI` + b`za`;
 const GOOGLE_KEY = GOOGLE_PREFIX + b`[0-9A-Za-z_-]{35}[_-]?`;
+// Each prefix is split in the source, as the other provider prefixes are, so the file holds no contiguous key-shaped text.
+const SENDGRID_KEY = b`S` + b`G\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}`;
+// The stripe head is split out so the lookbehind that names the previous key has a BOUNDED body (24 to 256): a lookbehind is tried at
+// every position of the line, and an unbounded one would cost the length of a long alphanumeric run at each of them.
+const STRIPE_HEAD = b`(?:sk|rk)` + b`_live_`;
+const STRIPE_KEY = STRIPE_HEAD + b`[A-Za-z0-9]{24,}`;
 
 export const PATTERNS = Object.freeze([
   { name: 'aws-access-key-id', re: new RegExp(GLUE_START(b`${AWS_KEY}_?`) + AWS_PREFIX + b`[0-9A-Z]{16}(?:\b|(?=_?${AWS_KEY}))`) },
@@ -105,7 +128,7 @@ export const PATTERNS = Object.freeze([
   { name: 'github-token', re: new RegExp(GLUE_START(b`${GH_KEY}_?`) + b`gh` + b`(?:[pousr]_[A-Za-z0-9]{36,255}(?:\b|(?=_?${GH_KEY}))|s_[A-Za-z0-9_.-]{100,})`) },
   { name: 'github-fine-grained-pat', re: new RegExp(L + b`github` + b`_pat_[A-Za-z0-9_]{50,255}\b`) },
   { name: 'gitlab-pat', re: new RegExp(L + b`gl` + b`pat-[A-Za-z0-9_-]{20,}`) },
-  { name: 'sendgrid-api-key', re: new RegExp(L + b`S` + b`G\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b`) },
+  { name: 'sendgrid-api-key', re: new RegExp(GLUE_START(b`${SENDGRID_KEY}_?`) + SENDGRID_KEY + b`(?:\b|(?=_?${SENDGRID_KEY}))`) },
   { name: 'square-access-token', re: new RegExp(L + b`sq0` + b`atp-[A-Za-z0-9_-]{22,}`) },
   { name: 'square-oauth-secret', re: new RegExp(L + b`sq0` + b`csp-[A-Za-z0-9_-]{43,}`) },
   { name: 'anthropic-api-key', re: new RegExp(L + b`sk` + b`-ant-[A-Za-z0-9_-]{32,}`) },
@@ -114,7 +137,7 @@ export const PATTERNS = Object.freeze([
   // that miss is the price of not flagging every long hyphenated identifier.
   { name: 'openai-style-api-key', re: new RegExp(L + b`sk` + b`-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`), check: hasMix },
   { name: 'slack-token', re: new RegExp(L + b`xo` + b`x[abprs]-[A-Za-z0-9-]{10,}`) },
-  { name: 'stripe-live-key', re: new RegExp(L + b`(?:sk|rk)` + b`_live_[A-Za-z0-9]{24,}\b`) },
+  { name: 'stripe-live-key', re: new RegExp(GLUE_START(b`${STRIPE_HEAD}[A-Za-z0-9]{24,256}_?`) + STRIPE_KEY + b`(?:\b|(?=_?${STRIPE_KEY}))`) },
   { name: 'google-api-key', re: new RegExp(GLUE_START(GOOGLE_KEY) + GOOGLE_PREFIX + b`[0-9A-Za-z_-]{35}(?:(?![0-9A-Za-z_-])|(?=[_-]?${GOOGLE_PREFIX}[0-9A-Za-z_-]{35}))`) },
   { name: 'private-key-pem', re: new RegExp(DASH5 + b`BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?` + DASH5) },
 ]);
@@ -213,6 +236,40 @@ function readsAsCode(line, start, end) {
   if ((letters.match(/[A-Z]/g) || []).length > CODE_UPPER_SHARE * letters.length) return false;
   return /[_.]|[a-z][A-Z]/.test(v); // code names are joined by `_`, `.` or a camelCase hump; plain words are not
 }
+// A BARE value that is a regex literal (C5, LIMITS above; 1028b, 2026-10-28): the literal is read FROM ITS OPENING SLASH, not from the
+// value's end. The value walker ends a bare value at its first terminator, and a terminator can sit inside a regex (`)` in `(pem|key)`,
+// `,` in `{40,}`), so the slice the walker judges can hold a regex's head with no closing `/`. regexLiteralEnd scans the literal through its
+// own grammar: a backslash escapes the next character. The scan crosses spaces and terminators both inside and outside a class, and a `/`
+// inside `[...]` does not end it: the literal ends at the first unescaped `/` outside a class anywhere later on the line, within
+// LITERAL_SCAN_MAX characters, then takes flags `[dgimsuyv]*`. The literal is skipped only when a terminator or the end of the line
+// follows AND it holds a character a base64 secret never holds (REGEX_ONLY_CHARS). The umbrella's house-backup constants are this shape.
+const REGEX_ONLY_CHARS = /[\\[\](){}|?*^$]/;
+const LITERAL_FLAGS = 'dgimsuyv';
+const TERMINATOR_AFTER = /[\s"'\x60,;)&]/;
+// X-1 (1028b, 2026-10-28): the forward read is bounded. A literal that does not close within this many characters of its opening slash is
+// judged as a value, the safe direction, so M never-closing candidates on one line cost M x a constant, not M x the line length.
+const LITERAL_SCAN_MAX = 4096;
+function regexLiteralEnd(line, start) {
+  if (line[start] !== '/') return -1;
+  let inClass = false;
+  for (let i = start + 1; i < line.length; i++) {
+    if (i - start > LITERAL_SCAN_MAX) return -1;
+    const c = line[i];
+    if (c === '\\') { i++; continue; }
+    if (inClass) { if (c === ']') inClass = false; continue; }
+    if (c === '[') { inClass = true; continue; }
+    if (c === '/') {
+      let j = i + 1;
+      while (j < line.length && LITERAL_FLAGS.includes(line[j])) j++;
+      return j;
+    }
+  }
+  return -1;
+}
+const isRegexLiteralAt = (line, start) => {
+  const end = regexLiteralEnd(line, start);
+  return end > 0 && (end === line.length || TERMINATOR_AFTER.test(line[end])) && REGEX_ONLY_CHARS.test(line.slice(start, end));
+};
 // NAME's bare `key` alternative matches only at the start of a run that opens the line, as it
 // always has: `key = ...` at the top of a file is a key, `map(key => value)` is not.
 const NAME_RE = new RegExp(NAME, 'i');
@@ -278,7 +335,8 @@ function genericValues(line) {
     const start = nameOp.lastIndex;
     const end = endOf(start);
     if (end - start < ENTROPY_MIN_LENGTH || /^[$<%{[]/.test(line[start])) continue; // cheap skip: walk on inside it
-    if (!/["'\x60]/.test(line[start - 1]) && readsAsCode(line, start, end)) continue; // a bare code value: walk on inside it
+    const quoted = /["'\x60]/.test(line[start - 1]);
+    if (!quoted && (readsAsCode(line, start, end) || isRegexLiteralAt(line, start))) continue; // a bare code or regex value: walk on inside it
     nameOp.lastIndex = end; // judged on content from here: consumed, hit or not
     const v = line.slice(start, end);
     if (!/[0-9]/.test(v) || !/[A-Za-z]/.test(v)) continue;
@@ -300,8 +358,13 @@ const GLOBAL = PATTERNS.map((p) => ({ ...p, re: new RegExp(p.re.source, `${p.re.
 // ONE MATCH NEVER HIDES ANOTHER. Every match of every pattern is its own hit, with its own
 // fingerprint, and a `check` is applied to each match separately — so a decoy that fails the
 // check cannot hide a real value after it, and acknowledging one value cannot silence a
-// different value on the same line. The generic rule runs on every line too; it skips only a
-// value that overlaps a pattern match, which is the same text already reported once.
+// different value on the same line. THE GENERIC RULE skips a value only when ONE pattern match
+// covers the whole value (the match starts at or before it and ends at or after it): that is the
+// same text reported once. It does NOT skip a value that merely OVERLAPS a match, or that HOLDS a
+// match inside it. The earlier rule dropped a value that overlapped ANY match, so an acknowledged
+// provider key inside a larger password silenced the password, which then never got a fingerprint
+// of its own. The price of the rule as it now stands is the safe direction: a secret-named value that is a
+// provider key plus extra characters reports twice, with two fingerprints.
 function matchLine(line) {
   const found = [];
   const spans = [];
@@ -312,11 +375,29 @@ function matchLine(line) {
       spans.push([m.index, m.index + m[0].length]);
     }
   }
+  // Sorted by start, with the running maximum of the ends, one binary search answers each value: O((N + M) log N) for N matches
+  // and M values, where a compare against every span was O(N * M).
+  spans.sort((a, b) => a[0] - b[0]);
+  const reach = [];
+  let top = -1;
+  for (const [, e] of spans) { top = Math.max(top, e); reach.push(top); }
   for (const g of genericValues(line)) {
-    if (spans.some(([s, e]) => g.start < e && s < g.end)) continue;
+    if (coveredBy(spans, reach, g)) continue;
     found.push({ pattern: 'generic-high-entropy-assignment', value: g.value });
   }
   return found;
+}
+// The last span that starts at or before g.start has the greatest end of every span that starts at or before it (`reach`), so the
+// value is covered by one span exactly when that greatest end reaches g.end.
+function coveredBy(spans, reach, g) {
+  let lo = 0;
+  let hi = spans.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (spans[mid][0] <= g.start) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return idx >= 0 && reach[idx] >= g.end;
 }
 
 // A fingerprint names ONE value in ONE file, so a caller can acknowledge a known, non-secret
@@ -387,7 +468,9 @@ export function scanPatch(patch, opts = {}) {
     if (l.startsWith('\0COMMIT ')) { commit = l.slice(8).trim(); file = null; inHeader = false; continue; }
     if (l.startsWith('diff --git ') || l.startsWith('diff --cc ')) { file = null; inHeader = true; continue; }
     if (inHeader && l.startsWith('+++ ')) {
-      const p = l.slice(4);
+      // git ends a `+++` path with ONE TAB when the name holds a space, quoted or not (27D-2, git 2.56.0). An unquoted name never holds a
+      // raw TAB (git writes it as \t), so that one trailing TAB is the separator and never part of the name.
+      const p = l.slice(4).replace(/\t$/, '');
       file = p === '/dev/null' ? null : unquotePath(p).replace(/^b\//, '');
       if (file !== null && skip && skip(file)) file = null;
       continue;

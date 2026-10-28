@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { PATTERNS, scanLine, scanText, scanPatch, scanPushed, parsePushRefs, rangeArgs, fingerprint, shannon, ENTROPY_THRESHOLD } from './lib/secret-scan.mjs';
+import { PATTERNS, scanLine, scanText, scanPatch, scanPushed, parsePushRefs, rangeArgs, fingerprint, shannon, ENTROPY_THRESHOLD, ENTROPY_MIN_LENGTH } from './lib/secret-scan.mjs';
 import * as scanLib from './lib/secret-scan.mjs';
 
 const cc = (...c) => String.fromCharCode(...c);
@@ -505,6 +505,43 @@ test('scanPatch unquotes every C escape git uses in a name, so a quoted name fin
 });
 
 // F8. Cheap false-negative shapes.
+// (27D-2) git writes a TAB after a `+++` path when the name holds a space, quoted or not. The headers below are REAL `git show` output,
+// git 2.56.0, read on a throwaway repo this unit made (`+++ b/my file.txt` then a TAB; `+++ "b/a b\"c.txt"` then a TAB; `+++ "b/a b\t"`
+// then a TAB; a quoted name with no space has no TAB: `+++ "b/x\ty.txt"`). The TAB is git's separator, never part of the name.
+const TAB27 = String.fromCharCode(9);
+const QUOTE27 = String.fromCharCode(34);
+const patchWithHeader = (diffLine, headerLine) => [
+  '\0COMMIT ' + 'a'.repeat(40),
+  diffLine,
+  headerLine,
+  '@@ -0,0 +1 @@',
+  '+token ' + SAMPLES['aws-access-key-id'],
+  '',
+].join('\n');
+test('27D-2 (i): a spaced name with git\'s trailing TAB: the hit names the real file, and its fingerprint is the ack for that name', () => {
+  const hits = scanPatch(patchWithHeader('diff --git a/my file.txt b/my file.txt', '+++ b/my file.txt' + TAB27), {});
+  assert.strictEqual(hits.length, 1, 'one key, one hit');
+  assert.strictEqual(hits[0].file, 'my file.txt', 'the separator TAB is not part of the name');
+  assert.strictEqual(hits[0].fp, fingerprint('my file.txt', 'aws-access-key-id', SAMPLES['aws-access-key-id']),
+    'the fingerprint matches an acknowledgement written for the real name');
+});
+test('27D-2 (ii): a QUOTED spaced name with the separator TAB after the closing quote comes out unquoted, not raw', () => {
+  const name = 'a b' + QUOTE27 + 'c.txt';
+  const hits = scanPatch(patchWithHeader('diff --git "a/a b\\"c.txt" "b/a b\\"c.txt"', '+++ "b/a b\\"c.txt"' + TAB27), {});
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].file, name, 'the quotes are git\'s C-style quoting and come off; the TAB is git\'s separator');
+});
+test('27D-2 (iii): a name that ends in a TAB, quoted by git as \\t with the separator TAB after the quote, comes out with its TAB', () => {
+  const hits = scanPatch(patchWithHeader('diff --git "a/a b\\t" "b/a b\\t"', '+++ "b/a b\\t"' + TAB27), {});
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].file, 'a b' + TAB27, 'the name\'s own TAB is kept, as git encodes it inside the quotes');
+});
+test('27D-2 control: a quoted name with a TAB inside and no space has no separator TAB, and already comes out right', () => {
+  const hits = scanPatch(patchWithHeader('diff --git "a/x\\ty.txt" "b/x\\ty.txt"', '+++ "b/x\\ty.txt"'), {});
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].file, 'x' + TAB27 + 'y.txt');
+});
+
 test('an assignment written "=>" (PHP) or ":=" (Go) is read as an assignment', () => {
   const v = 'q7Rt2Lk9' + 'Xw4Zp1Mn8Vb3Yc6';
   assert.deepStrictEqual(scanLine(`'api` + `_key' => '${v}',`), ['generic-high-entropy-assignment']);
@@ -528,6 +565,10 @@ const GLUE_GH_A = SAMPLES['github-token'];
 const GLUE_GH_B = 'gh' + 'p_' + 'B2c3'.repeat(9);
 const GLUE_G_A = SAMPLES['google-api-key'];
 const GLUE_G_B = 'AI' + 'za' + 'B2c3D4e5F6'.repeat(3) + 'G7h8J';
+const GLUE_SG_A = SAMPLES['sendgrid-api-key'];
+const GLUE_SG_B = 'S' + 'G.' + 'Cd3'.repeat(7) + 'E' + '.' + 'Fg5h'.repeat(10) + 'KqM';
+const GLUE_STRIPE_A = SAMPLES['stripe-live-key'];
+const GLUE_STRIPE_B = 'sk' + '_live_' + 'B2c3'.repeat(7);
 const GLUE_SHAPES = [
   ['aws back to back', GLUE_AWS_A + GLUE_AWS_B, 'aws-access-key-id'],
   ['aws joined by -', GLUE_AWS_A + '-' + GLUE_AWS_B, 'aws-access-key-id'],
@@ -538,12 +579,55 @@ const GLUE_SHAPES = [
   ['google back to back', GLUE_G_A + GLUE_G_B, 'google-api-key'],
   ['google joined by -', GLUE_G_A + '-' + GLUE_G_B, 'google-api-key'],
   ['google joined by _', GLUE_G_A + '_' + GLUE_G_B, 'google-api-key'],
+  // (b) C5. sendgrid and stripe-live end in `\b` and start with `L`-guarded prefixes, so a glued pair gave 0 hits before the
+  // wiring: each shape below is red on the lib as it stood.
+  ['sendgrid back to back', GLUE_SG_A + GLUE_SG_B, 'sendgrid-api-key'],
+  ['sendgrid joined by _', GLUE_SG_A + '_' + GLUE_SG_B, 'sendgrid-api-key'],
+  ['sendgrid joined by -', GLUE_SG_A + '-' + GLUE_SG_B, 'sendgrid-api-key'],
+  ['stripe back to back', GLUE_STRIPE_A + GLUE_STRIPE_B, 'stripe-live-key'],
+  ['stripe joined by _', GLUE_STRIPE_A + '_' + GLUE_STRIPE_B, 'stripe-live-key'],
+  ['stripe joined by -', GLUE_STRIPE_A + '-' + GLUE_STRIPE_B, 'stripe-live-key'],
 ];
 for (const [label, line, name] of GLUE_SHAPES) {
   test(`two provider keys, ${label}: both are found`, () => {
     assert.deepStrictEqual(scanLine(`v ${line} e`), [name, name]);
   });
 }
+
+// (b, T-2) C2. A glued RUN of three keys of one provider, back to back or joined by `_` or `-`: each key's end guard must accept the
+// next key whole, even when that next key is itself followed by a third. The end guard asked the next key for a word boundary, and
+// the middle key of a run is followed by a word character, so the first key was lost. Each run is red on the lib as it stood for
+// sendgrid and stripe-live; aws, github classic and google found all three before.
+const GLUE_AWS_C = cc(65, 75, 73, 65) + 'TESTFAKEKEY00002';
+const GLUE_GH_C = 'gh' + 'p_' + 'C3d4'.repeat(9);
+const GLUE_G_C = 'AI' + 'za' + 'C3d4E5f6G7'.repeat(3) + 'H8i9K';
+const GLUE_SG_C = 'S' + 'G.' + 'Hi7'.repeat(7) + 'J' + '.' + 'Kl9m'.repeat(10) + 'NoP';
+const GLUE_STRIPE_C = 'sk' + '_live_' + 'C3d4'.repeat(7);
+const GLUE_RUNS = [
+  ['aws-access-key-id', [GLUE_AWS_A, GLUE_AWS_B, GLUE_AWS_C]],
+  ['github-token', [GLUE_GH_A, GLUE_GH_B, GLUE_GH_C]],
+  ['google-api-key', [GLUE_G_A, GLUE_G_B, GLUE_G_C]],
+  ['sendgrid-api-key', [GLUE_SG_A, GLUE_SG_B, GLUE_SG_C]],
+  ['stripe-live-key', [GLUE_STRIPE_A, GLUE_STRIPE_B, GLUE_STRIPE_C]],
+];
+for (const [name, keys] of GLUE_RUNS) {
+  for (const [label, join] of [['back to back', ''], ['joined by _', '_'], ['joined by -', '-']]) {
+    test(`a glued run of three, ${name}, ${label}: three hits (T-2)`, () => {
+      assert.deepStrictEqual(scanLine(`v ${keys.join(join)} e`), [name, name, name]);
+    });
+  }
+}
+
+// (U-2, C3) A STATED LIMIT, pinned so the lib's comment and its code cannot drift apart. A github fine-grained token is `github_pat_` and
+// a body of 50 to 255 word characters ending on a word boundary. A run of three tokens, back to back or joined by `_`, is longer than
+// the cap, and no word boundary falls inside it, so the run reads ZERO hits. A pair fits under the cap and reads one. The `-` join is
+// not pinned here: it ends the body, so a run reads one hit per key.
+const GH_FINE = 'github' + '_pat_' + 'A1_b'.repeat(21); // 95 characters: 11 of prefix and an 84-character body
+test('a glued RUN of three github fine-grained tokens, back to back or joined by _, reads zero hits: a stated limit (U-2)', () => {
+  assert.deepStrictEqual(scanLine(`v ${GH_FINE}${GH_FINE} e`), ['github-fine-grained-pat'], 'the control: a glued pair reads one hit');
+  assert.deepStrictEqual(scanLine(`v ${GH_FINE}${GH_FINE}${GH_FINE} e`), [], 'a run of three, back to back: zero hits');
+  assert.deepStrictEqual(scanLine(`v ${GH_FINE}_${GH_FINE}_${GH_FINE} e`), [], 'a run of three, joined by _: zero hits');
+});
 
 // A key-shaped run followed by a PREFIX of the next key, and not the whole key, is not a second key: the end guard
 // accepts a next key only when it is complete. Each probe is pinned at zero hits.
@@ -552,6 +636,8 @@ const GLUE_PREFIX_PROBES = [
   ['aws run then AKIA and a fragment', GLUE_AWS_A + 'AKIAxyz'],
   ['github run then ghp_ and a fragment', GLUE_GH_A + 'ghp_xyz'],
   ['google run then -AIza and a fragment', GLUE_G_A + '-AIzaQ1w'],
+  ['sendgrid run then SG. and a fragment', GLUE_SG_A + 'SG.Q1w'],
+  ['stripe run then sk_live_ and a fragment', GLUE_STRIPE_A + 'sk_live_Q1w'],
 ];
 for (const [label, line] of GLUE_PREFIX_PROBES) {
   test(`a prefix of the next key, not the key, is not a hit: ${label}`, () => {
@@ -561,6 +647,177 @@ for (const [label, line] of GLUE_PREFIX_PROBES) {
 
 test('two provider keys separated by a space stay two hits (the control)', () => {
   assert.deepStrictEqual(scanLine(`v ${GLUE_AWS_A} ${GLUE_AWS_B} e`), ['aws-access-key-id', 'aws-access-key-id']);
+});
+
+// (a) C5. A regex literal is not a secret: the umbrella's house-backup shape, a constant on a secret name whose value is a regex.
+// Built here from fragments; the literal below is this test's own, not a copy of any file.
+const REGEX_LITERAL = 'const SECRET_RE = /^[A-Za-z0-9+' + cc(92) + '/]{40}=?$/i;';
+test('a regex literal assigned to a secret name is not a secret, and a quoted high-entropy value beside it still hits (a)', () => {
+  const quoted = 'q7Rt2Lk9' + 'Xw4Zp1Mn8Vb3Yc6';
+  assert.deepStrictEqual(scanLine(REGEX_LITERAL), [], 'a bare regex literal on a secret name is not judged');
+  assert.deepStrictEqual(scanLine(`${REGEX_LITERAL} const API_SECRET = "${quoted}";`), ['generic-high-entropy-assignment'],
+    'the quoted value beside the regex still hits: a quoted value is always judged');
+});
+
+// (1028b, 2026-10-28) THE UMBRELLA'S house-backup.mjs, lines 49 and 50, byte for byte as the head named them. String.raw keeps every
+// backslash the file holds. Each line is a regex literal on a secret name, and the test asserts it is not a secret.
+const HOUSE_BACKUP_LINE_49 = String.raw`const SECRET_RE = /^(\.credentials\.json|\.env.*|\.dev\.vars.*|\.npmrc|.*\.(pem|key|pfx|p12)|id_(rsa|ed25519|ecdsa).*)$/i;`;
+const HOUSE_BACKUP_LINE_50 = String.raw`const TOKEN_RE = /gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|pdl_(live|sdbx)_[A-Za-z0-9_]{20,}|gb_api_[A-Za-z0-9_-]{20,}|sb_(secret|publishable)_[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/;`;
+test('(1028b, 2026-10-28) house-backup line 49, a regex literal with a group and a dot-star, is not a secret', () => {
+  assert.deepStrictEqual(scanLine(HOUSE_BACKUP_LINE_49), []);
+});
+test('(1028b, 2026-10-28) house-backup line 50, a regex literal with a class holding a space and a quantifier comma, is not a secret', () => {
+  assert.deepStrictEqual(scanLine(HOUSE_BACKUP_LINE_50), []);
+});
+test('(1028b, 2026-10-28) the two house-backup lines and a quoted high-entropy value on a secret name: exactly one hit, on line 3', () => {
+  const text = [HOUSE_BACKUP_LINE_49, HOUSE_BACKUP_LINE_50, 'const CLIENT_SECRET = "' + 'q7Rt2Lk9' + 'Xw4Zp1Mn8Vb3Yc6' + '";'].join('\n');
+  assert.deepStrictEqual(scanText(text, 'house-backup.mjs').map((h) => [h.line, h.pattern]), [[3, 'generic-high-entropy-assignment']],
+    'a quoted value is always judged: the widened literal rule lets no quoted string slip');
+});
+test('(1028b, 2026-10-28) a bare value that opens with a slash but never closes as a regex literal is still judged', () => {
+  assert.deepStrictEqual(scanLine('api_secret = /' + 'Q7Rt2Lk9' + 'Xw4Zp1Mn8Vb3Yc6'), ['generic-high-entropy-assignment']);
+});
+
+// (c) C5. The containment rule. A generic value is dropped only when ONE provider match covers the whole value (the same text
+// reported once). A provider key INSIDE a larger secret does not hide the secret: the secret reports with its own fingerprint.
+test('a provider key inside a larger secret-named value gives TWO hits, the secret with a fingerprint of its own (c)', () => {
+  const key = SAMPLES['aws-access-key-id'];
+  // Assembled from fragments: the literal `q7Rt2Lk9-…` on a secret name would be a secret-shaped line in this file.
+  const hits = scanText('api_secret = "' + 'q7Rt2Lk9-' + key + '-Xw4Zp1Mn8Vb3"', 'f.env');
+  assert.deepStrictEqual(hits.map((h) => h.pattern).sort(), ['aws-access-key-id', 'generic-high-entropy-assignment'],
+    'the key is a hit, and so is the larger value it sits inside');
+  assert.strictEqual(new Set(hits.map((h) => h.fp)).size, 2, 'the two hits carry two fingerprints');
+});
+test('a value that IS exactly a provider key gives ONE hit (c, the control)', () => {
+  assert.deepStrictEqual(scanLine(`api_secret = "${SAMPLES['aws-access-key-id']}"`), ['aws-access-key-id']);
+});
+
+// (c) C5, the bound, as a SIZE RATIO. The overlap search was QUADRATIC: every generic value was compared with every provider match on
+// its line. No wall-clock ceiling is asserted: a shared runner moves the same code by more than any margin (the same lib read 464 ms
+// and 605 to 677 ms in two runs of one box). The ratio is taken on ONE machine, in one process, so host speed cancels out: one line of
+// N provider keys and N secret assignments at N = 1,500 and at N = 6,000, read INTERLEAVED (small, big, small, big, ...), twenty reads of
+// each, and each size keeps its minimum. A linear-log scan grows about 4.8x over that step; a quadratic one grows about 16x. The
+// generator is seeded: no Math.random.
+const seededRandom = (seed) => {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+};
+const B62 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+const pickB62 = (rnd, n) => Array.from({ length: n }, () => B62[Math.floor(rnd() * B62.length)]).join('');
+// A generated secret always holds a digit and a letter, so the generic rule can judge it (a hex-only or letter-only value is not a
+// candidate, and the counts below must not depend on that).
+const generatedSecret = (rnd, n) => '7q' + pickB62(rnd, n - 2);
+const denseLine = (N) => {
+  const rnd = seededRandom(20261027);
+  const parts = [];
+  for (let i = 0; i < N; i++) {
+    parts.push(`token_${i} = "${generatedSecret(rnd, 24)}"`);
+    parts.push(cc(65, 75, 73, 65) + pickB62(rnd, 16).replace(/[a-z]/g, (c) => c.toUpperCase()));
+  }
+  return parts.join(' ');
+};
+const RATIO_CEILING = 6;
+const READS = 20;
+const timeScanMs = (line) => {
+  const t0 = performance.now();
+  scanLine(line);
+  return performance.now() - t0;
+};
+// The two sizes read INTERLEAVED, and each keeps its minimum. Two blocks of reads let one burst of contention cover every big read and
+// none of the small, and the ratio rose: measured on the unchanged tree at one or two logical cores, 2 of 12 runs went red that way.
+// Interleaved, a burst hits both sizes alike, and the minimum is the read it missed.
+const interleavedMinMs = (smallLine, bigLine) => {
+  const small = [];
+  const big = [];
+  for (let i = 0; i < READS; i++) {
+    small.push(timeScanMs(smallLine));
+    big.push(timeScanMs(bigLine));
+  }
+  return { small: Math.min(...small), big: Math.min(...big) };
+};
+test('one line with 6,000 provider keys and 6,000 secret assignments: every hit is found (c)', () => {
+  const N = 6000;
+  const names = scanLine(denseLine(N));
+  assert.strictEqual(names.filter((n) => n === 'aws-access-key-id').length, N, 'every provider key is a hit');
+  assert.strictEqual(names.filter((n) => n === 'generic-high-entropy-assignment').length, N, 'every secret assignment is a hit');
+});
+test('the same line at 6,000 costs under 6x the same line at 1,500 on this machine: linear-log, not quadratic (c)', (t) => {
+  const { small, big } = interleavedMinMs(denseLine(1500), denseLine(6000));
+  const ratio = big / small;
+  t.diagnostic(`size ratio 6,000 over 1,500: ${ratio.toFixed(2)} (${big.toFixed(1)} ms over ${small.toFixed(1)} ms, minimum of ${READS} interleaved reads each)`);
+  assert.ok(ratio < RATIO_CEILING, `size ratio ${ratio.toFixed(2)} (6,000: ${big.toFixed(1)} ms, 1,500: ${small.toFixed(1)} ms); the ceiling is ${RATIO_CEILING}`);
+});
+
+// (1028b, X-1, 2026-10-28) A regex literal that never closes was scanned to the end of its line, and every such candidate on one line
+// scanned the rest of it again: M candidates on one line cost M x N. The bound (LITERAL_SCAN_MAX) makes each scan a constant. Each
+// candidate opens a class `/[` and holds no `]` anywhere, so the class never closes. Generated by the seeded generator, and no `]` appears
+// in the source. The step is 4x, the same step as the containment test above, so the same ceiling applies: linear is about 4x, quadratic about 16x.
+const neverClosingLine = (M) => {
+  const rnd = seededRandom(20261028);
+  const parts = [];
+  for (let i = 0; i < M; i++) parts.push(`k${i}_` + 'secret = /[' + pickB62(rnd, 30));
+  return parts.join(' ');
+};
+test('(1028b, X-1) 4,000 never-closing regex candidates on one line cost under 6x the 1,000 line on this machine: linear, not quadratic', (t) => {
+  const { small, big } = interleavedMinMs(neverClosingLine(1000), neverClosingLine(4000));
+  const ratio = big / small;
+  t.diagnostic(`size ratio 4,000 over 1,000 never-closing candidates: ${ratio.toFixed(2)} (${big.toFixed(1)} ms over ${small.toFixed(1)} ms, minimum of ${READS} interleaved reads each)`);
+  assert.ok(ratio < RATIO_CEILING, `size ratio ${ratio.toFixed(2)} (4,000: ${big.toFixed(1)} ms, 1,000: ${small.toFixed(1)} ms); the ceiling is ${RATIO_CEILING}`);
+});
+
+// (c) C5, the differential. Seeded random lines are scanned by the lib and by a brute-force reference that states the containment
+// rule in its own words: a generic candidate is dropped only when one provider match covers it whole. The candidate decision is
+// restated from the lib's own exported gates (below), NOT read from scanLine: scanLine applies the containment rule itself, so a
+// reference built on it would agree with the old overlap rule and could never catch it.
+const isCandidate = (v) => v.length >= ENTROPY_MIN_LENGTH && /[0-9]/.test(v) && /[A-Za-z]/.test(v) && !/^[0-9a-f-]+$/i.test(v) && shannon(v) >= ENTROPY_THRESHOLD;
+const KEYS = [...Object.values(SAMPLES).filter((k) => !k.includes('BEGIN')), GLUE_AWS_B, GLUE_GH_B, GLUE_G_B, GLUE_SG_B, GLUE_STRIPE_B];
+function randomLine(rnd) {
+  const pieces = [];
+  let contains = 0;
+  for (let p = 0, count = 1 + Math.floor(rnd() * 5); p < count; p++) {
+    const key = KEYS[Math.floor(rnd() * KEYS.length)];
+    const kind = Math.floor(rnd() * 4);
+    if (kind === 0) pieces.push({ text: key });
+    else if (kind === 1) { const v = generatedSecret(rnd, 24); pieces.push({ text: `db_secret = "${v}"`, value: v }); }
+    else if (kind === 2) {
+      const v = generatedSecret(rnd, 8) + '-' + key + '-' + generatedSecret(rnd, 8);
+      contains++;
+      pieces.push({ text: `api_secret = "${v}"`, value: v });
+    } else pieces.push({ text: `api_secret = "${key}"`, value: key });
+  }
+  return { line: pieces.map((pc) => pc.text).join(' ; '), pieces, contains };
+}
+function referenceHits(line, pieces, file) {
+  const spans = [];
+  const hits = [];
+  for (const p of PATTERNS) {
+    for (const m of line.matchAll(new RegExp(p.re.source, `${p.re.flags}g`))) {
+      if (p.check && !p.check(m[0])) continue;
+      hits.push([p.name, m[0]]);
+      spans.push([m.index, m.index + m[0].length]);
+    }
+  }
+  let offset = 0;
+  for (const pc of pieces) {
+    if (pc.value !== undefined && isCandidate(pc.value)) {
+      const start = offset + pc.text.indexOf(pc.value);
+      const end = start + pc.value.length;
+      if (!spans.some(([s, e]) => s <= start && end <= e)) hits.push(['generic-high-entropy-assignment', pc.value]);
+    }
+    offset += pc.text.length + ' ; '.length;
+  }
+  return hits.map(([name, value]) => `${name} ${fingerprint(file, name, value)}`).sort();
+}
+test('the scanner agrees with a brute-force reference of the containment rule on 400 seeded random lines (c)', () => {
+  const rnd = seededRandom(20261027);
+  let containCases = 0;
+  for (let i = 0; i < 400; i++) {
+    const { line, pieces, contains } = randomLine(rnd);
+    containCases += contains;
+    const got = scanText(line, 'diff.env').map((h) => `${h.pattern} ${h.fp}`).sort();
+    assert.deepStrictEqual(got, referenceHits(line, pieces, 'diff.env'), `line ${i}: ${line}`);
+  }
+  assert.ok(containCases > 50, `non-vacuity: the seeded lines hold containment cases (got ${containCases})`);
 });
 
 // Real git from here on: throwaway repos under the OS temp dir, every delete path-asserted.
