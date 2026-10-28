@@ -88,6 +88,8 @@ const TESTS = [
   'scripts/lib/link-check-linear.test.mjs',
   // 28c round 2 (fix 3): the runner's notices quote each file name.
   'scripts/lib/test-notice.test.mjs',
+  // 28c round 2 (fix 4): a generated reference is never written through a link copied from the source skill.
+  'scripts/lib/render-write-through.test.mjs',
   // CWK-199's class: the child spawn plan, run by the wave runner (heap via --heap-mb, a clock per test and per file, a whole-run deadline).
   'scripts/lib/test-spawn.test.mjs',
   // 09a (BB-87): the wave runner that runs this very list, adopted by blob id with its preload and CoalFace's machine reading; its own tests, including the TAP-names witnesses.

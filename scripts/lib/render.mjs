@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded } from './repo-fs.mjs';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded, writeRepoFile } from './repo-fs.mjs';
 import { MANIFEST_NAME } from './manifest.mjs';
 
 // The single shared reference every skill ships in references/escalation.md.
@@ -219,11 +219,13 @@ function buildSkillTree(from, to, shared) {
   if (Object.keys(refs).length > 0) {
     const refDir = path.join(to, 'references');
     fs.mkdirSync(refDir, { recursive: true });
+    // writeRepoFile refuses a link at the target, so a link copied from the source is never written through (28c round 2).
     for (const [name, body] of Object.entries(refs)) {
-      fs.writeFileSync(path.join(refDir, name), body, 'utf8');
+      writeRepoFile(path.join(refDir, name), body, to);
     }
   }
   if (fs.existsSync(path.join(from, 'SKILL.md'))) {
+    // The copy skips the source SKILL.md, so no link can sit at this path: a plain write is safe here.
     fs.writeFileSync(path.join(to, 'SKILL.md'), renderSkillMd(from, shared), 'utf8');
   }
 }
