@@ -529,6 +529,8 @@ function loadCfg(base) {
         merged[key] = result;
         if (legacy) merged[legacy] = result; // mirror so an OR-shaped read site (enableConductor/conductor) can't be fooled by a stale legacy field
       }
+      // autoFixNote is derived below, never read from a config: a config that supplies one would otherwise reach autoFixLine() unchanged.
+      delete merged.autoFixNote;
       // 16f row 17: what the merge decided for autoFixMode, for autoFixLine() in the conductor and the stop hook. Only when a config sets the key at all.
       try {
         const spec = SAFER_ENUM.autoFixMode;

@@ -7,6 +7,7 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 ### Fixed
 - **A config with many unclosed comment or string openers no longer slows the hooks.** Before: the JSONC comment strip scanned to the end of the input once per unclosed opener, so a 48 KB config of unclosed openers took about 190 ms and 600 ms to strip. The strip is now one pass over the input, and a malformed config still fails to parse as before. — test: scripts/lib/jsonc-linear.test.mjs
 - **A project config over 1048576 bytes is refused before it is parsed.** The config read is bounded by bytes before the strip: the hooks skip an over-bound config and use their defaults, and `verify.mjs` names the bound in its failure line. — test: scripts/lib/verify-config-bound.test.mjs
+- **The conductor's autoFixMode line reports only the effective mode.** A project config that supplied its own `autoFixNote` value no longer changes the line the conductor and the stop hook print. — test: scripts/lib/autofix-note.test.mjs
 
 ## [3.23.6] - 2026-10-27
 
