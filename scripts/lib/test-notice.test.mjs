@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { quoteNames } from './test-notice.mjs';
 
 test('quoteNames quotes each name, so a name with a line break stays on one line', () => {
-  const out = quoteNames(['scripts/lib/a.test.mjs', 'scripts/lib/b\nFAIL forged.test.mjs']);
+  const out = quoteNames(['scripts/lib/a.test.mjs', 'scripts/lib/b\nFAIL x.test.mjs']);
   assert.ok(!out.includes('\n'), `a raw line break reached the notice: ${JSON.stringify(out)}`);
-  assert.ok(out.includes('"scripts/lib/b\\nFAIL forged.test.mjs"'), `the name is not quoted: ${out}`);
+  assert.ok(out.includes('"scripts/lib/b\\nFAIL x.test.mjs"'), `the name is not quoted: ${out}`);
 });
 
 test('quoteNames quotes a plain name in double quotes and joins names with a comma', () => {
