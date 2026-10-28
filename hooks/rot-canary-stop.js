@@ -291,7 +291,7 @@ function readCfgResult(file, root) {
   let parsed;
   try {
     const content = raw.replace(/^\uFEFF/, '');
-    const cleanJson = content.replace(/"(?:\\.|[^"\\])*(?:"|$)|\/\/.*|\/\*[\s\S]*?(\*\/|$)/g, (m, close) => (m[0] === '"' || (m[1] === '*' && close !== '*/') ? m : ''));
+    const cleanJson = content.replace(/"(?:\\[\s\S]|[^"\\])*(?:"|\\?$)|\/\/.*|\/\*[\s\S]*?(\*\/|$)/g, (m, close) => (m[0] === '"' || (m[1] === '*' && close !== '*/') ? m : ''));
     parsed = JSON.parse(cleanJson);
   } catch { return { cfg: null, reason: 'malformed JSON' }; }
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { cfg: parsed, reason: null };

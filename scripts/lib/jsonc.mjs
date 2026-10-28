@@ -8,5 +8,5 @@
 // mis-strip a later //-containing string and silently revert the whole config.
 
 export function stripJsonc(content) {
-  return content.replace(/"(?:\\.|[^"\\])*(?:"|$)|\/\/.*|\/\*[\s\S]*?(\*\/|$)/g, (m, close) => (m[0] === '"' || (m[1] === '*' && close !== '*/') ? m : ''));
+  return content.replace(/"(?:\\[\s\S]|[^"\\])*(?:"|\\?$)|\/\/.*|\/\*[\s\S]*?(\*\/|$)/g, (m, close) => (m[0] === '"' || (m[1] === '*' && close !== '*/') ? m : ''));
 }

@@ -25,6 +25,8 @@ const SIZE = 48 * 1024;
 const SHAPES = {
   unclosedBlockOpeners: '/* a'.repeat(SIZE / 4),
   unclosedStringEscapes: '"' + '\\"'.repeat(SIZE / 3),
+  // A string opener whose body ends in a lone backslash: the string branch fails there and restarts two characters on.
+  danglingBackslash: '"\\'.repeat(SIZE / 2),
 };
 const BUDGET_MS = 50;
 
