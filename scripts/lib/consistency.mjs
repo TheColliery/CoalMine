@@ -295,12 +295,16 @@ export function checkVersionPins(repo) {
 // instead: the cross-stripper equivalence fixtures in scripts/lib/jsonc.test.mjs are
 // mirrored by scripts/lib/ps-config.test.ps1 (H4), so the PS port must produce identical
 // parse results on the same inputs. Do NOT fake a literal compare here.
-const JSONC_REGEX_RE = /\.replace\((\/"\(\?:[\s\S]*?\/g),/;
+// Captures the whole strip call on its line (regex AND callback), so a copy that changes either part diverges.
+const JSONC_REPLACE_RE = /(\.replace\(\/"\(\?:[^\r\n]*)/;
 export function checkJsoncRegexSync(repo) {
   const out = [];
   const sources = [
     'scripts/lib/jsonc.mjs',
     'hooks/_shared/node-config.js',
+    'hooks/coalmine-conductor.js',
+    'hooks/rot-canary-stop.js',
+    'hooks/rot-canary-touch.js',
   ];
   const literals = [];
   for (const rel of sources) {
@@ -310,15 +314,17 @@ export function checkJsoncRegexSync(repo) {
       out.push({ level: 'FAIL', msg: `consistency: ${rel} unreadable for jsonc-regex sync: ${e.message}` });
       return out;
     }
-    const m = body.match(JSONC_REGEX_RE);
+    const m = body.match(JSONC_REPLACE_RE);
     if (!m) {
       out.push({ level: 'FAIL', msg: `consistency: could not locate the JSONC stripper regex in ${rel}` });
       return out;
     }
     literals.push({ rel, lit: m[1] });
   }
-  if (literals[0].lit !== literals[1].lit) {
-    out.push({ level: 'FAIL', msg: `consistency: JSONC stripper regex DIVERGED — ${literals[1].rel} differs from ${literals[0].rel} (keep the two copies in sync)` });
+  for (const copy of literals.slice(1)) {
+    if (copy.lit !== literals[0].lit) {
+      out.push({ level: 'FAIL', msg: `consistency: JSONC stripper regex DIVERGED — ${copy.rel} differs from ${literals[0].rel} (keep the copies in sync)` });
+    }
   }
   return out;
 }

@@ -22,7 +22,7 @@ import { checkConfigKeys, checkConfigReadPath } from './lib/config-keys.mjs';
 import { checkPointers, pointerCandidates, looksPathShaped, DEFAULT_SURFACE_PLAN, collectSurfaces, applyCheckIgnoreProbe } from './lib/pointer-check.mjs';
 import { verifyAgainstManifest } from './lib/manifest.mjs';
 import { gitEnv } from './lib/git-env.mjs';
-import { MAX_DOC_BYTES, readRepoFileBounded } from './lib/repo-fs.mjs';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded } from './lib/repo-fs.mjs';
 import { descriptionCapCheck, DESC_CAP } from './lib/desc-cap.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -153,8 +153,11 @@ for (const m of ['hooks/hooks.json', 'plugin/hooks/hooks.json']) {
 const configPath = path.join(repo, '.coalmine.json');
 if (fs.existsSync(configPath)) {
   console.log('config (.coalmine.json):');
-  try {
-    const content = fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '');
+  // The byte bound comes before the strip, as in configure.mjs and the hooks (28c).
+  const raw = readRepoFileBounded(configPath, repo, MAX_CONFIG_BYTES);
+  if (raw === null) fail(`.coalmine.json is not a readable regular file of at most ${MAX_CONFIG_BYTES} bytes`);
+  else try {
+    const content = raw.replace(/^\uFEFF/, '');
     const cleanJson = stripJsonc(content);
     const cfg = JSON.parse(cleanJson);
     // Keys and types come from one table — scripts/lib/config-schema.mjs —

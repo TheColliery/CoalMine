@@ -76,6 +76,10 @@ const TESTS = [
   'scripts/agy-validate.test.mjs',
   // 27b round 2: the agy probe's three answers (absent skips; failed and present do not) -- the forced-timeout red lives here.
   'scripts/lib/agy-probe.test.mjs',
+  // 28c (a): the JSONC strip is linear on unclosed openers and matches the old regex on well-formed input.
+  'scripts/lib/jsonc-linear.test.mjs',
+  // 28c (a): verify.mjs refuses an over-bound .coalmine.json before the strip, by name.
+  'scripts/lib/verify-config-bound.test.mjs',
   // CWK-199's class: the child spawn plan, run by the wave runner (heap via --heap-mb, a clock per test and per file, a whole-run deadline).
   'scripts/lib/test-spawn.test.mjs',
   // 09a (BB-87): the wave runner that runs this very list, adopted by blob id with its preload and CoalFace's machine reading; its own tests, including the TAP-names witnesses.
