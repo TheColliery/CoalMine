@@ -23,8 +23,18 @@ function findShim(command) {
 // A wrapper, not `spawnSync` passed as a value: the git-env census cannot follow a spawner passed on, and this probe spawns agy, not git.
 const runChild = (command, args, opts) => spawnSync(command, args, opts);
 
-export function probeAgy({ command = 'agy', args = ['--version'], timeoutMs = DEFAULT_PROBE_TIMEOUT_MS, spawn = runChild }) {
-  const r = spawn(command, args, { encoding: 'utf8', timeout: timeoutMs });
+// The environment an agy run gets: HOME and the temp variables point at `home`, so agy never writes under the owner's profile.
+export function agyEnv(home, base = process.env) {
+  return { ...base, HOME: home, USERPROFILE: home, TEMP: home, TMP: home, TMPDIR: home };
+}
+
+// Runs `agy plugin validate <pluginDir> --json` and returns the raw spawn result (the caller reads stdout).
+export function validateAgyPlugin({ pluginDir, env, timeoutMs, spawn = runChild }) {
+  return spawn('agy', ['plugin', 'validate', pluginDir, '--json'], { encoding: 'utf8', timeout: timeoutMs, env });
+}
+
+export function probeAgy({ command = 'agy', args = ['--version'], timeoutMs = DEFAULT_PROBE_TIMEOUT_MS, env, spawn = runChild }) {
+  const r = spawn(command, args, { encoding: 'utf8', timeout: timeoutMs, env });
   const shown = [command, ...args].join(' ');
   if (r.error && r.error.code === 'ENOENT') {
     const shim = findShim(command);

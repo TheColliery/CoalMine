@@ -78,6 +78,8 @@ const TESTS = [
   'scripts/lib/agy-probe.test.mjs',
   // 28c (a): the JSONC strip is linear on unclosed openers and matches the old regex on well-formed input.
   'scripts/lib/jsonc-linear.test.mjs',
+  // 28c (c): agy runs under a temp HOME, probe and validate alike.
+  'scripts/lib/agy-env.test.mjs',
   // 28c (a): verify.mjs refuses an over-bound .coalmine.json before the strip, by name.
   'scripts/lib/verify-config-bound.test.mjs',
   // CWK-199's class: the child spawn plan, run by the wave runner (heap via --heap-mb, a clock per test and per file, a whole-run deadline).

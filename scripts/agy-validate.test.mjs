@@ -7,20 +7,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { probeAgy } from './lib/agy-probe.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import { probeAgy, validateAgyPlugin, agyEnv } from './lib/agy-probe.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PLUGIN = path.join(repo, 'plugin');
 const AGY_TIMEOUT_MS = 120000;
 
 test('agy validate: the built plugin has no error finding and its agent loads', (t) => {
+  // agy writes .gemini/config under HOME, so both runs get a temp HOME, removed after (28c item c).
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-agyval-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const env = agyEnv(home);
   // Skip ONLY when agy is absent; a probe that hangs or fails is a failure (27b round 2).
-  const probe = probeAgy({ timeoutMs: AGY_TIMEOUT_MS });
+  const probe = probeAgy({ timeoutMs: AGY_TIMEOUT_MS, env });
   if (probe.state === 'absent') { t.skip('agy not on PATH: AG plugin validation not run'); return; }
   assert.equal(probe.state, 'present', `agy probe failed (not a skip): ${probe.reason}`);
 
-  const r = spawnSync('agy', ['plugin', 'validate', PLUGIN, '--json'], { encoding: 'utf8', timeout: AGY_TIMEOUT_MS });
+  const r = validateAgyPlugin({ pluginDir: PLUGIN, env, timeoutMs: AGY_TIMEOUT_MS });
   assert.equal(r.error, undefined, `agy plugin validate did not run: ${r.error && r.error.code}`);
 
   let report;
