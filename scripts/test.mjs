@@ -86,6 +86,8 @@ const TESTS = [
   'scripts/lib/autofix-note.test.mjs',
   // 28c round 2 (fix 2): link extraction stays linear on a run of unclosed brackets.
   'scripts/lib/link-check-linear.test.mjs',
+  // 28c round 2 (fix 3): the runner's notices quote each file name.
+  'scripts/lib/test-notice.test.mjs',
   // CWK-199's class: the child spawn plan, run by the wave runner (heap via --heap-mb, a clock per test and per file, a whole-run deadline).
   'scripts/lib/test-spawn.test.mjs',
   // 09a (BB-87): the wave runner that runs this very list, adopted by blob id with its preload and CoalFace's machine reading; its own tests, including the TAP-names witnesses.
@@ -108,9 +110,11 @@ const TESTS = [
 // spawnSync entirely -- `process.exitCode = 1` alone does not stop execution the
 // way `process.exit()` did.
 async function main() {
+  // A dynamic import: a static local import would load before this runner's own checks can report it (node/runtime.md §1).
+  const { quoteNames } = await import(pathToFileURL(path.join(repo, 'scripts', 'lib', 'test-notice.mjs')).href);
   const missing = TESTS.filter((t) => !fs.existsSync(path.join(repo, t)));
   if (missing.length) {
-    console.error(`test runner: ${missing.length} listed test file(s) MISSING — ${missing.join(', ')}`);
+    console.error(`test runner: ${missing.length} listed test file(s) MISSING — ${quoteNames(missing)}`);
     process.exitCode = 1;
     return;
   }
@@ -121,7 +125,7 @@ async function main() {
   }
   const orphans = onDisk.filter((f) => !TESTS.includes(f));
   if (orphans.length) {
-    console.error(`test runner: ${orphans.length} on-disk test(s) NOT in the suite — ${orphans.join(', ')}. Add to scripts/test.mjs.`);
+    console.error(`test runner: ${orphans.length} on-disk test(s) NOT in the suite — ${quoteNames(orphans)}. Add to scripts/test.mjs.`);
     process.exitCode = 1;
     return;
   }

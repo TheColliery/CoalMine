@@ -59,7 +59,7 @@ test('test-spawn: scripts/test.mjs spawns its child with the plan argv, env, bac
 // ---- end to end: the REAL test.mjs, plan and wave runner, copied into a temp tree whose roster is one planted file ----
 // The per-test clock and the whole-run deadline are patched down in the COPY only (3 s and 6 s unless a test says otherwise). Every
 // run is bounded by its own 40 s timer that kills the whole tree, so a regression fails this test instead of hanging the suite.
-const COPIED = ['wave-run.mjs', 'machine-reading.mjs', 'stdout-sync.mjs'];
+const COPIED = ['wave-run.mjs', 'machine-reading.mjs', 'stdout-sync.mjs', 'test-notice.mjs'];
 function plant(t, probeSource, testClockMs = 3000) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-testspawn-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
