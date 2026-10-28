@@ -84,6 +84,8 @@ const TESTS = [
   'scripts/lib/verify-config-bound.test.mjs',
   // 28c round 2 (fix 1): the autoFixMode line comes from the merged value, never a config field.
   'scripts/lib/autofix-note.test.mjs',
+  // 28c round 2 (fix 2): link extraction stays linear on a run of unclosed brackets.
+  'scripts/lib/link-check-linear.test.mjs',
   // CWK-199's class: the child spawn plan, run by the wave runner (heap via --heap-mb, a clock per test and per file, a whole-run deadline).
   'scripts/lib/test-spawn.test.mjs',
   // 09a (BB-87): the wave runner that runs this very list, adopted by blob id with its preload and CoalFace's machine reading; its own tests, including the TAP-names witnesses.

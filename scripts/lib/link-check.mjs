@@ -41,7 +41,9 @@ function stripCode(text) {
 }
 
 const HEADING_RE = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
-const LINK_RE = /\[([^\]]*)\]\(([^)\s]+)(?:[ \t]+"[^"]*")?\)/g;
+// The label stops at the next `[`: an unclosed opener then fails at once, so the scan stays linear.
+// The label stops at the next `[`: an unclosed opener then fails at once, so the scan stays linear.
+const LINK_RE = /\[([^[\]]*)\]\(([^)\s]+)(?:[ \t]+"[^"]*")?\)/g;
 const EXTERNAL_RE = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i; // a scheme: or a protocol-relative //
 // CodeQL #68 (js/incomplete-multi-character-sanitization, HIGH) fires here: a single
 // PASS of a paired-delimiter tag-strip could in general leave a re-formed tag behind
