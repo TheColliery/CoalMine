@@ -249,10 +249,13 @@ const TERMINATOR_AFTER = /[\s"'\x60,;)&]/;
 // X-1 (1028b, 2026-10-28): the forward read is bounded. A literal that does not close within this many characters of its opening slash is
 // judged as a value, the safe direction, so M never-closing candidates on one line cost M x a constant, not M x the line length.
 const LITERAL_SCAN_MAX = 4096;
+// Test hook (1029b): counted units of work, read by the tests only through the two functions exported below; no caller reads them.
+const work = { literal: 0, cover: 0 };
 function regexLiteralEnd(line, start) {
   if (line[start] !== '/') return -1;
   let inClass = false;
   for (let i = start + 1; i < line.length; i++) {
+    work.literal++;
     if (i - start > LITERAL_SCAN_MAX) return -1;
     const c = line[i];
     if (c === '\\') { i++; continue; }
@@ -394,11 +397,15 @@ function coveredBy(spans, reach, g) {
   let hi = spans.length - 1;
   let idx = -1;
   while (lo <= hi) {
+    work.cover++;
     const mid = (lo + hi) >> 1;
     if (spans[mid][0] <= g.start) { idx = mid; lo = mid + 1; } else hi = mid - 1;
   }
   return idx >= 0 && reach[idx] >= g.end;
 }
+// Test hook (1029b): kind is "literal" (regex-literal read steps) or "cover" (containment probes). Never called by the scanner.
+export function _workCountForTests(kind) { return work[kind]; }
+export function _resetWorkCountForTests() { work.literal = 0; work.cover = 0; }
 
 // A fingerprint names ONE value in ONE file, so a caller can acknowledge a known, non-secret
 // match (a third party's public client key in a captured page) without a path-wide exemption.

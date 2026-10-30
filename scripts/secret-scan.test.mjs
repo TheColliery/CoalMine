@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { PATTERNS, scanLine, scanText, scanPatch, scanPushed, parsePushRefs, rangeArgs, fingerprint, shannon, ENTROPY_THRESHOLD, ENTROPY_MIN_LENGTH } from './lib/secret-scan.mjs';
+import { PATTERNS, scanLine, scanText, scanPatch, scanPushed, parsePushRefs, rangeArgs, fingerprint, shannon, ENTROPY_THRESHOLD, ENTROPY_MIN_LENGTH, _workCountForTests, _resetWorkCountForTests } from './lib/secret-scan.mjs';
 import * as scanLib from './lib/secret-scan.mjs';
 
 const cc = (...c) => String.fromCharCode(...c);
@@ -692,12 +692,14 @@ test('a value that IS exactly a provider key gives ONE hit (c, the control)', ()
   assert.deepStrictEqual(scanLine(`api_secret = "${SAMPLES['aws-access-key-id']}"`), ['aws-access-key-id']);
 });
 
-// (c) C5, the bound, as a SIZE RATIO. The overlap search was QUADRATIC: every generic value was compared with every provider match on
-// its line. No wall-clock ceiling is asserted: a shared runner moves the same code by more than any margin (the same lib read 464 ms
-// and 605 to 677 ms in two runs of one box). The ratio is taken on ONE machine, in one process, so host speed cancels out: one line of
-// N provider keys and N secret assignments at N = 1,500 and at N = 6,000, read INTERLEAVED (small, big, small, big, ...), twenty reads of
-// each, and each size keeps its minimum. A linear-log scan grows about 4.8x over that step; a quadratic one grows about 16x. The
-// generator is seeded: no Math.random.
+// (c) C5, the bound, as a COUNT. The overlap search was QUADRATIC: every generic value was compared with every provider match on its line.
+// The lib counts its own units of work for the tests (see the work hook near LITERAL_SCAN_MAX): one per probe of the containment search
+// (`cover`), one per character step of a regex-literal read (`literal`). A count is deterministic: no clock is read, so a shared runner
+// cannot move it. A binary search makes about log2 N probes per generic value, so N values over N matches count about N log N, and a 4x step
+// in N grows the count about 4.7x. A compare against every span counts N per value, so the count grows about 16x. The ceiling is 6: above
+// the linear-log step, below the quadratic one. Each test also asserts the count is at least the number of values, so a lib that bypasses the
+// counted loop cannot pass with a count of zero. The generator is seeded: no Math.random.
+const COUNT_CEILING = 6;
 const seededRandom = (seed) => {
   let s = seed >>> 0;
   return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
@@ -716,53 +718,40 @@ const denseLine = (N) => {
   }
   return parts.join(' ');
 };
-const RATIO_CEILING = 6;
-const READS = 20;
-const timeScanMs = (line) => {
-  const t0 = performance.now();
-  scanLine(line);
-  return performance.now() - t0;
-};
-// The two sizes read INTERLEAVED, and each keeps its minimum. Two blocks of reads let one burst of contention cover every big read and
-// none of the small, and the ratio rose: measured on the unchanged tree at one or two logical cores, 2 of 12 runs went red that way.
-// Interleaved, a burst hits both sizes alike, and the minimum is the read it missed.
-const interleavedMinMs = (smallLine, bigLine) => {
-  const small = [];
-  const big = [];
-  for (let i = 0; i < READS; i++) {
-    small.push(timeScanMs(smallLine));
-    big.push(timeScanMs(bigLine));
-  }
-  return { small: Math.min(...small), big: Math.min(...big) };
-};
+const countCover = (line) => { _resetWorkCountForTests(); scanLine(line); return _workCountForTests('cover'); };
 test('one line with 6,000 provider keys and 6,000 secret assignments: every hit is found (c)', () => {
   const N = 6000;
   const names = scanLine(denseLine(N));
   assert.strictEqual(names.filter((n) => n === 'aws-access-key-id').length, N, 'every provider key is a hit');
   assert.strictEqual(names.filter((n) => n === 'generic-high-entropy-assignment').length, N, 'every secret assignment is a hit');
 });
-test('the same line at 6,000 costs under 6x the same line at 1,500 on this machine: linear-log, not quadratic (c)', (t) => {
-  const { small, big } = interleavedMinMs(denseLine(1500), denseLine(6000));
+test('(c) the containment search does log-linear work: 6,000 values count under 6x the work of 1,500 (counted probes, no clock)', () => {
+  const small = countCover(denseLine(1500));
+  const big = countCover(denseLine(6000));
+  assert.ok(small >= 1500, `counted probes ${small} for 1,500 values: the counter must see every value, or the work is not counted`);
+  assert.ok(big >= 6000, `counted probes ${big} for 6,000 values: the counter must see every value, or the work is not counted`);
   const ratio = big / small;
-  t.diagnostic(`size ratio 6,000 over 1,500: ${ratio.toFixed(2)} (${big.toFixed(1)} ms over ${small.toFixed(1)} ms, minimum of ${READS} interleaved reads each)`);
-  assert.ok(ratio < RATIO_CEILING, `size ratio ${ratio.toFixed(2)} (6,000: ${big.toFixed(1)} ms, 1,500: ${small.toFixed(1)} ms); the ceiling is ${RATIO_CEILING}`);
+  assert.ok(ratio < COUNT_CEILING, `count ratio ${ratio.toFixed(2)} (6,000: ${big}, 1,500: ${small}); the ceiling is ${COUNT_CEILING}`);
 });
 
 // (1028b, X-1, 2026-10-28) A regex literal that never closes was scanned to the end of its line, and every such candidate on one line
-// scanned the rest of it again: M candidates on one line cost M x N. The bound (LITERAL_SCAN_MAX) makes each scan a constant. Each
-// candidate opens a class `/[` and holds no `]` anywhere, so the class never closes. Generated by the seeded generator, and no `]` appears
-// in the source. The step is 4x, the same step as the containment test above, so the same ceiling applies: linear is about 4x, quadratic about 16x.
+// scanned the rest of it again: M candidates on one line cost M x N. The bound (LITERAL_SCAN_MAX) makes each read a constant. Each
+// candidate opens a class `/[` and holds no `]` anywhere, so the class never closes. Generated by the seeded generator; no `]` appears
+// in the source.
 const neverClosingLine = (M) => {
   const rnd = seededRandom(20261028);
   const parts = [];
   for (let i = 0; i < M; i++) parts.push(`k${i}_` + 'secret = /[' + pickB62(rnd, 30));
   return parts.join(' ');
 };
-test('(1028b, X-1) 4,000 never-closing regex candidates on one line cost under 6x the 1,000 line on this machine: linear, not quadratic', (t) => {
-  const { small, big } = interleavedMinMs(neverClosingLine(1000), neverClosingLine(4000));
+test('(1028b, X-1) 4,000 never-closing regex candidates read under 6x the literal work of 1,000 (counted steps, no clock)', () => {
+  const countLiteral = (line) => { _resetWorkCountForTests(); scanLine(line); return _workCountForTests('literal'); };
+  const small = countLiteral(neverClosingLine(1000));
+  const big = countLiteral(neverClosingLine(4000));
+  assert.ok(small >= 1000, `counted literal steps ${small} for 1,000 candidates: the counter must see every candidate`);
+  assert.ok(big >= 4000, `counted literal steps ${big} for 4,000 candidates: the counter must see every candidate`);
   const ratio = big / small;
-  t.diagnostic(`size ratio 4,000 over 1,000 never-closing candidates: ${ratio.toFixed(2)} (${big.toFixed(1)} ms over ${small.toFixed(1)} ms, minimum of ${READS} interleaved reads each)`);
-  assert.ok(ratio < RATIO_CEILING, `size ratio ${ratio.toFixed(2)} (4,000: ${big.toFixed(1)} ms, 1,000: ${small.toFixed(1)} ms); the ceiling is ${RATIO_CEILING}`);
+  assert.ok(ratio < COUNT_CEILING, `count ratio ${ratio.toFixed(2)} (4,000: ${big}, 1,000: ${small}); the ceiling is ${COUNT_CEILING}`);
 });
 
 // (c) C5, the differential. Seeded random lines are scanned by the lib and by a brute-force reference that states the containment
