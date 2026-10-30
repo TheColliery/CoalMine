@@ -2,6 +2,11 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Fixed
+- **Link extraction in the docs check stays linear on repeated empty links with no closing parenthesis.** Before: a document holding many `[](` runs with no `)` took over a second to scan (48 KB took about 1.2 s). The link target now stops at the next bracket, and the same input scans in under a millisecond; every link in this repository's documents parses as before. — test: scripts/lib/link-check-linear.test.mjs
+
 ## [3.23.7] - 2026-10-29
 
 Config parsing stays linear; the autoFixMode line is exact
