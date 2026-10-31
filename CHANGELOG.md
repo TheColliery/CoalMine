@@ -2,10 +2,18 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.23.8] - 2026-10-31
+
+The config comment strip is one linear scan; links stay linear
+
+The comment strip the hooks apply to a project config is now one scan over the text with the same output as before, and link extraction in the docs check no longer slows on repeated empty links. The hooks in `plugin/` changed, so this is a PATCH release.
 
 ### Fixed
 - **Link extraction in the docs check stays linear on repeated empty links with no closing parenthesis.** Before: a document holding many `[](` runs with no `)` took over a second to scan (48 KB took about 1.2 s). The link target now stops at the next bracket, and the same input scans in under a millisecond; every link in this repository's documents parses as before. — test: scripts/lib/link-check-linear.test.mjs
+
+### Changed
+- **The config comment strip is one counted scan.** The strip the hooks, `configure.mjs` and `verify.mjs` apply to a project config before parsing is now a single pass over the text with no backtracking, and its output is byte for byte the output of the previous expression: all 46 `.json` files in this repository, the earlier test fixtures, 20,000 seeded random texts and 5,000 seeded well-formed texts give identical results. A string is kept whole to its first unescaped quote or to the end of the input, a line comment ends at the first line break, a closed block comment is removed, and an unclosed one keeps the rest of the input, so a malformed config still fails to parse. On malformed shapes of 2048 and 4096 units the scan visits at most one position per character (a config of 1,028,100 characters, the size bound being 1,048,576, took 1,028,100 steps). — test: scripts/lib/jsonc-linear.test.mjs
+- **Internal — the linear tests count steps instead of timing.** The strip test counts the positions the scan visits and asserts the count stays within a fixed number per character and doubles with the input, so it no longer reads a clock and cannot flake on a loaded machine; a stand-in that rescans on every opener, and a stripper that counts nothing, are both asserted to fail the check. — test: scripts/lib/jsonc-linear.test.mjs
 
 ## [3.23.7] - 2026-10-29
 
