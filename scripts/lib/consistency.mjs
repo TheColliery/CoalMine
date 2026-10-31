@@ -282,10 +282,10 @@ export function checkVersionPins(repo) {
   return out;
 }
 
-// 1d. The JSONC comment-stripper regex is hand-duplicated in jsonc.mjs (ESM) and
+// 1d. The JSONC comment stripper is hand-duplicated in jsonc.mjs (ESM) and
 // hooks/_shared/node-config.js (CJS — Phoenix self-contained, can't require()).
 // Each has its own test, but no test reads BOTH; a divergence in one would not be
-// mechanically caught. This extracts the regex literal from each and fails if they
+// mechanically caught. This extracts the stripper's function text from each and fails if they
 // differ — the "two copies silently drift" class, mechanized (no runtime change).
 //
 // THIRD COPY (PS, deliberately NOT in this literal compare): hooks/_shared/ps-config.ps1
@@ -295,8 +295,9 @@ export function checkVersionPins(repo) {
 // instead: the cross-stripper equivalence fixtures in scripts/lib/jsonc.test.mjs are
 // mirrored by scripts/lib/ps-config.test.ps1 (H4), so the PS port must produce identical
 // parse results on the same inputs. Do NOT fake a literal compare here.
-// Captures the whole strip call on its line (regex AND callback), so a copy that changes either part diverges.
-const JSONC_REPLACE_RE = /(\.replace\(\/"\(\?:[^\r\n]*)/;
+// Pins the stripper's text: from its declaration to the closing brace at column 0. A copy that changes any byte of the
+// declaration or the body diverges. (The header of jsonc.mjs does not repeat the declaration text, so the first match is the declaration.)
+const JSONC_FN_START = 'function stripJsonc(';
 export function checkJsoncRegexSync(repo) {
   const out = [];
   const sources = [
@@ -311,19 +312,20 @@ export function checkJsoncRegexSync(repo) {
     const p = path.join(repo, rel);
     let body;
     try { body = fs.readFileSync(p, 'utf8'); } catch (e) {
-      out.push({ level: 'FAIL', msg: `consistency: ${rel} unreadable for jsonc-regex sync: ${e.message}` });
+      out.push({ level: 'FAIL', msg: `consistency: ${rel} unreadable for jsonc-stripper sync: ${e.message}` });
       return out;
     }
-    const m = body.match(JSONC_REPLACE_RE);
-    if (!m) {
-      out.push({ level: 'FAIL', msg: `consistency: could not locate the JSONC stripper regex in ${rel}` });
+    const a = body.indexOf(JSONC_FN_START);
+    const b = a < 0 ? -1 : body.indexOf('\n}\n', a);
+    if (a < 0 || b < 0) {
+      out.push({ level: 'FAIL', msg: `consistency: could not locate the JSONC stripper function in ${rel}` });
       return out;
     }
-    literals.push({ rel, lit: m[1] });
+    literals.push({ rel, lit: body.slice(a, b + 2) });
   }
   for (const copy of literals.slice(1)) {
     if (copy.lit !== literals[0].lit) {
-      out.push({ level: 'FAIL', msg: `consistency: JSONC stripper regex DIVERGED — ${copy.rel} differs from ${literals[0].rel} (keep the copies in sync)` });
+      out.push({ level: 'FAIL', msg: `consistency: JSONC stripper function DIVERGED — ${copy.rel} differs from ${literals[0].rel} (keep the copies in sync)` });
     }
   }
   return out;

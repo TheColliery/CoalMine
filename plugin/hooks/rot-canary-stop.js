@@ -271,6 +271,52 @@ function readCfgFile(file, root) {
   return readCfgResult(file, root).cfg;
 }
 
+function stripJsonc(content, counter) {
+  const n = content.length;
+  let out = '';
+  let from = 0; // start of the text not yet copied to out
+  let i = 0;
+  let steps = 0;
+  while (i < n) {
+    steps++;
+    const c = content[i];
+    if (c === '"') {
+      // a string runs to its first unescaped quote, or to the end of the input; it is kept whole
+      i++;
+      while (i < n) {
+        steps++;
+        if (content[i] === '\\') i += 2;
+        else if (content[i++] === '"') break;
+      }
+      continue;
+    }
+    if (c === '/' && content[i + 1] === '/') {
+      out += content.slice(from, i);
+      i += 2;
+      while (i < n) {
+        steps++;
+        const d = content[i];
+        if (d === '\n' || d === '\r' || d === '\u2028' || d === '\u2029') break;
+        i++;
+      }
+      from = i;
+      continue;
+    }
+    if (c === '/' && content[i + 1] === '*') {
+      let j = i + 2;
+      while (j < n && !(content[j] === '*' && content[j + 1] === '/')) { steps++; j++; }
+      if (j >= n) break; // unclosed: the rest of the input is kept as it is
+      out += content.slice(from, i);
+      i = j + 2;
+      from = i;
+      continue;
+    }
+    i++;
+  }
+  out += content.slice(from);
+  if (counter) counter.steps += steps;
+  return out;
+}
 // UMB-174 (b) + R6 AMENDMENT 2: the same read, plus WHY a config that exists was not
 // used, so the conductor can say so on its one sanctioned SessionStart line instead of
 // staying silent. `reason` is one of the flock's four, or null:
@@ -291,7 +337,7 @@ function readCfgResult(file, root) {
   let parsed;
   try {
     const content = raw.replace(/^\uFEFF/, '');
-    const cleanJson = content.replace(/"(?:\\[\s\S]|[^"\\])*(?:"|\\?$)|\/\/.*|\/\*[\s\S]*?(\*\/|$)/g, (m, close) => (m[0] === '"' || (m[1] === '*' && close !== '*/') ? m : ''));
+    const cleanJson = stripJsonc(content);
     parsed = JSON.parse(cleanJson);
   } catch { return { cfg: null, reason: 'malformed JSON' }; }
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { cfg: parsed, reason: null };
