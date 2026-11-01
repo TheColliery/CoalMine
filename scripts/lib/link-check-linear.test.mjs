@@ -143,6 +143,8 @@ test('differential: the scanner returns what the previous pattern returned on th
     assert.deepEqual(extractLinks(text), oldLinks(text), path.relative(repo, file));
     compared++;
   }
+  const names = mdFiles.map((f) => path.relative(repo, f));
+  assert.ok(names.includes('README.md') && names.includes('CHANGELOG.md'), 'the README and the CHANGELOG are among the files compared');
   assert.ok(compared >= FIXTURES.length + mdFiles.length);
 });
 

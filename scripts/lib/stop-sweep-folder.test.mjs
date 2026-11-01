@@ -48,6 +48,7 @@ test('the Stop hook still sweeps a stale marker in its own folder when the folde
   const r = runStop(tmp);
   assert.equal(r.status, 0, 'fail-silent: exit 0 (Phoenix #4)');
   assert.equal(r.stdout, '', 'no output (Phoenix #13)');
+  assert.equal(r.stderr, '', 'no stderr: a cleanup that refuses is silent (Phoenix #13)');
   assert.ok(!fs.existsSync(stale), 'a stale marker in a private folder is swept');
 });
 
@@ -69,6 +70,7 @@ test('the Stop hook deletes nothing in a markers folder left open to group or ot
   const r = runStop(tmp);
   assert.equal(r.status, 0, 'fail-silent: exit 0 (Phoenix #4)');
   assert.equal(r.stdout, '', 'no output (Phoenix #13)');
+  assert.equal(r.stderr, '', 'no stderr: a cleanup that refuses is silent (Phoenix #13)');
   assert.ok(fs.existsSync(stale), 'a stale file in a folder open to other users is not deleted');
 });
 
@@ -87,5 +89,6 @@ test('the Stop hook never sweeps through a link at its markers folder', (t) => {
   const r = runStop(tmp);
   assert.equal(r.status, 0, 'fail-silent: exit 0 (Phoenix #4)');
   assert.equal(r.stdout, '', 'no output (Phoenix #13)');
+  assert.equal(r.stderr, '', 'no stderr: a cleanup that refuses is silent (Phoenix #13)');
   assert.ok(fs.existsSync(stale), 'nothing is deleted through the link into the folder it points at');
 });

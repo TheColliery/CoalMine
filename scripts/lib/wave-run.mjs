@@ -54,8 +54,8 @@ export function parseTap(text) {
   const found = {};
   let plan = null;
   for (const line of String(text).split(/\r?\n/)) {
-    let m = /^(not )?ok \d+(?: - (.*?))?(?:\s+# (SKIP|TODO)\b.*)?$/.exec(line);
-    if (m) { results.push({ ok: !m[1], name: unescapeTap(m[2] ?? '').trim(), directive: m[3] ?? null }); continue; }
+    let m = /^(not )?ok \d+(?: - (.*?))?(?:\s+# (SKIP|TODO)\b\s*(.*))?$/.exec(line);
+    if (m) { results.push({ ok: !m[1], name: unescapeTap(m[2] ?? '').trim(), directive: m[3] ?? null, reason: unescapeTap(m[4] ?? '').trim() }); continue; }
     m = /^1\.\.(\d+)$/.exec(line);
     if (m) { plan = Number(m[1]); continue; }
     m = /^# (tests|suites|pass|fail|cancelled|skipped|todo) (\d+)$/.exec(line);
@@ -75,7 +75,9 @@ function namesFile(name, file) {
 
 // One finished child to one status. `killedBy` is a reason the runner itself ended the child.
 export function classifyFile({ file, code, signal, stdout, killedBy = null }) {
-  const out = (status, reason, parsed, failing = []) => ({ file, status, reason, counts: parsed ? parsed.counts : null, failing });
+  // The named skips of this file: a skipped leg is reported by name and reason, so a CI log shows which leg ran (29q (c)).
+  const skipped = (parsed) => (parsed ? parsed.results.filter((r) => r.directive === 'SKIP').map((r) => ({ name: r.name, reason: r.reason })) : []);
+  const out = (status, reason, parsed, failing = []) => ({ file, status, reason, counts: parsed ? parsed.counts : null, failing, skipped: skipped(parsed) });
   if (killedBy) return out(STATUS.FAIL, killedBy, null);
   if (signal) return out(STATUS.FAIL, `died by signal ${signal}`, null);
   const p = parseTap(stdout);
@@ -313,6 +315,7 @@ async function main() {
     process.exitCode = e instanceof UsageError ? EXIT_USAGE : 2;
     return;
   }
+  for (const r of run.results) for (const s of r.skipped ?? []) process.stdout.write(`skip ${r.file} :: ${s.name} -- ${s.reason || 'no reason given'}\n`);
   for (const r of run.results) {
     if (r.status === STATUS.PASS || r.status === STATUS.SKIP) continue;
     process.stdout.write(`${r.status} ${r.name}: ${r.reason}\n`);

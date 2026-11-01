@@ -350,8 +350,11 @@ test('the command line: --help prints usage and exits 0, a missing clock or an u
 test('the command line: a serial run over real files prints one summary line on stdout and exits 0; a vacuous file makes it exit 1 and print its FAIL-style line', () => {
   const green = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'skip')]);
   assert.equal(green.status, 0, green.stdout + green.stderr);
-  assert.equal(green.stdout.trim().split('\n').length, 1);
-  assert.match(green.stdout.trim(), /^wave-run: 2 files · pass 1 · fail 0 · vacuous 0 · skipped 1 · not-run 0 · reconciled 2 of 2 — GREEN$/);
+  // one named line per skipped test (29q (c)), then the one summary line
+  const greenLines = green.stdout.trim().split('\n');
+  assert.equal(greenLines.length, 2, green.stdout);
+  assert.match(greenLines[0], /^skip .*skip\.fixture\.mjs :: platform leg -- no symlink here$/);
+  assert.match(greenLines[1], /^wave-run: 2 files · pass 1 · fail 0 · vacuous 0 · skipped 1 · not-run 0 · reconciled 2 of 2 — GREEN$/);
   const red = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'exit0-before')]);
   assert.equal(red.status, 1);
   assert.match(red.stdout, /^VACUOUS .*exit0-before\.fixture\.mjs: /m);
@@ -561,4 +564,16 @@ test('display: a test file under a folder whose name starts with two dots is sho
   const r = await runWaves({ files: [path.join(dotty, 'pass.fixture.mjs')], cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
   assert.equal(r.results[0].status, STATUS.PASS);
   assert.equal(r.results[0].name, '..cfg/pass.fixture.mjs');
+});
+
+// 29q (c): a skipped leg is named, with its reason, in the gate log, so a CI log shows which leg ran beside an all-green summary.
+test('classifyFile keeps each skipped test with its reason, so a file that passes can still name its skipped leg', () => {
+  const p = classifyFile({ file: 'a.test.mjs', code: 0, signal: null, stdout: tap(['# Subtest: runs', 'ok 1 - runs', '# Subtest: platform leg', 'ok 2 - platform leg # SKIP no symlink here', '1..2', '# tests 2', '# suites 0', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 1', '# todo 0']) });
+  assert.equal(p.status, STATUS.PASS);
+  assert.deepEqual(p.skipped, [{ name: 'platform leg', reason: 'no symlink here' }]);
+});
+
+test('the wave-run command line prints one skip line per skipped test, with the file, the name and the reason', () => {
+  const r = spawnSync(process.execPath, [path.join(HERE, 'wave-run.mjs'), '--heap-mb', '512', '--file-timeout-ms', '60000', '--deadline-ms', '120000', '--serial', '--', path.join(SANDBOX, 'mixed.fixture.mjs')], { encoding: 'utf8', timeout: 120000 });
+  assert.match(r.stdout, /^skip .*mixed\.fixture\.mjs :: platform leg -- no symlink here$/m, r.stdout + r.stderr);
 });
