@@ -245,7 +245,7 @@ function genericHook(name, backupHash = '') {
     'prev="$0.pre-coalmine"',
     `want='${backupHash}'`,
     'if [ -e "$prev" ] || [ -L "$prev" ]; then',
-    '  if [ -n "$want" ] && [ -f "$prev" ] && [ ! -L "$prev" ] && [ -x "$prev" ] && [ "$(git hash-object -- "$prev" 2>/dev/null)" = "$want" ]; then exec "$prev" "$@"; fi',
+    '  if [ -n "$want" ] && [ -f "$prev" ] && [ ! -L "$prev" ] && [ -x "$prev" ] && [ "$(git hash-object --no-filters -- "$prev" 2>/dev/null)" = "$want" ]; then exec "$prev" "$@"; fi',
     `  echo "CoalMine ${name}: $prev is not the backup CoalMine recorded, so it is not run. Review it and restore it by hand." >&2`,
     '  exit 1',
     'fi',

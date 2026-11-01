@@ -197,3 +197,24 @@ test('a planted backup beside a foreign active hook is refused, and neither file
   assert.equal(fs.readFileSync(path.join(hooks, 'pre-commit.pre-coalmine'), 'utf8'), planted, 'the planted backup is untouched');
   assert.equal(fs.readFileSync(path.join(hooks, 'pre-commit'), 'utf8'), foreign, 'the foreign hook is untouched');
 });
+
+// i29q H1: the installer records a backup's id from its bytes on disk (git hash-object --stdin applies no filters). The wrapper must
+// hash the same way. Under core.autocrlf=true, a path hash applies the clean filter and reads a CRLF backup as LF, so the ids disagree and
+// the wrapper refuses a backup the user wrote. The fixture sets core.autocrlf=true and a CRLF backup, then runs the installed hook.
+test('the installed hook runs a CRLF backup under core.autocrlf=true: the wrapper hashes the bytes on disk', (t) => {
+  if (!shAvailable) return t.skip(SKIP_NO_SH);
+  const sb = sandbox(t);
+  const repoDir = path.join(sb, 'proj');
+  gitInit(sb, repoDir);
+  const cfg = spawnSync('git', ['config', 'core.autocrlf', 'true'], { cwd: repoDir, encoding: 'utf8', env: gitEnv(path.dirname(repoDir)), timeout: TIMEOUT });
+  assert.equal(cfg.status, 0, `control: the fixture sets core.autocrlf=true (${cfg.stderr})`);
+  const hooks = path.join(repoDir, '.git', 'hooks');
+  const marker = path.join(sb, 'crlf.marker');
+  const crlfHook = `#!/usr/bin/env node\r\nrequire('fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\r\n`;
+  writeExec(path.join(hooks, 'pre-commit'), crlfHook);
+  const inst = installer(sb, repoDir, [path.join(sb, 'skills')]);
+  assert.equal(inst.status, 0, `control: the install records the CRLF hook (${inst.stdout}${inst.stderr})`);
+  const r = runHook(sb, repoDir, 'pre-commit');
+  assert.equal(r.status, 0, `the recorded CRLF backup runs and the hook exits 0 (${r.stderr})`);
+  assert.ok(fs.existsSync(marker), 'the user hook ran');
+});
