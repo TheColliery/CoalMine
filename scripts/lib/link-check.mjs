@@ -36,13 +36,11 @@ function stripFencedBlocks(text) {
 // link to check. NEVER used for heading slugging (see headingSlugs below) -- GitHub
 // renders an inline code span's CONTENT as plain text in a heading, only the backtick
 // MARKUP is dropped, and slugify's own disallowed-char filter already does that.
-function stripCode(text) {
+export function stripCode(text) {
   return stripFencedBlocks(text).replace(/`[^`\n]*`/g, '');
 }
 
 const HEADING_RE = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
-// The label and the target stop at the next bracket: an opener that does not close then fails at once, so the scan stays linear.
-const LINK_RE = /\[([^[\]]*)\]\(([^)\s[\]]+)(?:[ \t]+"[^"]*")?\)/g;
 const EXTERNAL_RE = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i; // a scheme: or a protocol-relative //
 // CodeQL #68 (js/incomplete-multi-character-sanitization, HIGH) fires here: a single
 // PASS of a paired-delimiter tag-strip could in general leave a re-formed tag behind
@@ -114,14 +112,45 @@ export function headingSlugs(text) {
   return slugs;
 }
 
-export function extractLinks(text) {
+// One left-to-right pass that reads what `[label](target "title")` reads: the label has no bracket and runs to a `]`
+// that is followed by `(`; the target is one or more characters that are not `)`, a white space or a bracket; then either
+// `)`, or a space or tab run, a double-quoted title and `)`. A start that fails moves on to the next opening bracket.
+// Every character belongs to at most one label, one target and one title, so the work is linear in the text. The
+// optional counter, { steps }, receives one step per character visit.
+const isSpace = (c) => /\s/.test(c);
+export function extractLinks(text, counter) {
+  const s = stripCode(text);
+  const n = s.length;
   const links = [];
-  const stripped = stripCode(text);
-  let m;
-  LINK_RE.lastIndex = 0;
-  while ((m = LINK_RE.exec(stripped))) {
-    links.push({ text: m[1], target: m[2] });
+  let steps = 0;
+  let p = 0;
+  while (p < n) {
+    steps++;
+    if (s[p] !== '[') { p++; continue; }
+    let j = p + 1;
+    while (j < n && s[j] !== '[' && s[j] !== ']') { steps++; j++; }
+    if (j >= n || s[j] !== ']' || j + 1 >= n || s[j + 1] !== '(') { p = j; continue; }
+    const d = j + 2;
+    let e = d;
+    while (e < n && s[e] !== ')' && s[e] !== '[' && s[e] !== ']' && !isSpace(s[e])) { steps++; e++; }
+    if (e === d) { p = j; continue; }
+    let end = -1;
+    if (e < n && s[e] === ')') {
+      end = e + 1;
+    } else if (e < n && (s[e] === ' ' || s[e] === '\t')) {
+      let k = e;
+      while (k < n && (s[k] === ' ' || s[k] === '\t')) { steps++; k++; }
+      if (k < n && s[k] === '"') {
+        let q = k + 1;
+        while (q < n && s[q] !== '"') { steps++; q++; }
+        if (q + 1 < n && s[q + 1] === ')') end = q + 2;
+      }
+    }
+    if (end < 0) { p = j; continue; }
+    links.push({ text: s.slice(p + 1, j), target: s.slice(d, e) });
+    p = end;
   }
+  if (counter) counter.steps += steps;
   return links;
 }
 
