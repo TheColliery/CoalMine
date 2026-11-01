@@ -129,7 +129,12 @@ export function verifyAgainstManifest(destDir, { byteBudget = VERIFY_BYTE_BUDGET
         : `installed file MISSING: ${rel}` });
       continue;
     }
-    const key = fs.realpathSync.native(p);
+    let key;
+    try { key = fs.realpathSync.native(p); } catch {
+      // The file went away between the kind check and here: the same REFUSED line as any other unreadable installed file.
+      findings.push({ level: 'FAIL', msg: `installed file REFUSED (a link out of the target, not a regular file, or over ${MAX_DOC_BYTES} bytes): ${rel}` });
+      continue;
+    }
     let got = hashedByPath.get(key);
     if (got === undefined) {
       if (bytesRead >= byteBudget) {

@@ -71,6 +71,7 @@ export function inject(content, shared, meta = {}) {
   ];
   let grown = content.length;
   // String(value): a replacement that returns undefined inserts the text "undefined", so the estimate measures what is inserted.
+  // Not estimated: a fragment that itself holds another marker is expanded again by the replaces below. The inputs are this repository's own shared files.
   for (const [marker, value] of fragments) grown += (content.split(marker).length - 1) * (String(value).length - marker.length);
   refuseIfOver('fragment insertion', grown);
   return content

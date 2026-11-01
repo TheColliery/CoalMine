@@ -1,6 +1,6 @@
 // 29q c36 item 3.1: the ratchet census of raw file reads under scripts/. A raw `readFileSync` or `readFile` call takes an unbounded
 // file into memory, and the bounded readers in repo-fs.mjs (readRepoFileBounded, readRepoBytesBounded) refuse links, FIFOs and
-// oversize files. The census lists every raw read site outside the tests and fails on any site not in ALLOWLIST. Each ALLOWLIST
+// oversize files. The census lists the raw read call sites its pattern matches (`readFileSync(` and `readFile(`, `.mjs` only, one count per line); an alias, a computed property, `createReadStream` and `.cjs` files are outside it. It fails on any site not in ALLOWLIST. Each ALLOWLIST
 // entry carries an exact count and a reason, so a count that drops must be lowered in the same change (the ratchet): a stale
 // allowance fails too, and a site that moves to a bounded reader leaves the list when its count reaches zero.
 // The census reads source text only; a line that begins with a comment marker is not a call. Zero-dep (node built-ins only).
