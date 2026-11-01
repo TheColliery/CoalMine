@@ -2,11 +2,23 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.24.0] - 2026-11-01
+
+The installer runs only the git hook backup it recorded
+
+The installer now refuses, with a visible line, a git hook backup it did not record, and the repository scripts, the manifest check, the render step, the docs link check and the SessionStart rule walk read files through bounded readers. The conductor in `plugin/` changed, and the installer refuses what it used to do, so this is a MINOR release.
+
+### Changed
+- **The installer runs a git hook backup only when it recorded it.** The hook the installer writes embeds the git blob id of the backup it keeps beside it (`<hook>.pre-coalmine`) and checks it with `git hash-object` before running it; a backup that changed stops the commit with one stderr line and exit 1. Installing over a backup the installer did not record prints `[kept]` and exits 1, and uninstall puts a backup back only when its blob id matches. A backup made by an earlier CoalMine release has no record: reinstalling over it prints `[kept]` and exits 1 until you merge the two hooks by hand. — test: scripts/lib/hook-backup-trust.test.mjs
+- **A backup beside an older CoalMine hook is adopted.** When the hook in place is a wrapper written by an earlier CoalMine release (the 3.23.9 installer's own output is the fixture), the installer records the backup's blob id and prints `adopted <path>`; a backup with no active hook, or beside a hook that is not CoalMine's, is still refused. — test: scripts/lib/hook-backup-trust.test.mjs
+- **Internal — a ratchet census of raw file reads.** `scripts/lib/read-census.mjs` counts the `readFileSync` and `readFile` call sites under `scripts/` (60 sites in 17 files before; 28 in 13 after four files moved to the bounded readers) and fails on a site that is not on its list with a reason. — test: scripts/lib/read-census.test.mjs
+- **Internal — the gate log names each skipped test.** `wave-run` prints one line per skipped test with its file, name and reason, so a CI log shows which leg ran; the link-check test asserts that the README and the CHANGELOG are among the files it compares, and the Stop-hook folder tests assert that nothing is written to stderr. — test: scripts/lib/wave-run.test.mjs
 
 ### Fixed
 - **The SessionStart conductor reads the rule documents once per run and stops at a byte budget.** Both of its checks share one read of the rule documents, a document reached through several links is read once, and a walk past 8 MiB of documents stops silently. — test: scripts/lib/conductor-walk.test.mjs
 - **The docs link check reads and indexes each target once per run and bounds its work.** A target named by N links is read once, a document with more than 5,000 links is refused by a named line, and a run whose targets pass 64 MiB stops reading with a named line. — test: scripts/lib/link-check-cache.test.mjs
+- **`verify.mjs` and the manifest check read each real file once, under a byte budget.** `verify.mjs` reads through the bounded reader, and the integrity pass reads a file named by several manifest keys once (3 keys to one file: 1 read, 12 bytes) and stops with a named line when the bytes it has read pass its budget (a 50-byte budget against two 100-byte files). — test: scripts/lib/manifest-alias.test.mjs
+- **The render step refuses an expansion that would pass 256 KiB.** The bound is checked before each expansion stage, and the largest rendered `SKILL.md` is 15,765 bytes. — test: scripts/lib/render-bound.test.mjs
 
 ## [3.23.9] - 2026-11-01
 
