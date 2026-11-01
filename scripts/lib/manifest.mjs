@@ -24,12 +24,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded, readRepoBytesBounded } from './repo-fs.mjs';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded, readRepoBytesBounded, repoEntryKind } from './repo-fs.mjs';
 
 export const MANIFEST_NAME = '.coalmine-manifest.json';
 
-export function hashFile(p) {
-  return createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+// c36 item 3.2: the file is hashed in chunks, never whole in memory. No size cap here on purpose: the R18b test records the hash of a
+// file over MAX_DOC_BYTES, and the refusal of an oversize installed file belongs to the verifier (ownedByManifest reads it bounded). The
+// root defaults to the file's own folder, so a link at the file is refused.
+export function hashFile(p, root = path.dirname(p)) {
+  if (repoEntryKind(p, root) !== 'file') throw new Error(`${p} is missing or not a plain file`);
+  const hash = createHash('sha256');
+  const chunk = Buffer.alloc(64 * 1024);
+  const fd = fs.openSync(p, 'r');
+  try {
+    for (let n = fs.readSync(fd, chunk, 0, chunk.length, null); n > 0; n = fs.readSync(fd, chunk, 0, chunk.length, null)) hash.update(chunk.subarray(0, n));
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest('hex');
 }
 
 // Walk each installed skill dir and hash every file. Keys are POSIX-style

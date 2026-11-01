@@ -23,6 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MAX_DOC_BYTES, readRepoFileBounded } from './repo-fs.mjs';
 
 // Strip FENCED code blocks only -- a line matching `^#{1,6} ...` INSIDE a fenced
 // example is not a real heading. Replaced with the same number of newlines so
@@ -161,11 +162,12 @@ export function extractLinks(text, counter) {
 // would silently return.
 const decodeAnchor = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
 
-// One file's findings. `readFile` is injected so a unit test can drive this against an
+// One file's findings. `readDoc` is injected so a unit test can drive this against an
 // in-memory fixture set without touching a real filesystem.
-export function checkFile(filePath, repoRoot, readFile = (p) => fs.readFileSync(p, 'utf8')) {
+export function checkFile(filePath, repoRoot, readDoc = (p) => readRepoFileBounded(p, repoRoot, MAX_DOC_BYTES)) {
   const findings = [];
-  const raw = readFile(filePath);
+  const raw = readDoc(filePath);
+  if (raw == null) return [`${filePath}: not checked — missing, not a plain file inside the repo, or over ${MAX_DOC_BYTES} bytes`];
   const ownSlugs = headingSlugs(raw);
 
   for (const { target } of extractLinks(raw)) {
@@ -190,7 +192,12 @@ export function checkFile(filePath, repoRoot, readFile = (p) => fs.readFileSync(
       continue;
     }
     if (anchorPart && targetAbs.toLowerCase().endsWith('.md')) {
-      const targetSlugs = headingSlugs(readFile(targetAbs));
+      const targetText = readDoc(targetAbs);
+      if (targetText == null) {
+        findings.push(`${filePath}: not checked -> ${target} (${path.relative(repoRoot, targetAbs)} is missing, not a plain file inside the repo, or over ${MAX_DOC_BYTES} bytes)`);
+        continue;
+      }
+      const targetSlugs = headingSlugs(targetText);
       if (!targetSlugs.has(anchorPart)) {
         findings.push(`${filePath}: dead anchor -> ${target} (no matching heading in ${path.relative(repoRoot, targetAbs)})`);
       }

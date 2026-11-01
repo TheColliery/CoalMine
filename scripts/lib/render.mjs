@@ -17,17 +17,24 @@ export const SHARED_REFERENCES = [
   { name: 'escalation.md', src: 'references/escalation.md' },
 ];
 
+// c36 item 3.2: shared files are read bounded, inside the shared folder. A refusal throws a named error (the old read threw too).
+const readShared = (file, dir) => {
+  const text = readRepoFileBounded(file, dir, MAX_DOC_BYTES);
+  if (text === null) throw new Error(`${file} is missing, not a plain file inside ${dir}, or over ${MAX_DOC_BYTES} bytes`);
+  return text;
+};
+
 export function loadShared(sharedDir) {
   return {
-    languageHeader:   fs.readFileSync(path.join(sharedDir, 'language-header.md'),   'utf8').trimEnd(),
-    orchestration:    fs.readFileSync(path.join(sharedDir, 'orchestration.md'),      'utf8').trimEnd(),
-    escalationFooter: fs.readFileSync(path.join(sharedDir, 'escalation-footer.md'),  'utf8').trimEnd(),
-    reportingFooter:  fs.readFileSync(path.join(sharedDir, 'reporting-footer.md'),   'utf8').trimEnd(),
-    classifyBlock:    fs.readFileSync(path.join(sharedDir, 'classify-block.md'),     'utf8').trimEnd(),
+    languageHeader:   readShared(path.join(sharedDir, 'language-header.md'), sharedDir).trimEnd(),
+    orchestration:    readShared(path.join(sharedDir, 'orchestration.md'), sharedDir).trimEnd(),
+    escalationFooter: readShared(path.join(sharedDir, 'escalation-footer.md'), sharedDir).trimEnd(),
+    reportingFooter:  readShared(path.join(sharedDir, 'reporting-footer.md'), sharedDir).trimEnd(),
+    classifyBlock:    readShared(path.join(sharedDir, 'classify-block.md'), sharedDir).trimEnd(),
     // Verbatim (no trimEnd): the body must land byte-identical at every target so
     // verify.mjs can byte-compare each skill's references/escalation.md to it.
     sharedReferences: Object.fromEntries(
-      SHARED_REFERENCES.map((r) => [r.name, fs.readFileSync(path.join(sharedDir, r.src), 'utf8')]),
+      SHARED_REFERENCES.map((r) => [r.name, readShared(path.join(sharedDir, r.src), sharedDir)]),
     ),
   };
 }

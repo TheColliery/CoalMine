@@ -26,6 +26,13 @@ import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded } from './lib/repo
 import { descriptionCapCheck, DESC_CAP } from './lib/desc-cap.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// c36 item 3.2: every file this gate reads goes through the bounded reader (repo-fs.mjs), rooted at the repo. A refusal (missing,
+// a link, not a plain file inside the repo, over the bound) throws a named error where the old read threw, so each site keeps its failure path.
+const readText = (abs, root = repo, max = MAX_DOC_BYTES) => {
+  const text = readRepoFileBounded(abs, root, max);
+  if (text === null) throw new Error(`${path.relative(repo, abs)} is missing, not a plain file inside the repo, or over ${max} bytes`);
+  return text;
+};
 // Leading-BOM strip for the new 1.6 block below, built from a char code rather than
 // a hand-typed escape sequence (this file's other BOM strips elsewhere are untouched).
 const BOM_RE = new RegExp('^' + String.fromCharCode(0xfeff));
@@ -46,7 +53,7 @@ for (const s of skills) {
   const md = path.join(skillsSrc, s, 'SKILL.md');
   if (!fs.existsSync(md)) { fail(`${s}: SKILL.md missing`); continue; }
   let src;
-  try { src = fs.readFileSync(md, 'utf8'); }
+  try { src = readText(md, repo); }
   catch (e) { fail(`${s}: SKILL.md unreadable: ${e.message}`); continue; }
 
   // Extract YAML frontmatter (between the first two "---" delimiters)
@@ -89,7 +96,7 @@ if (fs.existsSync(commandsDir)) {
 }
 for (const [label, p, isSkill] of descTargets) {
   try {
-    const { len, over } = descriptionCapCheck(fs.readFileSync(p, 'utf8'));
+    const { len, over } = descriptionCapCheck(readText(p, repo));
     if (isSkill && len === 0) fail(`${label}: frontmatter description missing/unparsed`);
     else if (over) fail(`${label}: description+when_to_use ${len} chars exceeds the ${DESC_CAP}-char cap`);
     else pass(`${label}: ${len} chars (cap ${DESC_CAP})`);
@@ -105,7 +112,7 @@ for (const [label, p, isSkill] of descTargets) {
 {
   const pluginJsonPath = path.join(repo, '.claude-plugin', 'plugin.json');
   try {
-    const pj = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8').replace(BOM_RE, ''));
+    const pj = JSON.parse(readText(pluginJsonPath, repo).replace(BOM_RE, ''));
     const len = typeof pj.description === 'string' ? pj.description.length : 0;
     if (!pj.description) fail('.claude-plugin/plugin.json: description missing');
     else if (len > DESC_CAP) fail(`.claude-plugin/plugin.json: description ${len} chars exceeds the ${DESC_CAP}-char cap`);
@@ -118,7 +125,7 @@ console.log('manifests:');
 for (const m of ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'hooks/hooks.json']) {
   const p = path.join(repo, m);
   if (!fs.existsSync(p)) { fail(`${m} missing`); continue; }
-  try { JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); pass(m); } catch (e) { fail(`${m} invalid JSON: ${e.message}`); }
+  try { JSON.parse(readText(p, repo).replace(/^\uFEFF/, '')); pass(m); } catch (e) { fail(`${m} invalid JSON: ${e.message}`); }
 }
 
 // 15b5 CWK2-039 (CWK2-027 gate half): the Claude Code hook manifests are held to the exec form (hooks-safety.md section 3, the vendor's hooks reference):
@@ -130,7 +137,7 @@ for (const m of ['hooks/hooks.json', 'plugin/hooks/hooks.json']) {
   const p = path.join(repo, m);
   if (!fs.existsSync(p)) { if (m.startsWith('plugin/')) continue; fail(`${m} missing`); continue; }
   try {
-    const cfg = JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, ''));
+    const cfg = JSON.parse(readText(p, repo).replace(/^\uFEFF/, ''));
     let handlers = 0;
     for (const [event, groups] of Object.entries(cfg.hooks || {})) {
       for (const g of Array.isArray(groups) ? groups : []) {
@@ -234,7 +241,7 @@ try {
     schemaKeys: CONFIG_SCHEMA.map((e) => e.key),
     mdFiles: skillMd,
     hookFiles: hookJs,
-    read: (f) => fs.readFileSync(path.join(repo, f), 'utf8'),
+    read: (f) => readText(path.join(repo, f), repo),
     // The room's own key table: a first cell there is a key CLAIM regardless of shape, so
     // this is the one surface where a lowercase key is catchable. Region-bounded (measured:
     // unbounded it would fire on the Commands table's 2 slash-command rows; bounded, 8/8
@@ -267,12 +274,12 @@ try {
   let sharedForRead = null;
   try { sharedForRead = loadShared(path.join(skillsSrc, '_shared')); } catch {}
   for (const sk of skills) {
-    try { surfaces.push({ label: `skills/${sk}/SKILL.md`, text: sharedForRead ? renderSkillMd(path.join(skillsSrc, sk), sharedForRead) : fs.readFileSync(path.join(skillsSrc, sk, 'SKILL.md'), 'utf8') }); }
+    try { surfaces.push({ label: `skills/${sk}/SKILL.md`, text: sharedForRead ? renderSkillMd(path.join(skillsSrc, sk), sharedForRead) : readText(path.join(skillsSrc, sk, 'SKILL.md'), repo) }); }
     catch (e) { fail(`could not render skills/${sk}/SKILL.md: ${e.message}`); }
   }
   const cmdDir = path.join(repo, 'commands');
   for (const f of (fs.existsSync(cmdDir) ? fs.readdirSync(cmdDir) : []).filter((x) => x.endsWith('.md'))) {
-    try { surfaces.push({ label: `commands/${f}`, text: fs.readFileSync(path.join(cmdDir, f), 'utf8') }); } catch {}
+    try { surfaces.push({ label: `commands/${f}`, text: readText(path.join(cmdDir, f), repo) }); } catch {}
   }
   // platform-configs/*.template (INSPECT MEDIUM-1): a FOURTH surface class both sweeps missed
   // and the first cut of this gate was structurally blind to -- CoalLedger's own MED-1 shape
@@ -280,7 +287,7 @@ try {
   // a bare-read instruction here reaches an agent we never see. Walked, never enumerated.
   const pcDir = path.join(repo, 'platform-configs');
   for (const f of (fs.existsSync(pcDir) ? fs.readdirSync(pcDir) : []).filter((x) => x.endsWith('.template'))) {
-    try { surfaces.push({ label: `platform-configs/${f}`, text: fs.readFileSync(path.join(pcDir, f), 'utf8') }); } catch {}
+    try { surfaces.push({ label: `platform-configs/${f}`, text: readText(path.join(pcDir, f), repo) }); } catch {}
   }
   const findings = checkConfigReadPath({ surfaces });
   if (findings.length === 0) pass(`across ${surfaces.length} agent surfaces, every config mention is governed by a rail (universal, or the global tier on its own line)`);
@@ -392,7 +399,7 @@ try {
       ['.coderabbit.yaml', 'CWK-120 (c): a fixed-schema YAML config; its comments cite hooks-safety.md/scripts-quality.md/DOC-PATTERN.md/SKILL-REPO-PATTERN.md by bare filename (no backticks, no /) and the vendor docs by URL, so pointerCandidates() -- which reads only backtick-wrapped, /-bearing tokens -- returns 0 over it; a plan row would be vacuous'],
     ];
     const declaredOut = (f) => DECLARED_OUT.some(([pre]) => f.startsWith(pre) || f.endsWith('/' + pre));
-    const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+    const read = (p) => { try { return readText(p, repo); } catch { return null; } };
     // SURFACE PLAN, DECLARED (CWK-090 fix 3) -- what this block used to hard-code as five
     // separate for-loops is now DATA (`DEFAULT_SURFACE_PLAN`, pointer-check.mjs), driven
     // here with THIS room's own fs IO. CoalHearth's finding: "scripts/ comments are a
@@ -646,8 +653,8 @@ for (const h of ['hooks/rot-canary-touch.js', 'hooks/rot-canary-stop.js', 'hooks
 console.log('shared regions:');
 for (const t of REGION_TARGETS) {
   try {
-    const partial = fs.readFileSync(path.join(repo, t.partial), 'utf8');
-    const cur = fs.readFileSync(path.join(repo, t.file), 'utf8');
+    const partial = readText(path.join(repo, t.partial), repo);
+    const cur = readText(path.join(repo, t.file), repo);
     const got = extractRegion(cur, t.name, t.comment);
     const want = (partial.endsWith('\n') ? partial : partial + '\n').replace(/\r\n/g, '\n');
     if (got === null) fail(`${t.file}: shared region '${t.name}' markers missing`);
@@ -678,7 +685,7 @@ function compareAux(srcDir, dstDir, label) {
       } else {
         try {
           if (!fs.existsSync(dp)) fail(`${label}/${e.name} missing — run: node scripts/build-plugin.mjs`);
-          else if (fs.readFileSync(sp, 'utf8').replace(/\r\n/g, '\n') !== fs.readFileSync(dp, 'utf8').replace(/\r\n/g, '\n')) fail(`${label}/${e.name} STALE vs source — run: node scripts/build-plugin.mjs`);
+          else if (readText(sp, repo).replace(/\r\n/g, '\n') !== readText(dp, repo).replace(/\r\n/g, '\n')) fail(`${label}/${e.name} STALE vs source — run: node scripts/build-plugin.mjs`);
         } catch (err) { fail(`${label}/${e.name} compare failed: ${err.message}`); }
       }
     }
@@ -708,7 +715,7 @@ function checkSharedReferences(skills, shared) {
       const dp = path.join(pluginDir, 'skills', s, 'references', r.name);
       if (!fs.existsSync(dp)) { fail(`plugin/skills/${s}/references/${r.name} missing — run: node scripts/build-plugin.mjs`); continue; }
       try {
-        if (fs.readFileSync(dp, 'utf8').replace(/\r\n/g, '\n') !== want) fail(`plugin/skills/${s}/references/${r.name} STALE vs skills/_shared/references/${r.name} — run: node scripts/build-plugin.mjs`);
+        if (readText(dp, repo).replace(/\r\n/g, '\n') !== want) fail(`plugin/skills/${s}/references/${r.name} STALE vs skills/_shared/references/${r.name} — run: node scripts/build-plugin.mjs`);
         else pass(`plugin/skills/${s}/references/${r.name} in sync (shared)`);
       } catch (e) { fail(`plugin/skills/${s}/references/${r.name} compare failed: ${e.message}`); }
     }
@@ -728,7 +735,7 @@ if (!fs.existsSync(pluginDir)) {
     const distMd = path.join(pluginDir, 'skills', s, 'SKILL.md');
     if (!fs.existsSync(distMd)) { fail(`plugin/skills/${s} missing — run: node scripts/build-plugin.mjs`); continue; }
     let got;
-    try { got = fs.readFileSync(distMd, 'utf8'); }
+    try { got = readText(distMd, repo); }
     catch (e) { fail(`plugin/skills/${s} unreadable: ${e.message}`); continue; }
     if (got.includes('<!-- SHARED:')) { fail(`plugin/skills/${s} contains unresolved template markers — run: node scripts/build-plugin.mjs`); continue; }
     let want;
@@ -814,8 +821,8 @@ if (!fs.existsSync(pluginDir)) {
     const readmeDist = path.join(pluginDir, 'README.md');
     if (!fs.existsSync(readmeSrc)) fail('plugin-src/README.md missing — the plugin folder ships a README');
     else if (!fs.existsSync(readmeDist)) fail('plugin/README.md missing — run: node scripts/build-plugin.mjs');
-    else if (fs.readFileSync(readmeSrc, 'utf8').replace(/\r\n/g, '\n') !== fs.readFileSync(readmeDist, 'utf8').replace(/\r\n/g, '\n')) fail('plugin/README.md STALE vs plugin-src/README.md — run: node scripts/build-plugin.mjs');
-    else if (fs.readFileSync(readmeDist, 'utf8').split(/\s+/).filter(Boolean).length < 40) fail('plugin/README.md is under 40 words (the directory minimum)');
+    else if (readText(readmeSrc, repo).replace(/\r\n/g, '\n') !== readText(readmeDist, repo).replace(/\r\n/g, '\n')) fail('plugin/README.md STALE vs plugin-src/README.md — run: node scripts/build-plugin.mjs');
+    else if (readText(readmeDist, repo).split(/\s+/).filter(Boolean).length < 40) fail('plugin/README.md is under 40 words (the directory minimum)');
     else pass('plugin/README.md in sync (>= 40 words)');
   } catch (e) { fail(`plugin/README.md check failed: ${e.message}`); }
   // CWK-202 (09b): the native Antigravity plugin. plugin/plugin.json + plugin/hooks.json ship from plugin-src/ (build-plugin.mjs copies them) and AG runs a hook command from
@@ -829,15 +836,15 @@ if (!fs.existsSync(pluginDir)) {
       const distF = path.join(pluginDir, f);
       if (!fs.existsSync(srcF)) { fail(`plugin-src/${f} missing - the plugin folder ships it for Antigravity`); continue; }
       if (!fs.existsSync(distF)) { fail(`plugin/${f} missing - run: node scripts/build-plugin.mjs`); continue; }
-      if (fs.readFileSync(srcF, 'utf8').replace(/\r\n/g, '\n') !== fs.readFileSync(distF, 'utf8').replace(/\r\n/g, '\n')) fail(`plugin/${f} STALE vs plugin-src/${f} - run: node scripts/build-plugin.mjs`);
+      if (readText(srcF, repo).replace(/\r\n/g, '\n') !== readText(distF, repo).replace(/\r\n/g, '\n')) fail(`plugin/${f} STALE vs plugin-src/${f} - run: node scripts/build-plugin.mjs`);
       else pass(`plugin/${f} in sync`);
     }
     if (fs.existsSync(path.join(pluginDir, 'plugin.json'))) {
-      const am = JSON.parse(fs.readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8'));
+      const am = JSON.parse(readText(path.join(pluginDir, 'plugin.json'), repo));
       if (am.name === 'coalmine') pass("plugin/plugin.json name = 'coalmine'"); else fail(`plugin/plugin.json name = '${am.name}' (want 'coalmine')`);
     }
     if (fs.existsSync(path.join(pluginDir, 'hooks.json'))) {
-      const ah = JSON.parse(fs.readFileSync(path.join(pluginDir, 'hooks.json'), 'utf8'));
+      const ah = JSON.parse(readText(path.join(pluginDir, 'hooks.json'), repo));
       let handlers = 0;
       for (const [hookName, spec] of Object.entries(ah)) {
         for (const [event, entries] of Object.entries(spec)) {
@@ -866,13 +873,13 @@ if (!fs.existsSync(pluginDir)) {
     const distFile = path.join(pluginDir, f);
     if (!fs.existsSync(distFile)) { fail(`plugin/${f} missing — run: node scripts/build-plugin.mjs`); continue; }
     try {
-      if (fs.readFileSync(path.join(repo, f), 'utf8').replace(/\r\n/g, '\n') !== fs.readFileSync(distFile, 'utf8').replace(/\r\n/g, '\n')) {
+      if (readText(path.join(repo, f), repo).replace(/\r\n/g, '\n') !== readText(distFile, repo).replace(/\r\n/g, '\n')) {
         fail(`plugin/${f} STALE vs ${f} — run: node scripts/build-plugin.mjs`);
       } else pass(`plugin/${f} in sync`);
     } catch (e) { fail(`plugin/${f} compare failed: ${e.message}`); }
   }
   try {
-    const mkt = JSON.parse(fs.readFileSync(path.join(repo, '.claude-plugin', 'marketplace.json'), 'utf8').replace(/^\uFEFF/, ''));
+    const mkt = JSON.parse(readText(path.join(repo, '.claude-plugin', 'marketplace.json'), repo).replace(/^\uFEFF/, ''));
     const srcField = mkt.plugins?.[0]?.source;
     if (srcField === './plugin') pass('marketplace serves ./plugin (conformed dist)');
     else fail(`marketplace plugins[0].source is ${JSON.stringify(srcField)} — must be "./plugin" so installs get conformed skills`);

@@ -742,7 +742,9 @@ test('manifest integrity: clean install verifies, post-install tamper is caught'
 test('manifest integrity: a tree the walk cannot READ aborts the manifest — never one with a silent hole', () => {
   const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-sfc-blind-'));
   const realReaddir = fs.readdirSync;
-  const realReadFile = fs.readFileSync;
+  // c36 item 3.2: hashFile streams the file with fs.openSync and fs.readSync (never whole in memory), so the unreadable-file seam
+  // is the open, where the OS refuses it. The assertion (abort, EACCES) is unchanged; only the seam moved with the read primitive.
+  const realOpen = fs.openSync;
   try {
     fs.mkdirSync(path.join(dest, 'alpha-canary', 'references'), { recursive: true });
     const nested = path.join(dest, 'alpha-canary', 'references', 'method.md');
@@ -766,17 +768,17 @@ test('manifest integrity: a tree the walk cannot READ aborts the manifest — ne
     fs.readdirSync = realReaddir;
 
     // SWALLOW 2 — one unhashable FILE dropped just that file, same permanent effect.
-    fs.readFileSync = (p, opts) => {
+    fs.openSync = (p, ...rest) => {
       if (String(p) === nested) {
         const e = new Error('EACCES: permission denied, open'); e.code = 'EACCES'; throw e;
       }
-      return realReadFile(p, opts);
+      return realOpen(p, ...rest);
     };
     assert.throws(() => hashInstalledTree(dest, ['alpha-canary']), /EACCES/,
       'a file we just wrote but cannot hash must abort the manifest, not sit outside the integrity net');
   } finally {
     fs.readdirSync = realReaddir;
-    fs.readFileSync = realReadFile;
+    fs.openSync = realOpen;
     fs.rmSync(dest, { recursive: true, force: true });
   }
 });
