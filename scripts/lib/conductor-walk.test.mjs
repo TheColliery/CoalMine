@@ -23,6 +23,7 @@ function sandbox(t) {
 }
 
 // The preload counts the document opens and the rules-folder listings the conductor makes, and writes them on exit.
+// The preload source is a constant: the log path reaches it through the environment (CM_WALK_LOG), never through the generated code.
 function preload(dir) {
   const file = path.join(dir, 'count-preload.mjs');
   const log = path.join(dir, 'walk-log.json');
@@ -34,7 +35,7 @@ function preload(dir) {
     'fs.openSync = function (p, ...rest) { opens.push(String(p)); return realOpen.call(this, p, ...rest); };',
     'const realReaddir = fs.readdirSync;',
     'fs.readdirSync = function (p, ...rest) { dirs.push(String(p)); return realReaddir.call(this, p, ...rest); };',
-    `process.on('exit', () => { realOpen; fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ opens, dirs })); });`,
+    "process.on('exit', () => { fs.writeFileSync(process.env.CM_WALK_LOG, JSON.stringify({ opens, dirs })); });",
     '',
   ].join('\n'));
   return { url: pathToFileURL(file).href, log };
@@ -45,12 +46,12 @@ function runConductor(dir) {
   const pre = preload(dir);
   const r = spawnSync(process.execPath, ['--import', pre.url, CONDUCTOR], {
     input: '', encoding: 'utf8', cwd: dir, timeout: 60000,
-    env: { ...process.env, TEMP: dir, TMP: dir, TMPDIR: dir, USERPROFILE: dir, HOME: dir },
+    env: { ...process.env, TEMP: dir, TMP: dir, TMPDIR: dir, USERPROFILE: dir, HOME: dir, CM_WALK_LOG: pre.log },
   });
   const log = JSON.parse(fs.readFileSync(pre.log, 'utf8'));
   const ruleOpens = log.opens.filter((p) => /[\\/]rules[\\/]/.test(p));
   const ruleListings = log.dirs.filter((p) => /[\\/]rules$/.test(p));
-  return { status: r.status, stderr: r.stderr, ruleOpens, ruleListings };
+  return { status: r.status, stderr: r.stderr, ruleOpens, ruleListings, opens: log.opens };
 }
 
 test('the conductor opens each rule document once per run, and stops at a cumulative byte budget without a word', (t) => {
@@ -66,20 +67,40 @@ test('the conductor opens each rule document once per run, and stops at a cumula
   assert.equal(r.ruleOpens.length, 2, 'two documents fit the 8 MiB walk budget; the third is never opened');
 });
 
-test('the conductor reads a document reached through several links once, not once per link', (t) => {
+// A file link is judged against the folder it sits in (repo-fs entryInsideItsFolder): its real path must lie inside that folder.
+// So the dedupe case is the real document in the SAME rules folder as its links, and a link into another folder is refused.
+test('the conductor reads a document reached through several links in its own folder once, not once per link', (t) => {
   const dir = sandbox(t);
-  const real = path.join(dir, 'docs', 'real.md');
-  fs.mkdirSync(path.dirname(real), { recursive: true });
-  fs.writeFileSync(real, '# shared rule\n', 'utf8');
   const rules = path.join(dir, '.claude', 'rules');
   fs.mkdirSync(rules, { recursive: true });
+  const real = path.join(rules, 'real.md');
+  fs.writeFileSync(real, '# shared rule\n', 'utf8');
   try {
     for (const name of ['a.md', 'b.md', 'c.md']) fs.symlinkSync(real, path.join(rules, name), 'file');
   } catch (e) {
-    t.skip(`this volume refuses file symbolic links (${e.code}): the dedupe leg needs Developer Mode or a Unix runner, so it is not run here`);
+    t.skip(`this volume refuses file symbolic links (${e.code}): the dedupe leg needs Developer Mode or a Unix runner, so it is CI-proven only here`);
     return;
   }
   const r = runConductor(dir);
   assert.equal(r.status, 0, 'fail-silent: exit 0 (Phoenix #4)');
-  assert.equal(r.ruleOpens.length, 1, 'three links to one real document: one open, the other two are skipped by the real path');
+  assert.equal(r.ruleOpens.length, 1, 'three links and the real document share one real path: one open, the rest skipped');
+  assert.equal(fs.realpathSync.native(r.ruleOpens[0]), fs.realpathSync.native(real), 'the one open is the shared document, whichever name the walk reached first');
+});
+
+test('the conductor never opens a link whose target lies outside the folder the link sits in', (t) => {
+  const dir = sandbox(t);
+  const outside = path.join(dir, 'docs', 'real.md');
+  fs.mkdirSync(path.dirname(outside), { recursive: true });
+  fs.writeFileSync(outside, '# another folder\n', 'utf8');
+  const rules = path.join(dir, '.claude', 'rules');
+  fs.mkdirSync(rules, { recursive: true });
+  try {
+    fs.symlinkSync(outside, path.join(rules, 'escape.md'), 'file');
+  } catch (e) {
+    t.skip(`this volume refuses file symbolic links (${e.code}): the refusal leg needs Developer Mode or a Unix runner, so it is CI-proven only here`);
+    return;
+  }
+  const r = runConductor(dir);
+  assert.equal(r.status, 0, 'fail-silent: exit 0 (Phoenix #4)');
+  assert.ok(!r.opens.some((p) => /(escape|real)\.md$/.test(p)), 'the link leaves its folder: neither the link nor its target is opened');
 });

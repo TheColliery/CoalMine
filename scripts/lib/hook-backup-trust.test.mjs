@@ -210,7 +210,10 @@ test('the installed hook runs a CRLF backup under core.autocrlf=true: the wrappe
   assert.equal(cfg.status, 0, `control: the fixture sets core.autocrlf=true (${cfg.stderr})`);
   const hooks = path.join(repoDir, '.git', 'hooks');
   const marker = path.join(sb, 'crlf.marker');
-  const crlfHook = `#!/usr/bin/env node\r\nrequire('fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\r\n`;
+  // The shebang is LF: a CRLF shebang cannot run on POSIX. The body lines are CRLF, and each ends in a shell comment that absorbs the \r,
+  // so the body runs under sh on every platform while the file still carries CRLF endings for the filter to act on.
+  const posixMarker = marker.replace(/\\/g, '/');
+  const crlfHook = `#!/bin/sh\n# crlf body\r\n: > "${posixMarker}" #\r\nexit 0 #\r\n`;
   writeExec(path.join(hooks, 'pre-commit'), crlfHook);
   const inst = installer(sb, repoDir, [path.join(sb, 'skills')]);
   assert.equal(inst.status, 0, `control: the install records the CRLF hook (${inst.stdout}${inst.stderr})`);
