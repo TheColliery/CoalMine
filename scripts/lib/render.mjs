@@ -39,14 +39,40 @@ export function loadShared(sharedDir) {
   };
 }
 
+// c36 item 6: the most characters one render may produce. Today's largest rendered SKILL.md is 15,765 bytes (plugin/skills/gold-standard,
+// measured 2026-11-01), so this is about 16x. Each stage is checked BEFORE it runs, from counts, so a stage that would pass the bound never runs.
+export const MAX_RENDERED_CHARS = 256 * 1024;
+const refuseIfOver = (stage, length) => {
+  if (length > MAX_RENDERED_CHARS) throw new Error(`render refused before ${stage}: the output would be ${length} characters, over the ${MAX_RENDERED_CHARS}-character bound`);
+};
+
 export function inject(content, shared, meta = {}) {
   // Replacement values go through arrow functions so `$&`/`$'`-style patterns
   // in partials or intents can never be interpreted as replacement directives.
+  const intents = [
+    ['{{LIGHT_INTENT}}', meta.lightIntent ?? ''],
+    ['{{STANDARD_INTENT}}', meta.standardIntent ?? ''],
+    ['{{HEAVY_INTENT}}', meta.heavyIntent ?? ''],
+  ];
+  let predicted = shared.orchestration.length;
+  for (const [marker, value] of intents) predicted += (shared.orchestration.split(marker).length - 1) * (String(value).length - marker.length);
+  refuseIfOver('intent substitution', predicted);
   const orchestration = shared.orchestration
     .replace(/\{\{LIGHT_INTENT\}\}/g,    () => meta.lightIntent    ?? '')
     .replace(/\{\{STANDARD_INTENT\}\}/g, () => meta.standardIntent ?? '')
     .replace(/\{\{HEAVY_INTENT\}\}/g,    () => meta.heavyIntent    ?? '');
 
+  const fragments = [
+    ['<!-- SHARED:LANGUAGE_HEADER -->', shared.languageHeader],
+    ['<!-- SHARED:ORCHESTRATION -->', orchestration],
+    ['<!-- SHARED:ESCALATION_FOOTER -->', shared.escalationFooter],
+    ['<!-- SHARED:REPORTING_FOOTER -->', shared.reportingFooter],
+    ['<!-- SHARED:CLASSIFY_BLOCK -->', shared.classifyBlock],
+  ];
+  let grown = content.length;
+  // String(value): a replacement that returns undefined inserts the text "undefined", so the estimate measures what is inserted.
+  for (const [marker, value] of fragments) grown += (content.split(marker).length - 1) * (String(value).length - marker.length);
+  refuseIfOver('fragment insertion', grown);
   return content
     .replace(/<!-- SHARED:LANGUAGE_HEADER -->/g,   () => shared.languageHeader)
     .replace(/<!-- SHARED:ORCHESTRATION -->/g,       () => orchestration)
