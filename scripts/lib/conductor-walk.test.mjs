@@ -30,12 +30,15 @@ function preload(dir) {
   fs.writeFileSync(file, [
     "import fs from 'node:fs';",
     'const opens = [];',
+    'const reads = [];',
     'const dirs = [];',
     'const realOpen = fs.openSync;',
     'fs.openSync = function (p, ...rest) { opens.push(String(p)); return realOpen.call(this, p, ...rest); };',
+    'const realRead = fs.readFileSync;',
+    'fs.readFileSync = function (p, ...rest) { reads.push(String(p)); return realRead.call(this, p, ...rest); };',
     'const realReaddir = fs.readdirSync;',
     'fs.readdirSync = function (p, ...rest) { dirs.push(String(p)); return realReaddir.call(this, p, ...rest); };',
-    "process.on('exit', () => { fs.writeFileSync(process.env.CM_WALK_LOG, JSON.stringify({ opens, dirs })); });",
+    "process.on('exit', () => { fs.writeFileSync(process.env.CM_WALK_LOG, JSON.stringify({ opens, reads, dirs })); });",
     '',
   ].join('\n'));
   return { url: pathToFileURL(file).href, log };
@@ -49,9 +52,11 @@ function runConductor(dir) {
     env: { ...process.env, TEMP: dir, TMP: dir, TMPDIR: dir, USERPROFILE: dir, HOME: dir, CM_WALK_LOG: pre.log },
   });
   const log = JSON.parse(fs.readFileSync(pre.log, 'utf8'));
-  const ruleOpens = log.opens.filter((p) => /[\\/]rules[\\/]/.test(p));
+  // Both primitives count: a document read through openSync (the bounded reader) and one read through readFileSync are each one event.
+  const every = [...log.opens, ...log.reads];
+  const ruleOpens = every.filter((p) => /[\\/]rules[\\/]/.test(p));
   const ruleListings = log.dirs.filter((p) => /[\\/]rules$/.test(p));
-  return { status: r.status, stderr: r.stderr, ruleOpens, ruleListings, opens: log.opens };
+  return { status: r.status, stderr: r.stderr, ruleOpens, ruleListings, opens: every };
 }
 
 test('the conductor opens each rule document once per run, and stops at a cumulative byte budget without a word', (t) => {
@@ -94,6 +99,7 @@ test('the conductor never opens a link whose target lies outside the folder the 
   fs.writeFileSync(outside, '# another folder\n', 'utf8');
   const rules = path.join(dir, '.claude', 'rules');
   fs.mkdirSync(rules, { recursive: true });
+  fs.writeFileSync(path.join(rules, 'keep.md'), '# kept\n', 'utf8'); // the walk's proof: an ordinary document beside the refused link
   try {
     fs.symlinkSync(outside, path.join(rules, 'escape.md'), 'file');
   } catch (e) {
@@ -103,4 +109,6 @@ test('the conductor never opens a link whose target lies outside the folder the 
   const r = runConductor(dir);
   assert.equal(r.status, 0, 'fail-silent: exit 0 (Phoenix #4)');
   assert.ok(!r.opens.some((p) => /(escape|real)\.md$/.test(p)), 'the link leaves its folder: neither the link nor its target is opened');
+  assert.ok(r.ruleOpens.some((p) => /keep\.md$/.test(p)), 'the walk ran: the ordinary document beside the link is opened');
+  assert.equal(r.ruleListings.length, 1, 'the rules folder was listed');
 });
