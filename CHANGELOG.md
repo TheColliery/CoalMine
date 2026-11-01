@@ -2,6 +2,11 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Fixed
+- **The Stop hook checks its state folder before it cleans up old state.** A folder another local account made, or one left open to group or other users, is no longer swept. — test: scripts/lib/stop-sweep-folder.test.mjs
+
 ## [3.23.8] - 2026-10-31
 
 The config comment strip is one linear scan; links stay linear

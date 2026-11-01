@@ -38,6 +38,8 @@ const TESTS = [
   // 17a (CWK2-042): the project-write folder pin (writeRepoFile / mkdirRepoParents), the write twin of folder-pin.test.mjs.
   'scripts/lib/write-folder-pin.test.mjs',
   'scripts/lib/hooks.test.mjs',
+  // 29l (a): the Stop hook sweeps its markers folder only when the folder passes the owner, type and mode checks.
+  'scripts/lib/stop-sweep-folder.test.mjs',
   'scripts/lib/install.test.mjs',
   'scripts/lib/configure.test.mjs',
   'scripts/lib/regions.test.mjs',

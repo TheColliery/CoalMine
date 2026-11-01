@@ -781,6 +781,9 @@ function getTempSweepStaleDays() {
 }
 function sweepStale(canaryActive) {
   try {
+    // The sweep reaches into the markers folder by name, so it runs only when that folder passes ensureMarkerDir's owner,
+    // type and mode checks. A folder another local account made, or one left open to group or other users, is left alone.
+    if (!ensureMarkerDir()) return;
     const tmp = os.tmpdir();
     // Deterministic throttle (Phoenix #8 — no randomness): the marker file's mtime
     // gates the whole-tmpdir scan to at most once per 24h on this machine. The
