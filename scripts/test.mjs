@@ -72,6 +72,8 @@ const TESTS = [
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
+  'scripts/lib/conductor-walk.test.mjs',
+  'scripts/lib/link-check-cache.test.mjs',
   'scripts/lib/hooks-exec-form.test.mjs',
   'scripts/lib/verify-hooks-manifest.test.mjs',
   'scripts/lib/folder-pin.test.mjs',

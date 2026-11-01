@@ -162,15 +162,45 @@ export function extractLinks(text, counter) {
 // would silently return.
 const decodeAnchor = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
 
+// c37 item 3.5: the work bounds of one run (a pass over many files). Each target's heading set is read and indexed once per run, keyed by
+// its absolute path, so N links to one target cost one read. Two bounds refuse with a named finding line: a per-document link cap and a
+// per-run target budget, counted in characters of the targets actually read.
+export const MAX_LINKS_PER_DOC = 5000;
+export const MAX_RUN_TARGET_CHARS = 64 * 1024 * 1024;
+const BUDGET_SPENT = Symbol('link-check: the run target budget is spent');
+
+export function newLinkRun({ maxLinks = MAX_LINKS_PER_DOC, maxTargetChars = MAX_RUN_TARGET_CHARS } = {}) {
+  return { maxLinks, maxTargetChars, headings: new Map(), reads: new Map(), stats: { headingBuilds: 0, targetChars: 0 } };
+}
+
+// A target's heading set for this run: its text read once, its headings indexed once. null = not readable (refused); BUDGET_SPENT = the budget is spent.
+function targetHeadings(run, targetAbs, readDoc) {
+  if (run.headings.has(targetAbs)) return run.headings.get(targetAbs);
+  if (run.stats.targetChars >= run.maxTargetChars) return BUDGET_SPENT;
+  run.reads.set(targetAbs, (run.reads.get(targetAbs) ?? 0) + 1);
+  const text = readDoc(targetAbs);
+  if (text == null) { run.headings.set(targetAbs, null); return null; }
+  run.stats.targetChars += text.length;
+  run.stats.headingBuilds++;
+  const slugs = headingSlugs(text);
+  run.headings.set(targetAbs, slugs);
+  return slugs;
+}
+
 // One file's findings. `readDoc` is injected so a unit test can drive this against an
-// in-memory fixture set without touching a real filesystem.
-export function checkFile(filePath, repoRoot, readDoc = (p) => readRepoFileBounded(p, repoRoot, MAX_DOC_BYTES)) {
+// in-memory fixture set without touching a real filesystem. `run` is shared by a whole pass (checkFiles makes one).
+export function checkFile(filePath, repoRoot, readDoc = (p) => readRepoFileBounded(p, repoRoot, MAX_DOC_BYTES), run = newLinkRun()) {
   const findings = [];
   const raw = readDoc(filePath);
   if (raw == null) return [`${filePath}: not checked — missing, not a plain file inside the repo, or over ${MAX_DOC_BYTES} bytes`];
   const ownSlugs = headingSlugs(raw);
 
+  let links = 0;
   for (const { target } of extractLinks(raw)) {
+    if (++links > run.maxLinks) {
+      findings.push(`${filePath}: not fully checked — more than ${run.maxLinks} links; the links past that are not checked`);
+      break;
+    }
     if (!target || target.startsWith('mailto:') || EXTERNAL_RE.test(target)) continue;
 
     const hashIdx = target.indexOf('#');
@@ -192,12 +222,15 @@ export function checkFile(filePath, repoRoot, readDoc = (p) => readRepoFileBound
       continue;
     }
     if (anchorPart && targetAbs.toLowerCase().endsWith('.md')) {
-      const targetText = readDoc(targetAbs);
-      if (targetText == null) {
+      const targetSlugs = targetHeadings(run, targetAbs, readDoc);
+      if (targetSlugs === BUDGET_SPENT) {
+        findings.push(`${filePath}: not checked -> ${target} (the run's read budget of ${run.maxTargetChars} characters is spent)`);
+        continue;
+      }
+      if (targetSlugs === null) {
         findings.push(`${filePath}: not checked -> ${target} (${path.relative(repoRoot, targetAbs)} is missing, not a plain file inside the repo, or over ${MAX_DOC_BYTES} bytes)`);
         continue;
       }
-      const targetSlugs = headingSlugs(targetText);
       if (!targetSlugs.has(anchorPart)) {
         findings.push(`${filePath}: dead anchor -> ${target} (no matching heading in ${path.relative(repoRoot, targetAbs)})`);
       }
@@ -208,7 +241,8 @@ export function checkFile(filePath, repoRoot, readDoc = (p) => readRepoFileBound
 
 export function checkFiles(filePaths, repoRoot) {
   const findings = [];
-  for (const f of filePaths) findings.push(...checkFile(f, repoRoot));
+  const run = newLinkRun(); // one run for the whole pass: a target is read once across every document
+  for (const f of filePaths) findings.push(...checkFile(f, repoRoot, undefined, run));
   return findings;
 }
 

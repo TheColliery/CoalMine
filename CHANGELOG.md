@@ -2,6 +2,12 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Fixed
+- **The SessionStart conductor reads the rule documents once per run and stops at a byte budget.** Both of its checks share one read of the rule documents, a document reached through several links is read once, and a walk past 8 MiB of documents stops silently. — test: scripts/lib/conductor-walk.test.mjs
+- **The docs link check reads and indexes each target once per run and bounds its work.** A target named by N links is read once, a document with more than 5,000 links is refused by a named line, and a run whose targets pass 64 MiB stops reading with a named line. — test: scripts/lib/link-check-cache.test.mjs
+
 ## [3.23.9] - 2026-11-01
 
 The Stop hook checks its folder before cleanup; links scan linearly

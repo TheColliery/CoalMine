@@ -772,29 +772,55 @@ const MAX_STAMP_OPENERS = 200;
 const MAX_DOC_BYTES = 4 * 1024 * 1024;  // ~19x the largest doc (AGENTS.md grew ~70% in six weeks)
 const MAX_RULE_WALK_ENTRIES = 5000;
 const MAX_RULE_WALK_DEPTH = 16;
-function forEachRuleDoc(root, visit) { // visit(body) returns true to stop early
+// c37 item 3.4 (hook): the walk reads each REAL document once (a document that passed the containment check is keyed by its
+// realpath), stops silently at a cumulative byte budget, and runs once per process: both consumers share the one list of bodies.
+const MAX_RULE_WALK_BYTES = 8 * 1024 * 1024; // cumulative across one walk; about 37 of the largest governance document
+const ruleDocMemo = new Map(); // root -> bodies
+
+function readRuleDocs(root) {
+  const cached = ruleDocMemo.get(root);
+  if (cached) return cached;
+  const bodies = [];
+  const seen = new Set();
   let budget = MAX_RULE_WALK_ENTRIES;
+  let bytes = 0;
+  let stopped = false;
   const scan = (p) => {
+    if (repoEntryKind(p, root) !== 'file') return;
+    let real;
+    let size;
+    try { real = fs.realpathSync.native(p); size = fs.statSync(real).size; } catch { return; }
+    if (seen.has(real)) return;
+    seen.add(real);
+    if (bytes + size > MAX_RULE_WALK_BYTES) { stopped = true; return; } // over budget: stop the walk, silently
     const body = readRepoFileBounded(p, root, MAX_DOC_BYTES);
-    return body !== null && visit(body) === true;
+    if (body === null) return;
+    bytes += size;
+    bodies.push(body);
   };
   const walk = (dir, depth) => {
-    if (depth > MAX_RULE_WALK_DEPTH) return false;
+    if (depth > MAX_RULE_WALK_DEPTH) return;
     let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (--budget < 0) return true; // budget spent -- stop the whole walk
+      if (stopped || --budget < 0) { stopped = true; return; }
       const p = path.join(dir, e.name);
-      if (e.isDirectory()) { if (walk(p, depth + 1)) return true; }
-      else if (e.name.endsWith('.md') && scan(p)) return true;
+      if (e.isDirectory()) walk(p, depth + 1);
+      else if (e.name.endsWith('.md')) scan(p);
     }
-    return false;
   };
   for (const r of ruleRoots(root)) {
     const kind = repoEntryKind(r, root);
-    if (kind === 'dir' && walk(r, 0)) return;
-    if (kind === 'file' && scan(r)) return; // AGENTS.md (a file, not a dir)
+    if (kind === 'dir') walk(r, 0);
+    else if (kind === 'file') scan(r); // AGENTS.md (a file, not a dir)
+    if (stopped) break;
   }
+  ruleDocMemo.set(root, bodies);
+  return bodies;
+}
+
+function forEachRuleDoc(root, visit) { // visit(body) returns true to stop early
+  for (const body of readRuleDocs(root)) if (visit(body) === true) return;
 }
 
 function countPastDueStamps(root, today, cfg) {
