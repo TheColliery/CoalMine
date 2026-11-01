@@ -81,7 +81,10 @@ export function hashInstalledTree(destDir, skillNames) {
 
 // Re-hash the installed tree and compare to the manifest's recorded hashes.
 // Returns { ok, findings[], checked } — findings carry { level, msg }.
-export function verifyAgainstManifest(destDir) {
+// c36 item 3.4: the most bytes one integrity pass reads, across every entry. A pass that would read past it stops, and says so.
+export const VERIFY_BYTE_BUDGET = 64 * 1024 * 1024;
+
+export function verifyAgainstManifest(destDir, { byteBudget = VERIFY_BYTE_BUDGET } = {}) {
   const findings = [];
   let manifest;
   try {
@@ -99,6 +102,8 @@ export function verifyAgainstManifest(destDir) {
     return { ok: true, findings: [{ level: 'SKIP', msg: 'manifest predates integrity hashes (reinstall to enable) — check skipped' }], checked: 0 };
   }
   let checked = 0;
+  let reads = 0; // file reads the pass made (witness: an alias set reads once)
+  let bytesRead = 0;
   const hashedByPath = new Map();
   const destAbs = path.resolve(destDir);
   for (const [rel, want] of Object.entries(recorded)) {
@@ -114,10 +119,9 @@ export function verifyAgainstManifest(destDir) {
       continue;
     }
     checked++;
-    // R14 / CSV-3: alias keys that resolve to one file are read and hashed once.
-    let got = hashedByPath.get(p);
-    const bytes = got === undefined ? readRepoBytesBounded(p, destAbs, MAX_DOC_BYTES) : undefined;
-    if (got === undefined && bytes === null) {
+    // c36 item 3.4: the containment and link check runs on EVERY key, metadata only, before any dedupe, so a link at one alias can never
+    // ride on the hash of the real file. Only then do keys that resolve to one real file (a case or 8.3 alias) share one read and one hash.
+    if (repoEntryKind(p, destAbs) !== 'file') {
       let present = false;
       try { fs.lstatSync(p); present = true; } catch { /* absent */ }
       findings.push({ level: 'FAIL', msg: present
@@ -125,8 +129,24 @@ export function verifyAgainstManifest(destDir) {
         : `installed file MISSING: ${rel}` });
       continue;
     }
-    if (got === undefined) { got = createHash('sha256').update(bytes).digest('hex'); hashedByPath.set(p, got); }
+    const key = fs.realpathSync.native(p);
+    let got = hashedByPath.get(key);
+    if (got === undefined) {
+      if (bytesRead >= byteBudget) {
+        findings.push({ level: 'FAIL', msg: `integrity pass stopped: ${bytesRead} bytes read reached the ${byteBudget}-byte budget before ${rel}; the entries from here on are not checked` });
+        break;
+      }
+      const bytes = readRepoBytesBounded(p, destAbs, MAX_DOC_BYTES);
+      reads++;
+      if (bytes === null) {
+        findings.push({ level: 'FAIL', msg: `installed file REFUSED (a link out of the target, not a regular file, or over ${MAX_DOC_BYTES} bytes): ${rel}` });
+        continue;
+      }
+      bytesRead += bytes.length;
+      got = createHash('sha256').update(bytes).digest('hex');
+      hashedByPath.set(key, got);
+    }
     if (got !== want) findings.push({ level: 'FAIL', msg: `installed file TAMPERED (hash changed): ${rel}` });
   }
-  return { ok: findings.every((f) => f.level !== 'FAIL'), findings, checked };
+  return { ok: findings.every((f) => f.level !== 'FAIL'), findings, checked, reads, bytesRead };
 }
