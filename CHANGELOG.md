@@ -2,10 +2,18 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.23.9] - 2026-11-01
+
+The Stop hook checks its folder before cleanup; links scan linearly
+
+The Stop hook now checks its state folder before it removes old state in it, and link extraction in the docs check is one counted scan with the same output. The hooks in `plugin/` changed, so this is a PATCH release.
 
 ### Fixed
 - **The Stop hook checks its state folder before it cleans up old state.** A folder another local account made, or one left open to group or other users, is no longer swept. — test: scripts/lib/stop-sweep-folder.test.mjs
+
+### Changed
+- **Internal — link extraction in the docs check is one counted scan.** `extractLinks` in `scripts/lib/link-check.mjs` is a single left-to-right scan that replaces the link pattern, with the same output: all 95 tracked `.md` files, 45 fixtures and 200,000 seeded random strings give identical results. On eight malformed shapes at 4096 and 8192 units it visits at most 2 positions per character (an unclosed `[` run, repeated empty links with no closing parenthesis, and a title that never closes among them); a stand-in whose label or target does not stop at a bracket takes 4097 per character and fails the check. — test: scripts/lib/link-check-linear.test.mjs
+- **Internal — the linear tests count steps instead of timing.** The link test counts the positions the scan visits and asserts a fixed number per character and a count that doubles with the input, so it no longer reads a clock; a check that counts nothing is asserted to fail. — test: scripts/lib/link-check-linear.test.mjs
 
 ## [3.23.8] - 2026-10-31
 
