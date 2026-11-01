@@ -68,6 +68,7 @@ const TESTS = [
   'scripts/lib/r14-low.test.mjs',
   'scripts/lib/r14-install.test.mjs',
   'scripts/lib/install-lowthree.test.mjs',
+  'scripts/lib/hook-backup-trust.test.mjs',
   'scripts/lib/hooks-exec-form.test.mjs',
   'scripts/lib/verify-hooks-manifest.test.mjs',
   'scripts/lib/folder-pin.test.mjs',
