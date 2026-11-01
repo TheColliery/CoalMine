@@ -147,3 +147,53 @@ test('uninstall restores the user hook it recorded, byte for byte (the normal ro
   assert.equal(fs.readFileSync(path.join(hooks, 'pre-commit'), 'utf8'), original, 'the user hook comes back unchanged');
   assert.ok(!fs.existsSync(path.join(hooks, 'pre-commit.pre-coalmine')), 'the restored backup is removed');
 });
+
+// 29q c36 item 1: a backup beside an OLD CoalMine wrapper (one with no `want=` line, the released 35d6bc9 shape) was made by an
+// earlier CoalMine install, so it is adopted: the new wrapper records its blob id, and it runs and restores like any recorded backup.
+const LEGACY_PRE_COMMIT = path.join(repo, 'scripts', 'lib', 'fixtures', 'legacy-pre-commit.wrapper');
+function blobOf(file, cwd) {
+  const r = spawnSync('git', ['hash-object', file], { cwd, encoding: 'utf8', env: gitEnv(path.dirname(cwd)), timeout: TIMEOUT });
+  assert.equal(r.status, 0, `control: git hash-object (${r.stderr})`);
+  return r.stdout.trim();
+}
+
+test('a backup beside an old CoalMine wrapper is adopted: recorded, run by the hook, restored on uninstall', (t) => {
+  if (!shAvailable) return t.skip(SKIP_NO_SH);
+  const sb = sandbox(t);
+  const repoDir = path.join(sb, 'proj');
+  gitInit(sb, repoDir);
+  const hooks = path.join(repoDir, '.git', 'hooks');
+  const marker = path.join(sb, 'adopted.marker');
+  const userHook = markerScript(marker);
+  fs.copyFileSync(LEGACY_PRE_COMMIT, path.join(hooks, 'pre-commit'));
+  writeExec(path.join(hooks, 'pre-commit.pre-coalmine'), userHook);
+  const skills = path.join(sb, 'skills');
+  const inst = installer(sb, repoDir, [skills]);
+  assert.equal(inst.status, 0, `the old wrapper is adopted, not refused (${inst.stdout}${inst.stderr})`);
+  assert.match(inst.stdout, /adopted .*pre-commit\.pre-coalmine/, 'one line names the adoption');
+  const backupId = blobOf(path.join(hooks, 'pre-commit.pre-coalmine'), repoDir);
+  assert.ok(fs.readFileSync(path.join(hooks, 'pre-commit'), 'utf8').includes(`want='${backupId}'`), 'the new wrapper records the backup id');
+  const r = runHook(sb, repoDir, 'pre-commit');
+  assert.equal(r.status, 0, `the adopted backup runs (${r.stderr})`);
+  assert.ok(fs.existsSync(marker), 'the adopted user hook ran');
+  const un = installer(sb, repoDir, ['--uninstall', skills]);
+  assert.equal(un.status, 0, `control: uninstall succeeds (${un.stdout}${un.stderr})`);
+  assert.equal(fs.readFileSync(path.join(hooks, 'pre-commit'), 'utf8'), userHook, 'uninstall restores the adopted backup byte for byte');
+  assert.ok(!fs.existsSync(path.join(hooks, 'pre-commit.pre-coalmine')), 'the restored backup is removed');
+});
+
+test('a planted backup beside a foreign active hook is refused, and neither file changes', (t) => {
+  const sb = sandbox(t);
+  const repoDir = path.join(sb, 'proj');
+  gitInit(sb, repoDir);
+  const hooks = path.join(repoDir, '.git', 'hooks');
+  const foreign = '#!/bin/sh\n# written by someone else\nexit 0\n';
+  fs.writeFileSync(path.join(hooks, 'pre-commit'), foreign, 'utf8');
+  fs.chmodSync(path.join(hooks, 'pre-commit'), 0o755);
+  const planted = markerScript(path.join(sb, 'never.marker'));
+  writeExec(path.join(hooks, 'pre-commit.pre-coalmine'), planted);
+  const inst = installer(sb, repoDir, [path.join(sb, 'skills')]);
+  assert.notEqual(inst.status, 0, 'the install refuses a backup it did not make');
+  assert.equal(fs.readFileSync(path.join(hooks, 'pre-commit.pre-coalmine'), 'utf8'), planted, 'the planted backup is untouched');
+  assert.equal(fs.readFileSync(path.join(hooks, 'pre-commit'), 'utf8'), foreign, 'the foreign hook is untouched');
+});
