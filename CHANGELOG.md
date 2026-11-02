@@ -2,6 +2,15 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.25.3] - 2026-11-03
+
+The install tests compare folder bytes, not decoded text
+
+A test-only change under `scripts/`. `plugin/` moves only the version string in `plugin/.claude-plugin/plugin.json`, so this is a PATCH release.
+
+### Internal
+- **The interrupted-install uninstall test compares the skill folders' raw bytes.** It used to compare decoded text, so two different invalid bytes read as the same character; it now reads each file as bytes, and a new test shows 0xFF and 0xFE no longer fold together. — test: scripts/lib/install-lowthree.test.mjs
+
 ## [3.25.2] - 2026-11-03
 
 A kept folder's message says to undo your change or remove it
