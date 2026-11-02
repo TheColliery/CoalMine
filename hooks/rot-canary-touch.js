@@ -901,6 +901,10 @@ function isTestFile(absPath, baseDir) {
   return rel.split(path.sep).some((s) => TEST_DIR_SEGMENTS.has(s.toLowerCase()));
 }
 
+// 29am (T-29al-3): a record is one line. A name or marker line that holds a C0 control, DEL or a line or paragraph separator
+// would write or read a second record line, so the touch hook refuses such a name and the Stop hook skips such a marker line.
+const UNSAFE_RECORD_CHARS = new RegExp('[\\x00-\\x1f\\x7f' + String.fromCharCode(0x2028, 0x2029) + ']');
+
 function main() {
   const ov = projectOverride();
   if (ov === 'off') return;
@@ -931,6 +935,8 @@ function main() {
   // MEMORY.md must not set .memmoved either — temp files count for nothing) and ahead
   // of the watched-extension gate.
   if (isUnderTmpdir(normF)) return;
+  // 29am (T-29al-3): refused before anything is recorded, like an over-size file; such a name is never scanned.
+  if (UNSAFE_RECORD_CHARS.test(normF)) return;
 
   // No session key → no consumer (the stop hook bails without one). Record nothing.
   // conversationId = the CURRENT AG spec's session field (re-derived 2026-07-23);

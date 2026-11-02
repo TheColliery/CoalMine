@@ -2,6 +2,16 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+A file name with a line break is not recorded, and a marker line with a control character is not read
+
+Interim entry from the 29am build, so the dist gate passes. The DOCS station (doc-writer) owns the final wording, the version and the heading.
+
+### Fixed
+- **The touch hook refuses a file name that holds a control character or a line or paragraph separator.** Such a name would have written a second line into the session's touched list, and the Stop report prints that list. The file is not recorded, so it is not scanned.
+- **The Stop hook skips a touched or smells marker line that holds a control character or a separator, instead of cleaning it.** A clean line beside it still surfaces.
+
 ## [3.25.3] - 2026-11-03
 
 The install tests compare folder bytes, not decoded text

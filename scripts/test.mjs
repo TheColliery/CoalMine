@@ -70,6 +70,8 @@ const TESTS = [
   'scripts/lib/install-lowthree.test.mjs',
   'scripts/lib/hook-backup-trust.test.mjs',
   'scripts/lib/install-ownership.test.mjs',
+  // 29am (T-29al-3): a record line cannot be written or read twice by a name that holds a line separator.
+  'scripts/lib/marker-line-break.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',

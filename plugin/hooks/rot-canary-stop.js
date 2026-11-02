@@ -1206,6 +1206,13 @@ function agBaseFromStdin() {
   } catch {}
 }
 
+// 29am (T-29al-3): a record is one line. A name or marker line that holds a C0 control, DEL or a line or paragraph separator
+// would write or read a second record line, so the touch hook refuses such a name and the Stop hook skips such a marker line.
+const UNSAFE_RECORD_CHARS = new RegExp('[\\x00-\\x1f\\x7f' + String.fromCharCode(0x2028, 0x2029) + ']');
+function markerLines(raw) {
+  return raw.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l && !UNSAFE_RECORD_CHARS.test(l));
+}
+
 function main() {
   agBaseFromStdin();
   // The sweep runs on EVERY stop, BEFORE the mode gates — but what it may touch
@@ -1271,7 +1278,7 @@ function main() {
 
   let files = [];
   try {
-    files = [...new Set(touchedRaw.split('\n').filter(Boolean).map((x) => path.normalize(x)))];
+    files = [...new Set(markerLines(touchedRaw).map((x) => path.normalize(x)))];
   } catch { return; }
   if (!files.length) return; // no recorded edit → nothing moved this session
 
@@ -1403,7 +1410,7 @@ function main() {
       const smellsRaw = readMarker(base + '.smells');
       if (smellsRaw !== null) {
         // B-u1-L6: each line is a path + findings the model reads inside the block reason; strip control characters.
-        const sm = [...new Set(smellsRaw.split('\n').map((x) => x.replace(/[\u0000-\u001f\u007f]/g, ' ')).filter(Boolean))].sort();
+        const sm = [...new Set(markerLines(smellsRaw))].sort();
         if (sm.length) {
           smellText = t.smellPrefix + sm.map((x) => '  ' + x).join('\n');
         }

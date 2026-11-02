@@ -135,16 +135,18 @@ test('touch hook refuses a marker dir that is group/other-writable and records n
   assert.deepEqual(fs.readdirSync(dir), [], 'nothing written into a dir another user could write');
 });
 
-test('stop hook strips control characters from .smells lines before they enter the block reason (B-u1-L6)', (t) => {
+// 29am (T-29al-3): a marker line holding a C0 control is SKIPPED, not cleaned: the clean line beside it still surfaces.
+test('stop hook skips a .smells line that holds a control character before it enters the block reason (B-u1-L6)', (t) => {
   const tmp = mkTmp(t);
   const sid = 'CTRL';
   plantSession(tmp, sid);
   const esc = String.fromCharCode(27);
-  fs.writeFileSync(path.join(tmp, 'coalmine', `rot-canary-${sid}.smells`), `/x/y.js: file >5 lines (9)${esc}[31mINJECT${esc}[0m\n`);
+  fs.writeFileSync(path.join(tmp, 'coalmine', `rot-canary-${sid}.smells`), `/x/y.js: file >5 lines (9)${esc}[31mINJECT${esc}[0m\n/x/z.js: file >5 lines (9)\n`);
   const r = runHook(STOP, stopInput(sid), tmp);
   assert.equal(r.status, 0);
   const out = JSON.parse(r.stdout);
   assert.equal(out.decision, 'block');
-  assert.ok(out.reason.includes('INJECT'), 'the line itself still surfaces');
+  assert.ok(out.reason.includes('/x/z.js'), 'the clean line still surfaces');
+  assert.ok(!out.reason.includes('INJECT'), 'the line that holds a control character is skipped, not printed');
   assert.ok(!out.reason.includes(esc), 'no raw ESC reaches the model');
 });
