@@ -576,7 +576,7 @@ function ownership(dest, name, entry, shared, purpose = 'install') {
   const have = folderHashes(p);
   if (have === null) return { owned: false, reason: 'it holds a link, a non-file, or a file that could not be read' };
   if (entry && entry.skills && Object.hasOwn(entry.skills, name)) {
-    return sameHashes(have, entry.skills[name]) ? { owned: true, via: 'record' } : { owned: false, reason: 'its contents differ from what CoalMine recorded' };
+    return sameHashes(have, entry.skills[name]) ? { owned: true, via: 'record' } : { owned: false, reason: 'its contents differ from what CoalMine recorded (undo your change inside it, or remove the folder)' };
   }
   if (!entry) {
     const want = expectedHashes(name, shared);

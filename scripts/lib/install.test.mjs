@@ -942,6 +942,8 @@ test('R18b: an EDIT inside an installed skill survives runs 2 and 3 too', () => 
     const r3 = runInstall(target, proj);
     assert.ok(fs.readFileSync(skill, 'utf8').includes('USER-EDIT-MARKER'), 'run 3 keeps the edit');
     assert.notEqual(r3.status, 0);
+    // 29ai (A2): the refusal names the handover that keeps the user's file: undo the change, or remove the whole folder.
+    assert.match(r3.stdout + r3.stderr, /undo your change inside it/, 'run 3 says to undo the change inside the folder');
   } finally {
     removeTree(proj);
   }
@@ -1011,6 +1013,8 @@ test('R18b: a hashless manifest over a marker-less folder says to remove or rena
     const r1 = runInstall(target, proj);
     assert.notEqual(r1.status, 0, 'refused');
     assert.match(r1.stdout + r1.stderr, /Remove the whole folder/, 'and the message names what unblocks it');
+    // 29ai (A1): the handover advice keeps its second step, so the message also says to run the installer again.
+    assert.match(r1.stdout + r1.stderr, /then re-run; an absent folder is installed fresh/, 'and says to run the installer again');
     assert.ok(fs.existsSync(mine), 'the user file is untouched');
     const m2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
     assert.ok(!m2.skills.includes(CURRENT_SKILL), 'no unprovable entry is carried into the rewritten manifest');

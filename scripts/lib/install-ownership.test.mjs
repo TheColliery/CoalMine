@@ -177,6 +177,8 @@ test('a planted manifest that lists a shipped skill does not authorize writing o
   const r = installer(sb, [dest]);
   assert.equal(r.status, 1, `the foreign folder is kept (${r.stdout}${r.stderr})`);
   assert.equal(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8'), 'foreign bytes\n', 'its bytes are unchanged by install');
+  // 29ai: the install above rewrote the manifest, so plant it again: the uninstall leg must meet a planted manifest that names the shipped skill.
+  plantManifest(dest, [SHIPPED[0]], { [`${SHIPPED[0]}/SKILL.md`]: 'foreign bytes\n' });
   const u = installer(sb, ['--uninstall', dest]);
   assert.equal(u.status, 1, `the foreign folder is kept by uninstall too (${u.stdout}${u.stderr})`);
   assert.equal(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8'), 'foreign bytes\n', 'its bytes are unchanged by uninstall');

@@ -230,17 +230,25 @@ test('LOW-3: the copy is proven complete before the rename -- a missing source f
 });
 
 // ---- 15b: the two kill windows INSPECT 14a found (MEDIUM-1 the unmarked work folder, LOW-1 the manifest temp file) ----
-for (const [label, env, what] of [['the work folder marker write', { KILL_BEFORE_MARKER: '1' }, '.coalmine-tmp-'], ['the manifest rename', { KILL_BEFORE_MANIFEST_RENAME: '1' }, '.coalmine-manifest.json.coalmine-tmp-']]) {
+// 29ai: the expected exit code and whether the kill leaves complete skill folders are FIXED per leg here, before any run; neither is
+// read from the output the assert checks. Each leg also compares the skill folders and every byte in them before and after uninstall.
+const treeOf = (dest) => Object.fromEntries(skillDirs(dest).map((s) => [s, Object.fromEntries(files(path.join(dest, s)).map((f) => [f, fs.readFileSync(path.join(dest, s, f), 'utf8')]))]));
+for (const [label, env, what, exit, leavesFolders] of [
+  ['the work folder marker write', { KILL_BEFORE_MARKER: '1' }, '.coalmine-tmp-', 0, false],
+  ['the manifest rename', { KILL_BEFORE_MANIFEST_RENAME: '1' }, '.coalmine-manifest.json.coalmine-tmp-', 1, true],
+]) {
   test(`15b: a first install killed at ${label} leaves a litter the next UNINSTALL removes`, (t) => {
     const sb = sandbox(t);
     const proj = path.join(sb.dir, 'p'); fs.mkdirSync(proj);
     const dest = path.join(proj, 'skills');
     assert.ok(wasKilled(install(sb, proj, [dest], env)), 'control: killed');
     assert.ok(dotEntries(dest).some((n) => n.includes(what)), `control: the kill left the litter this window leaves (${what})`);
+    const before = treeOf(dest);
+    assert.equal(Object.keys(before).length > 0, leavesFolders, `control: the kill ${leavesFolders ? 'left complete skill folders' : 'left no complete skill folder'}`);
     const un = install(sb, proj, ['--uninstall', dest]);
-    // 29ag: a complete folder a killed install left has no record, so it is kept (exit 1) rather than removed; exit 0 only when none is.
-    const kept = (un.stdout + un.stderr).match(/\[kept\]/g) || [];
-    assert.equal(un.status, kept.length ? 1 : 0, `exit 1 exactly when a folder is kept (${kept.length} kept): ${un.stdout}${un.stderr}`);
+    // 29ag: a complete folder a killed install left has no record, so it is kept (exit 1) rather than removed.
+    assert.equal(un.status, exit, `this leg's fixed expectation is exit ${exit} (${un.stdout}${un.stderr})`);
+    assert.deepEqual(treeOf(dest), before, 'the skill folders and every byte in them are unchanged by uninstall');
     assert.deepEqual(fs.readdirSync(dest).filter((n) => n.includes('.coalmine-tmp-')), [], 'the uninstall took the dead installer litter');
   });
 }
