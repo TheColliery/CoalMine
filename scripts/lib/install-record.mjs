@@ -44,7 +44,8 @@ export function saveInstallRecord(home, record) {
 // The sha256 of every file under `dir`, keyed by its path inside `dir` with forward slashes. null when anything under it is a link,
 // a non-file, an empty sub-folder, a file over MAX_DOC_BYTES, or cannot be read: a folder with any of those is proven by nothing.
 export function folderHashes(dir) {
-  const out = {};
+  // 29am (T-29al-7): a null prototype, so a file named __proto__ is an own key and is hashed like any other (the JSON shape on disk is unchanged).
+  const out = Object.create(null);
   const fail = () => { throw new Error('refused'); };
   const walk = (abs, rel) => {
     const entries = fs.readdirSync(abs);

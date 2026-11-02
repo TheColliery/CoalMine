@@ -72,6 +72,8 @@ const TESTS = [
   'scripts/lib/install-ownership.test.mjs',
   // 29am (T-29al-3): a record line cannot be written or read twice by a name that holds a line separator.
   'scripts/lib/marker-line-break.test.mjs',
+  // 29am (T-29al-7): a file named __proto__ is an own key of the folder hashes, so a change to it is seen.
+  'scripts/lib/install-record-proto.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
