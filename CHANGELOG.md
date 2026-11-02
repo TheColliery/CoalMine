@@ -9,7 +9,7 @@ A file name with a line break cannot add a line to the report
 The touch and Stop hooks (`plugin/hooks/`) and several repository scripts changed, so this is a PATCH release.
 
 ### Security
-- **A file name can no longer add a line of its own to the Stop hook's report.** The touch hook does not record a file name that holds a control character or a line or paragraph separator, and the Stop hook skips any touched or smells list line that holds one (a clean line beside it still surfaces). — test: scripts/lib/marker-line-break.test.mjs, scripts/lib/markers.test.mjs
+- **A file name can no longer add a line of its own to the Stop hook's report.** The touch hook does not record a file name that holds a control character (C0 or C1) or a line or paragraph separator, and the Stop hook skips any touched or smells list line that holds one (a clean line beside it still surfaces). — test: scripts/lib/marker-line-break.test.mjs, scripts/lib/markers.test.mjs
 
 ### Fixed
 - **The installer hashes a file named `__proto__` like any other** when it records or checks a skill folder. — test: scripts/lib/install-record-proto.test.mjs
@@ -17,7 +17,7 @@ The touch and Stop hooks (`plugin/hooks/`) and several repository scripts change
 - **The tracked-file check also covers a hook that carries CoalMine's own header.** A hook your repository tracks is refused with `[refused]` and left as it is, whether or not it is CoalMine's. — test: scripts/lib/hook-adopt.test.mjs, scripts/lib/install.test.mjs
 
 ### Internal
-- **The repository's own count, heading and string scans are single passes.** The two count scans in `consistency.mjs`, the heading scan in `link-check.mjs` and the escaped-string scan in `config-keys.mjs` each make one pass with a step counter; each is checked against the pattern it replaced on 20,000 random inputs. — test: scripts/lib/consistency-linear.test.mjs, scripts/lib/link-check-heading-linear.test.mjs, scripts/lib/config-keys-linear.test.mjs
+- **The repository's own count, heading and string scans are single passes.** The two count scans in `consistency.mjs`, the heading scan and the HTML tag scan in `link-check.mjs` and the escaped-string scan in `config-keys.mjs` each make one pass with a step counter; each is checked against the pattern it replaced on 20,000 random inputs. — test: scripts/lib/consistency-linear.test.mjs, scripts/lib/link-check-heading-linear.test.mjs, scripts/lib/link-check-tag-linear.test.mjs, scripts/lib/config-keys-linear.test.mjs
 - **`pointer-check` reads a document reached by two names once.** — test: scripts/lib/pointer-check-dedupe.test.mjs
 
 ## [3.25.3] - 2026-11-03
