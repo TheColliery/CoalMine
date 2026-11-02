@@ -41,7 +41,42 @@ export function stripCode(text) {
   return stripFencedBlocks(text).replace(/`[^`\n]*`/g, '');
 }
 
-const HEADING_RE = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
+// 29am (T-29al-2, Deep Scan rows 4 and 20): the heading pattern ^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$ (multiline) was quadratic, because its
+// lazy body overlapped its tail. One pass per line gives the same body: the shortest run after the blanks such that only blanks and hashes
+// follow it, at least one character long. A line break is LF, CR, U+2028 or U+2029, as the multiline anchor and the dot both read it.
+const HEADING_LINE_BREAKS = new RegExp('[' + String.fromCharCode(10, 13, 0x2028, 0x2029) + ']');
+const isBlankChar = (c) => c === ' ' || c === '\t';
+
+function headingBody(line, counter) {
+  let h = 0;
+  while (h < line.length && line[h] === '#') { h++; counter.steps++; }
+  if (h < 1 || h > 6 || h >= line.length || !isBlankChar(line[h])) return null;
+  let p = h;
+  while (p < line.length && isBlankChar(line[p])) { p++; counter.steps++; }
+  if (p === line.length) return p - h >= 2 ? line[p - 1] : null; // the blank run gives back one blank, which is the body
+  const rest = line.slice(p);
+  let q = rest.length;
+  while (q > 0 && (isBlankChar(rest[q - 1]) || rest[q - 1] === '#')) { q--; counter.steps++; }
+  const hashRunEnds = [];
+  for (let x = q; x < rest.length; x++) {
+    counter.steps++;
+    if (rest[x] === '#' && (x + 1 === rest.length || rest[x + 1] !== '#')) hashRunEnds.push(x + 1);
+  }
+  let b = Math.max(1, q);
+  if (hashRunEnds.length >= 2) b = Math.max(b, hashRunEnds[hashRunEnds.length - 2]);
+  return rest.slice(0, b);
+}
+
+// The bodies of the ATX headings in text, one per heading line, in order. The optional counter receives one step per character visit.
+export function headingTexts(text, counter = { steps: 0 }) {
+  const bodies = [];
+  for (const line of text.split(HEADING_LINE_BREAKS)) {
+    counter.steps++;
+    const body = headingBody(line, counter);
+    if (body !== null) bodies.push(body);
+  }
+  return bodies;
+}
 const EXTERNAL_RE = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i; // a scheme: or a protocol-relative //
 // CodeQL #68 (js/incomplete-multi-character-sanitization, HIGH) fires here: a single
 // PASS of a paired-delimiter tag-strip could in general leave a re-formed tag behind
@@ -102,10 +137,8 @@ export function headingSlugs(text) {
   const seen = new Map();
   const slugs = new Set();
   const stripped = stripFencedBlocks(text);
-  let m;
-  HEADING_RE.lastIndex = 0;
-  while ((m = HEADING_RE.exec(stripped))) {
-    const base = slugify(m[2]);
+  for (const body of headingTexts(stripped)) {
+    const base = slugify(body);
     const n = seen.get(base) || 0;
     seen.set(base, n + 1);
     slugs.add(n === 0 ? base : `${base}-${n}`);

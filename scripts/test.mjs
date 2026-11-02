@@ -76,6 +76,8 @@ const TESTS = [
   'scripts/lib/install-record-proto.test.mjs',
   // 29am (T-29al-1): the two count scans in consistency.mjs are single passes with a step counter.
   'scripts/lib/consistency-linear.test.mjs',
+  // 29am (T-29al-2): the heading scan in link-check.mjs is one counted pass per line.
+  'scripts/lib/link-check-heading-linear.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
