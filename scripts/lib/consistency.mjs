@@ -17,6 +17,53 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listSkills } from './render.mjs';
 
+// 29am (T-29al-1, Deep Scan rows 1 and 22): the two count scans are single passes with a step counter. The blank class is space and
+// tab, and a line start follows a line break (LF, CR, U+2028 or U+2029), as the multiline anchor did.
+const isBlank = (c) => c === ' ' || c === '\t';
+const isLetter = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+const isDigit = (c) => c >= '0' && c <= '9';
+const LINE_BREAKS = new RegExp('[' + String.fromCharCode(10, 13, 0x2028, 0x2029) + ']');
+
+// The `<N> quality-canary` count: the first digit run whose end is followed by one or more blanks and quality-canary.
+// Returns the digits, or null. Each character is visited a bounded number of times; counter.steps counts the visits.
+export function qualityCanaryCount(desc, counter = { steps: 0 }) {
+  const n = desc.length;
+  let i = 0;
+  while (i < n) {
+    counter.steps++;
+    if (!isDigit(desc[i])) { i++; continue; }
+    let j = i;
+    while (j < n && isDigit(desc[j])) { j++; counter.steps++; }
+    let k = j;
+    while (k < n && isBlank(desc[k])) { k++; counter.steps++; }
+    if (k > j && desc.startsWith('quality-canary', k)) return desc.slice(i, j);
+    i = j;
+  }
+  return null;
+}
+
+// One `^[ \t]+[a-zA-Z]+:[ \t]+path.` line: three runs, each read once, then the literal.
+function isTargetLine(line, counter) {
+  const n = line.length;
+  let i = 0;
+  const run = (pred) => { const s = i; while (i < n && pred(line[i])) { i++; counter.steps++; } return i - s; };
+  if (run(isBlank) === 0) return false;
+  if (run(isLetter) === 0 || line[i] !== ':') return false;
+  i++;
+  if (run(isBlank) === 0) return false;
+  return line.startsWith('path.', i);
+}
+
+// The agent-target lines of targets.mjs, counted per line (a line starts after any line break).
+export function countAgentTargetLines(src, counter = { steps: 0 }) {
+  let count = 0;
+  for (const line of src.split(LINE_BREAKS)) {
+    counter.steps++;
+    if (isTargetLine(line, counter)) count++;
+  }
+  return count;
+}
+
 // The two doctrine rule homes. `.claude/rules/ecc/` is what Claude reads;
 // `.agents/rules/ecc/` is what the non-Claude agents (Antigravity, Codex, Cursor)
 // read. Neither population can see the other's tree, so a divergence is invisible
@@ -157,11 +204,11 @@ export function checkCanaryCount(repo) {
   }
   try {
     const desc = JSON.parse(fs.readFileSync(path.join(repo, '.claude-plugin', 'plugin.json'), 'utf8').replace(/^\uFEFF/, '')).description || '';
-    const m = desc.match(/(\d+)\s+quality-canary/);
-    if (!m) {
+    const declared = qualityCanaryCount(desc);
+    if (declared === null) {
       out.push({ level: 'FAIL', msg: `consistency: plugin.json description has no "<N> quality-canary" count to cross-check` });
-    } else if (Number(m[1]) !== actual) {
-      out.push({ level: 'FAIL', msg: `consistency: plugin.json says ${m[1]} quality-canary skills but skills/ has ${actual}` });
+    } else if (Number(declared) !== actual) {
+      out.push({ level: 'FAIL', msg: `consistency: plugin.json says ${declared} quality-canary skills but skills/ has ${actual}` });
     }
   } catch (e) {
     out.push({ level: 'FAIL', msg: `consistency: plugin.json unreadable: ${e.message}` });
@@ -210,7 +257,7 @@ export function checkAgentCount(repo) {
   let defined;
   try {
     const tsrc = fs.readFileSync(path.join(repo, 'scripts', 'lib', 'targets.mjs'), 'utf8');
-    defined = (tsrc.match(/^\s+[a-zA-Z]+:\s+path\./gm) || []).length;
+    defined = countAgentTargetLines(tsrc);
     if (defined === 0) return [{ level: 'FAIL', msg: 'consistency: no agent targets found in scripts/lib/targets.mjs' }];
   } catch (e) {
     return [{ level: 'FAIL', msg: `consistency: targets.mjs unreadable: ${e.message}` }];

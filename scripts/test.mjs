@@ -74,6 +74,8 @@ const TESTS = [
   'scripts/lib/marker-line-break.test.mjs',
   // 29am (T-29al-7): a file named __proto__ is an own key of the folder hashes, so a change to it is seen.
   'scripts/lib/install-record-proto.test.mjs',
+  // 29am (T-29al-1): the two count scans in consistency.mjs are single passes with a step counter.
+  'scripts/lib/consistency-linear.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
