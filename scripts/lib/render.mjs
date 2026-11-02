@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded, writeRepoFile } from './repo-fs.mjs';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoBytesBounded, readRepoFileBounded, writeRepoFile } from './repo-fs.mjs';
 import { MANIFEST_NAME } from './manifest.mjs';
 
 // The single shared reference every skill ships in references/escalation.md.
@@ -165,6 +165,31 @@ function assertComplete(from, fresh, shared) {
     const missing = want.filter((f) => !have.includes(f));
     throw new Error(`the new skill folder is incomplete (missing: ${missing.slice(0, 5).join(', ') || 'none; extra files present'}); nothing was changed`);
   }
+}
+
+// 29ae: the bytes a finished skill folder holds, as buildSkillTree writes them, computed in memory. The installer proves an existing
+// folder is CoalMine's by comparing its files with these bytes (adoption); nothing is written here. Same walk, same references,
+// same rendered SKILL.md as the write path, so the two cannot drift apart silently: the adoption witness installs and compares.
+// A source file's bytes, bounded and contained under the skill folder. A refusal throws: the caller judges the folder unproven.
+function sourceBytes(file, from) {
+  const bytes = readRepoBytesBounded(file, from, MAX_DOC_BYTES);
+  if (bytes === null) throw new Error(`${file} is unreadable, not a plain file, or over ${MAX_DOC_BYTES} bytes`);
+  return bytes;
+}
+
+export function expectedSkillFiles(from, shared) {
+  const out = new Map();
+  const walk = (abs, rel) => {
+    for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+      if (rel === '' && e.name === 'SKILL.md') continue;
+      if (e.isDirectory()) walk(path.join(abs, e.name), rel + e.name + '/');
+      else out.set(rel + e.name, sourceBytes(path.join(abs, e.name), from));
+    }
+  };
+  walk(from, '');
+  for (const [name, body] of Object.entries(shared.sharedReferences ?? {})) out.set('references/' + name, Buffer.from(body, 'utf8'));
+  if (fs.existsSync(path.join(from, 'SKILL.md'))) out.set('SKILL.md', Buffer.from(renderSkillMd(from, shared), 'utf8'));
+  return out;
 }
 
 export function installSkillDir(from, to, shared) {

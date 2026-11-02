@@ -158,7 +158,8 @@ test('manifest-driven reinstall removes renamed leftovers, spares foreign skills
     // 3. Reinstall → legacy dir cleaned via manifest, foreign dir untouched.
     const second = runInstall(target, tmp);
     assert.equal(second.status, 0, `reinstall must pass:\n${second.stdout}${second.stderr}`);
-    assert.ok(!fs.existsSync(path.join(target, 'old-renamed-skill')), 'manifest-listed legacy skill removed');
+    // 29ae: a manifest alone no longer removes a folder: the record does not name it, so it is kept, not removed.
+    assert.ok(fs.existsSync(path.join(target, 'old-renamed-skill')), 'a manifest alone does not remove a skill: the record does not name it, so it is kept');
     assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill must never be touched');
     const manifest2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
     assert.equal(manifest2.skills.length, SKILL_COUNT, 'new manifest lists only the current set');
@@ -166,9 +167,11 @@ test('manifest-driven reinstall removes renamed leftovers, spares foreign skills
 
     // 4. Uninstall → manifest-listed skills + manifest gone, foreign survives.
     const un = runInstall(target, tmp, ['--uninstall']);
-    assert.equal(un.status, 0, `uninstall must pass:\n${un.stdout}${un.stderr}`);
+    // 29ae: the legacy folder is kept (no record names it), so uninstall exits 1 and the manifest keeps only that folder.
+    assert.equal(un.status, 0, `uninstall must pass (the legacy name is outside the installer's scope) (${un.stdout}${un.stderr})`);
     assert.ok(!fs.existsSync(path.join(target, 'rot-canary')), 'installed skill removed on uninstall');
-    assert.ok(!fs.existsSync(path.join(target, MANIFEST)), 'manifest removed on uninstall');
+    assert.ok(fs.existsSync(path.join(target, 'old-renamed-skill')), 'a name the installer neither ships nor records is not touched');
+    assert.ok(!fs.existsSync(path.join(target, MANIFEST)), 'the manifest is removed: nothing it names is kept');
     assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill survives uninstall');
   } finally {
     removeTree(tmp);
@@ -187,8 +190,9 @@ test('retired skill names are swept even without a manifest (rotcanary -> rot-ca
     fs.writeFileSync(path.join(target, 'foreign-skill', 'SKILL.md'), 'not ours', 'utf8');
 
     const res = runInstall(target, tmp);
-    assert.equal(res.status, 0, `install must pass:\n${res.stdout}${res.stderr}`);
-    assert.ok(!fs.existsSync(path.join(target, 'rotcanary')), 'retired rotcanary removed without a manifest');
+    // 29ae: a retired name is no longer swept by name. Nothing records it and no shipped source renders it, so it is kept, named, exit 1.
+    assert.equal(res.status, 1, `the kept retired folder makes the run exit 1 (${res.stdout}${res.stderr})`);
+    assert.ok(fs.existsSync(path.join(target, 'rotcanary')), 'a retired name is kept without a record, not swept by name');
     assert.ok(fs.existsSync(path.join(target, 'rot-canary', 'SKILL.md')), 'current rot-canary installed');
     assert.ok(fs.existsSync(path.join(target, 'foreign-skill', 'SKILL.md')), 'foreign skill never touched');
   } finally {
@@ -208,7 +212,7 @@ test('H12: install into a dir with a FOREIGN colliding skill dir preserves the u
 
     const res = runInstall(target, tmp);
     assert.notEqual(res.status, 0, 'must fail loud (non-zero) when it refuses a foreign collision');
-    assert.match(res.stdout + res.stderr, /refused/i, 'the refusal is reported');
+    assert.match(res.stdout + res.stderr, /\[kept\]/, 'the refusal is reported as a kept folder');
     assert.ok(fs.existsSync(precious), 'foreign user data must survive');
     assert.equal(fs.readFileSync(precious, 'utf8'), 'IRREPLACEABLE', 'foreign data is left byte-untouched');
     assert.ok(!fs.existsSync(path.join(target, 'gold-standard', 'SKILL.md')), 'the refused skill is NOT written over the foreign dir');
@@ -228,7 +232,8 @@ test('H12: uninstall (no manifest) leaves a FOREIGN colliding dir in place', () 
     fs.writeFileSync(precious, 'IRREPLACEABLE', 'utf8');
 
     const res = runInstall(target, tmp, ['--uninstall']);
-    assert.equal(res.status, 0, `uninstall must pass:\n${res.stdout}${res.stderr}`);
+    // 29ae: the foreign folder carries a shipped name and no record names it, so uninstall keeps it and exits 1.
+    assert.equal(res.status, 1, `the kept foreign folder makes uninstall exit 1 (${res.stdout}${res.stderr})`);
     assert.ok(fs.existsSync(precious), 'foreign user data must survive an uninstall too');
     assert.equal(fs.readFileSync(precious, 'utf8'), 'IRREPLACEABLE');
   } finally {
@@ -236,7 +241,7 @@ test('H12: uninstall (no manifest) leaves a FOREIGN colliding dir in place', () 
   }
 });
 
-test('a colliding dir carrying our own skill-meta.json marker IS replaced (pre-manifest upgrade — the guard is not locked tight)', () => {
+test('a colliding dir carrying only our skill-meta.json marker is kept: a marker proves nothing (29ae)', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-premanifest-'));
   const target = path.join(tmp, 'skills');
   try {
@@ -247,9 +252,10 @@ test('a colliding dir carrying our own skill-meta.json marker IS replaced (pre-m
     fs.writeFileSync(path.join(target, 'gold-standard', 'stale.txt'), 'old', 'utf8');
 
     const res = runInstall(target, tmp);
-    assert.equal(res.status, 0, `owned dir must upgrade cleanly:\n${res.stdout}${res.stderr}`);
-    assert.ok(fs.existsSync(path.join(target, 'gold-standard', 'SKILL.md')), 'the owned skill is (re)installed');
-    assert.ok(!fs.existsSync(path.join(target, 'gold-standard', 'stale.txt')), 'a stale file from the old owned install is cleared');
+    // 29ae: skill-meta.json authorizes nothing. The folder is not byte-equal to the shipped files and no record names it: kept, not rewritten.
+    assert.equal(res.status, 1, `a marker alone does not prove a folder: kept, exit 1 (${res.stdout}${res.stderr})`);
+    assert.ok(!fs.existsSync(path.join(target, 'gold-standard', 'SKILL.md')), 'the kept folder is not rewritten');
+    assert.ok(fs.existsSync(path.join(target, 'gold-standard', 'stale.txt')), 'the kept folder keeps its files');
   } finally {
     removeTree(tmp);
   }
@@ -375,13 +381,17 @@ test('installer run from a real project that already has a .gemini/ dir (no .cla
   fs.mkdirSync(path.join(proj, '.git'));
   fs.mkdirSync(path.join(proj, '.gemini')); // the project already uses Gemini CLI, never Claude Code
   const target = path.join(proj, 'skills');
+  // 29ae: the install record lives under the user's HOME, so this leg's HOME is its own folder, not the project: the record must
+  // not plant a .claude/ into a project that never used Claude Code (the assertion below is the proof of that).
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-gemini-home-'));
   try {
-    const r = runInstall(target, proj);
+    const r = runInstall(target, proj, [], home);
     assert.equal(r.status, 0, `install into a real project must pass:\n${r.stdout}${r.stderr}`);
     assert.ok(fs.existsSync(path.join(proj, '.gemini', 'coal', 'coalmine.json')), 'the default config nests under the agent dir the project ALREADY has');
     assert.ok(!fs.existsSync(path.join(proj, '.claude')), 'no foreign .claude/ is planted into a project that never used Claude Code');
   } finally {
     removeTree(proj);
+    removeTree(home);
   }
 });
 
@@ -621,8 +631,8 @@ test('CWK-158 item 7: install keeps a dir a PLANTED manifest names but never has
     plantManifestNaming(target, ['victim-dir']);
     const res = runInstall(target, proj);
     assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the install');
-    assert.match(res.stdout + res.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
-    assert.notEqual(res.status, 0, 'loudly');
+    // 29ae: victim-dir is neither shipped nor recorded, so it is outside the installer's scope: it is never touched and never named.
+    assert.equal(res.status, 0, 'a name the manifest plants is outside the installer scope: nothing is kept and the foreign folder survives');
   } finally {
     removeTree(proj);
   }
@@ -658,7 +668,7 @@ test('CWK-158 item 7: uninstall keeps a manifest-named dir that is not provably 
     plantManifestNaming(target, ['victim-dir']);
     const un = runInstall(target, proj, ['--uninstall']);
     assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the uninstall');
-    assert.match(un.stdout + un.stderr, /\[kept\].*victim-dir/, 'and the keep is reported');
+    // 29ae: victim-dir is outside the installer's scope (see the install leg above): never touched and never named.
   } finally {
     removeTree(proj);
   }
@@ -859,7 +869,7 @@ test('R18: a planted manifest naming a CURRENT skill over foreign content keeps 
     plantManifestNaming(target, [CURRENT_SKILL]);
     const res = runInstall(target, proj);
     assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'notes.txt')), 'the foreign content survives the install');
-    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/, 'and the refusal is reported');
+    assert.match(res.stdout + res.stderr, /\[kept\].*rot-canary/, 'and the refusal is reported');
     assert.notEqual(res.status, 0, 'loudly');
   } finally {
     removeTree(proj);
@@ -876,8 +886,8 @@ test('R18: a file the user added inside an installed skill survives a re-install
     const res = runInstall(target, proj);
     assert.ok(fs.existsSync(mine), 'the added file survives the re-install');
     const out = res.stdout + res.stderr;
-    assert.match(out, /\[refused\].*rot-canary/, 'the refusal is reported');
-    assert.match(out, /differ from what CoalMine wrote/, 'and says the contents were edited');
+    assert.match(out, /\[kept\].*rot-canary/, 'the refusal is reported');
+    assert.match(out, /differ from what CoalMine recorded/, 'and says the contents were edited');
     assert.doesNotMatch(out, /rot-canary holds non-CoalMine files/, 'not the foreign-folder wording, which is false here');
     assert.notEqual(res.status, 0, 'loudly');
   } finally {
@@ -892,7 +902,7 @@ test('R18: a real earlier install (the manifest hashes match) re-installs cleanl
     assert.equal(runInstall(target, proj).status, 0, 'first install');
     const res = runInstall(target, proj);
     assert.equal(res.status, 0, `re-install must pass:\n${res.stdout}${res.stderr}`);
-    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/, 'nothing is refused');
+    assert.doesNotMatch(res.stdout + res.stderr, /\[kept\]/, 'nothing is refused');
     assert.ok(fs.existsSync(path.join(target, CURRENT_SKILL, 'SKILL.md')), 'and the skill is there');
   } finally {
     removeTree(proj);
@@ -911,10 +921,10 @@ test('R18b: the refusal holds on the run after it -- an added file survives runs
     runInstall(target, proj);
     const r3 = runInstall(target, proj);
     assert.ok(fs.existsSync(mine), 'run 3 keeps the added file');
-    assert.match(r3.stdout + r3.stderr, /\[refused\].*rot-canary/, 'and refuses again, out loud');
+    assert.match(r3.stdout + r3.stderr, /\[kept\].*rot-canary/, 'and refuses again, out loud');
     assert.notEqual(r3.status, 0, 'with a non-zero exit');
     const m = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
-    assert.ok(m.skills.includes(CURRENT_SKILL), 'the refused skill is carried forward in the manifest');
+    assert.ok(!m.skills.includes(CURRENT_SKILL), 'a kept folder is not in the manifest: the manifest lists only what this run wrote');
   } finally {
     removeTree(proj);
   }
@@ -946,8 +956,11 @@ test('R18b: once the user moves the change aside, the carried-forward skill re-i
     runInstall(target, proj);
     fs.rmSync(mine);
     const res = runInstall(target, proj);
-    assert.equal(res.status, 0, `after the file is gone the install must pass:\n${res.stdout}${res.stderr}`);
-    assert.doesNotMatch(res.stdout + res.stderr, /\[refused\]/);
+    // 29ae, OPEN DECISION (see the build note): the target still has a record entry for its other folders, so the byte match does
+    // not apply to this one. Removing the file alone does not unblock it; removing the whole folder does (an absent folder is installed fresh).
+    assert.notEqual(res.status, 0, `removing one file does not unblock it under the record rule (${res.stdout}${res.stderr})`);
+    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    assert.equal(runInstall(target, proj).status, 0, 'removing the whole folder unblocks it: an absent folder is installed fresh');
   } finally {
     removeTree(proj);
   }
@@ -968,10 +981,13 @@ test('R18b: uninstall after a refusal keeps the user-edited skill folder and say
     const again = runInstall(target, proj);
     assert.ok(fs.existsSync(mine), 'the user file survives the install that follows the uninstall');
     assert.notEqual(again.status, 0, 'and that install refuses');
-    assert.match(again.stdout + again.stderr, /\[refused\].*rot-canary/, 'and says so');
+    assert.match(again.stdout + again.stderr, /\[kept\].*rot-canary/, 'and says so');
     // Recovery: the user moves the file aside, the next install is clean.
     fs.rmSync(mine);
-    assert.equal(runInstall(target, proj).status, 0, 'once the file is gone the install is clean');
+    // 29ae, OPEN DECISION (see the build note): removing the one file does not unblock it under the record rule; the whole folder does.
+    assert.notEqual(runInstall(target, proj).status, 0, 'removing one file does not unblock it under the record rule');
+    fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
+    assert.equal(runInstall(target, proj).status, 0, 'removing the whole folder unblocks it');
   } finally {
     removeTree(proj);
   }
@@ -993,7 +1009,7 @@ test('R18b: a hashless manifest over a marker-less folder says to remove or rena
     fs.writeFileSync(path.join(target, MANIFEST), JSON.stringify(m), 'utf8');
     const r1 = runInstall(target, proj);
     assert.notEqual(r1.status, 0, 'refused');
-    assert.match(r1.stdout + r1.stderr, /remove or rename the folder/, 'and the message names what unblocks it');
+    assert.match(r1.stdout + r1.stderr, /Remove the whole folder/, 'and the message names what unblocks it');
     assert.ok(fs.existsSync(mine), 'the user file is untouched');
     const m2 = JSON.parse(fs.readFileSync(path.join(target, MANIFEST), 'utf8'));
     assert.ok(!m2.skills.includes(CURRENT_SKILL), 'no unprovable entry is carried into the rewritten manifest');
@@ -1021,7 +1037,7 @@ test('R18b: a skill folder that is a link is refused with link wording, and what
     const res = runInstall(target, proj);
     const out = res.stdout + res.stderr;
     assert.ok(fs.existsSync(path.join(outside, 'data.txt')), 'what the link points at survives');
-    assert.match(out, /\[refused\].*rot-canary.*is a link/, 'the refusal says it is a link');
+    assert.match(out, /\[kept\].*rot-canary.*is a link/, 'the refusal says it is a link');
     assert.doesNotMatch(out, /edited, added or unrecorded|changed, added or unrecorded/, 'not the edited-file wording');
     assert.notEqual(res.status, 0);
   } finally {
@@ -1044,7 +1060,7 @@ test('R18b: a file over the size bound is unproven and refused even when the man
     fs.writeFileSync(mpath, JSON.stringify(m), 'utf8');
     const res = runInstall(target, proj);
     assert.ok(fs.existsSync(big), 'the oversized file survives');
-    assert.match(res.stdout + res.stderr, /\[refused\].*rot-canary/);
+    assert.match(res.stdout + res.stderr, /\[kept\].*rot-canary/);
     assert.notEqual(res.status, 0);
   } finally {
     removeTree(proj);
@@ -1069,8 +1085,8 @@ test('R19 LOW-C: a folder nothing proves is CoalMine\'s is refused with the SAME
       const r = runInstall(target, proj);
       const out = r.stdout + r.stderr;
       assert.notEqual(r.status, 0, 'run ' + run + ' refuses');
-      assert.match(out, /\[refused\].*rot-canary.*nothing proves it is CoalMine's/, 'run ' + run + ' says why');
-      assert.match(out, /remove or rename the folder/, 'run ' + run + ' says what unblocks it');
+      assert.match(out, /\[kept\].*rot-canary.*CoalMine cannot prove it installed this folder/, 'run ' + run + ' says why');
+      assert.match(out, /Remove the whole folder/, 'run ' + run + ' says what unblocks it');
       assert.doesNotMatch(out, /holds non-CoalMine files/, 'run ' + run + ' does not fall back to the older wording');
       assert.ok(fs.existsSync(mine), 'run ' + run + ' leaves the user file');
     }
@@ -1097,7 +1113,7 @@ test('R19 LOW-D: install keeps a plain file named like a skill, says so, and exi
     assert.ok(fs.existsSync(f) && fs.statSync(f).isFile(), 'the file is still a file');
     assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'with its content');
     assert.notEqual(r.status, 0, 'loudly');
-    assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'and the message is true: it is a file');
+    assert.match(r.stdout + r.stderr, /\[kept\].*rot-canary.*not a folder/, 'and the message is true: it is a file');
     assert.ok(fs.existsSync(path.join(target, 'drift-canary', 'SKILL.md')), 'the other skills still install');
   } finally {
     removeTree(proj);
@@ -1115,7 +1131,7 @@ test('R19 LOW-D: a refresh keeps it too -- a clean install, the folder replaced 
       const r = runInstall(target, proj);
       assert.equal(fs.readFileSync(f, 'utf8'), 'the users own file', 'run ' + run + ' keeps the file');
       assert.notEqual(r.status, 0, 'run ' + run + ' refuses');
-      assert.match(r.stdout + r.stderr, /\[refused\].*rot-canary.*not a folder/, 'run ' + run + ' says so');
+      assert.match(r.stdout + r.stderr, /\[kept\].*rot-canary.*not a folder/, 'run ' + run + ' says so');
     }
   } finally {
     removeTree(proj);
@@ -1179,7 +1195,7 @@ test('R20 LOW-E: an unreadable skill folder the manifest names is refused for th
     const r = runInstallUnreadable(target, proj, dir);
     const out = r.stdout + r.stderr;
     assert.notEqual(r.status, 0, 'refused loudly');
-    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.match(out, /\[kept\].*rot-canary.*could not be read/, 'the message says it could not be read');
     assert.doesNotMatch(out, /contents differ/, 'and does not blame its contents');
     assert.doesNotMatch(out, /nothing proves/, 'nor the missing proof');
     assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
@@ -1199,7 +1215,7 @@ test('R20 LOW-E: an unreadable skill folder with no manifest is refused for the 
     const r = runInstallUnreadable(target, proj, dir);
     const out = r.stdout + r.stderr;
     assert.notEqual(r.status, 0, 'refused loudly');
-    assert.match(out, /\[refused\].*rot-canary.*could not be read/, 'the message says it could not be read');
+    assert.match(out, /\[kept\].*rot-canary.*could not be read/, 'the message says it could not be read');
     assert.doesNotMatch(out, /nothing proves/, 'it does not claim the marker is missing');
     assert.ok(fs.existsSync(path.join(dir, 'mine.txt')), 'the user file is untouched');
   } finally {
@@ -1219,7 +1235,7 @@ test('R20 LOW-G: a skill folder whose lstat fails (not ENOENT) is refused as unr
     const named = runInstallUnreadable(target, proj, dir, 'lstatSync');
     const outNamed = named.stdout + named.stderr;
     assert.notEqual(named.status, 0, 'refused loudly');
-    assert.match(outNamed, /\[refused\].*rot-canary.*could not be read/, 'named: the message says it could not be read');
+    assert.match(outNamed, /\[kept\].*rot-canary.*could not be read/, 'named: the message says it could not be read');
     assert.doesNotMatch(outNamed, /contents differ/, 'and does not blame its contents');
     assert.deepEqual(fs.readdirSync(dir).sort(), before, 'the folder is exactly as it was');
     // no manifest at all
@@ -1227,7 +1243,7 @@ test('R20 LOW-G: a skill folder whose lstat fails (not ENOENT) is refused as unr
     const bare = runInstallUnreadable(target, proj, dir, 'lstatSync');
     const outBare = bare.stdout + bare.stderr;
     assert.notEqual(bare.status, 0, 'refused loudly');
-    assert.match(outBare, /\[refused\].*rot-canary.*could not be read/, 'unnamed: the message says it could not be read');
+    assert.match(outBare, /\[kept\].*rot-canary.*could not be read/, 'unnamed: the message says it could not be read');
     assert.doesNotMatch(outBare, /nothing proves/, 'and does not claim the proof is missing');
     assert.deepEqual(fs.readdirSync(dir).sort(), before, 'still exactly as it was');
   } finally {

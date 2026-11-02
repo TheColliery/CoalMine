@@ -69,6 +69,7 @@ const TESTS = [
   'scripts/lib/r14-install.test.mjs',
   'scripts/lib/install-lowthree.test.mjs',
   'scripts/lib/hook-backup-trust.test.mjs',
+  'scripts/lib/install-ownership.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',

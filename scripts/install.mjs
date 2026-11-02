@@ -15,11 +15,13 @@
 //   node scripts/install.mjs <PATH>        → <PATH>/                  (any dir)
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { loadShared as loadSharedFrom, listSkills, installSkillDir, sweepInstallLeftovers } from './lib/render.mjs';
+import { loadShared as loadSharedFrom, listSkills, installSkillDir, sweepInstallLeftovers, expectedSkillFiles } from './lib/render.mjs';
+import { loadInstallRecord, saveInstallRecord, folderHashes, sameHashes } from './lib/install-record.mjs';
 import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
 import { gitEnv } from './lib/git-env.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
@@ -538,39 +540,121 @@ function uninstallConfig(arg) {
   }
 }
 
-// ─── Skills Uninstallation ───────────────────────────────────────────────────
-function uninstallSkills(destDir, skillsList, manifest = null, kept = []) {
-  try {
-    if (!fs.existsSync(destDir)) return 0;
-    let removed = 0;
-    for (const s of skillsList) {
-      const targetDir = path.join(destDir, s);
-      if (fs.existsSync(targetDir)) {
-        if (manifest && manifest.skills.includes(s) && !ownedByManifest(destDir, s, manifest)) {
-          console.warn(`  [kept] ${targetDir}: the manifest names it but its contents are not provably CoalMine's -- left in place`);
-          process.exitCode = 1;
-          kept.push(s);
-          continue;
-        }
-        fs.rmSync(targetDir, { recursive: true, force: true });
-        console.log(`  removed skill: ${s} from ${targetDir}`);
-        removed++;
-      }
-    }
-    return removed;
-  } catch (e) {
-    console.warn(`  [warn] failed to uninstall skills: ${e.message}`);
-    return 0;
-  }
+// ─── Skill folder ownership (29ae) ───────────────────────────────────────────
+// The installer writes or removes a skill folder only when it can prove CoalMine installed it. The proof is the install record
+// (lib/install-record.mjs), keyed by the target's real path: a folder the record names is ours when its files are exactly the
+// recorded files (record). A target with no record entry at all adopts a folder whose files are byte-equal to what this installer
+// renders from its own source (adopt), which covers a CoalMine installed before the record existed. An absent or empty folder has
+// nothing to protect. Everything else is KEPT: never removed or overwritten, one [kept] line says why, exit 1. Only the record and
+// the byte match authorize anything: a project manifest or a skill-meta.json marker does not. The manifest is the post-install
+// integrity baseline verify.mjs reads.
+// Scope: the installer only considers folders it ships or the record names. An unrelated folder in a shared target is never
+// touched and never named.
+
+function keepMessage(p, reason) {
+  return `  [kept] ${p}: not removed or overwritten, because ${reason}. CoalMine cannot prove it installed this folder. Remove the whole folder, or move the whole folder aside, then re-run; an absent folder is installed fresh.`;
 }
 
-// ─── Install Manifest (clean version transitions) ────────────────────────────
-// Records exactly what CoalMine installed at a target so the next install can
-// remove it first — like a package manager's file list. Renamed or removed
-// skills can never leave orphan copies behind. Only manifest-listed dirs are
-// ever touched; other skills sharing the target dir are never affected.
-// MANIFEST_NAME + the per-file integrity hashes live in lib/manifest.mjs so the
-// installer (writes) and verify.mjs (checks) share one source.
+// Skill folders CoalMine itself coined under a name it later retired (a pre-rename install left them). Nothing records them and no
+// shipped source renders them, so they are never removed without proof: they are kept and named, exit 1, unless empty.
+const RETIRED_SKILL_NAMES = ['rotcanary'];
+
+// The verdict for one skill folder under `dest`: { owned: true, via } or { owned: false, reason }.
+// `entry` is this target's record entry, or undefined when the target has none.
+function ownership(dest, name, entry, shared) {
+  const p = path.join(dest, name);
+  let st;
+  try { st = fs.lstatSync(p); }
+  catch (e) { return e && e.code === 'ENOENT' ? { owned: true, via: 'absent' } : { owned: false, reason: 'it could not be read' }; }
+  if (st.isSymbolicLink() || !st.isDirectory()) return { owned: false, reason: 'it is a link or a file, not a folder CoalMine wrote' };
+  let entries;
+  try { entries = fs.readdirSync(p); }
+  catch { return { owned: false, reason: 'it could not be read' }; }
+  if (entries.length === 0) return { owned: true, via: 'empty' };
+  const have = folderHashes(p);
+  if (have === null) return { owned: false, reason: 'it holds a link, a non-file, or a file that could not be read' };
+  if (entry && entry.skills && Object.hasOwn(entry.skills, name)) {
+    return sameHashes(have, entry.skills[name]) ? { owned: true, via: 'record' } : { owned: false, reason: 'its contents differ from what CoalMine recorded' };
+  }
+  if (!entry) {
+    const want = expectedHashes(name, shared);
+    if (want && sameHashes(have, want)) return { owned: true, via: 'adopt' };
+  }
+  return { owned: false, reason: 'the record does not name it, and its contents are not the shipped files' };
+}
+
+// The sha256 of every file the installer would write for `name`, from its source and the shared sections; nothing is written.
+// null when the source has no such skill (a retired or foreign name).
+function expectedHashes(name, shared) {
+  try {
+    const out = {};
+    for (const [rel, bytes] of expectedSkillFiles(path.join(skillsSrc, name), shared)) out[rel] = createHash('sha256').update(bytes).digest('hex');
+    return Object.keys(out).length ? out : null;
+  } catch { return null; }
+}
+
+// Removes one folder the verdict proved ours. Its containment under the root is checked first (CWK-137).
+function removeSkillFolder(dest, name, root) {
+  const p = path.join(dest, name);
+  const why = checkRepoDirTarget(p, root);
+  if (why) throw new Error(why);
+  fs.rmSync(p, { recursive: true, force: true });
+}
+
+// Removes what is proven ours among `names`, keeps (and names) the rest. Returns the names removed.
+function removeOwnedSkills(dest, names, entry, shared, root) {
+  const removed = [];
+  for (const name of names) {
+    const v = ownership(dest, name, entry, shared);
+    if (!v.owned) { console.warn(keepMessage(path.join(dest, name), v.reason)); process.exitCode = 1; continue; }
+    if (v.via === 'absent') continue;
+    try {
+      removeSkillFolder(dest, name, root);
+      removed.push(name);
+      console.log(`  removed skill: ${name} from ${path.join(dest, name)}`);
+    } catch (e) {
+      console.warn(keepMessage(path.join(dest, name), `it could not be removed safely (${e.message})`));
+      process.exitCode = 1;
+    }
+  }
+  return removed;
+}
+
+// This target's record, read once per run. `key` is the target's real path, null while the folder does not exist yet.
+// A record this CoalMine cannot use (newer, or unreadable) gives the target no entry: every folder is judged by its contents.
+function targetRecord(dest) {
+  const loaded = loadInstallRecord(os.homedir());
+  if (loaded.state === 'newer') console.warn('  [CoalMine] the install record was written by a newer CoalMine and was left alone; this run judges every folder by its contents and does not record what it installs.');
+  let key = null;
+  try { key = fs.realpathSync.native(dest); } catch { /* not created yet: nothing is recorded for it */ }
+  const raw = loaded.state === 'ok' && key !== null && Object.hasOwn(loaded.record.targets, key) ? loaded.record.targets[key] : undefined;
+  const entry = raw && isRecordEntry(raw) ? raw : undefined;
+  return { state: loaded.state, record: loaded.record, key, entry };
+}
+function isRecordEntry(e) { return e !== null && typeof e === 'object' && e.skills !== null && typeof e.skills === 'object' && !Array.isArray(e.skills); }
+
+// Writes this target's entry: exactly the skills this run wrote, with the hashes they now have. A kept folder never enters it.
+// A newer record is left alone.
+function recordInstall(dest, installed, tr) {
+  if (tr.state === 'newer') return;
+  let key;
+  try { key = fs.realpathSync.native(dest); } catch { return; }
+  const skills = {};
+  for (const s of installed) {
+    const h = folderHashes(path.join(dest, s));
+    if (h) skills[s] = h;
+  }
+  const next = tr.record;
+  if (Object.keys(skills).length) next.targets[key] = { version: pluginVersion(), skills };
+  else delete next.targets[key];
+  try { saveInstallRecord(os.homedir(), next); }
+  catch (e) { console.warn(`  [warn] could not write the install record: ${e.message}`); process.exitCode = 1; }
+}
+
+function pluginVersion() {
+  try { return JSON.parse(fs.readFileSync(path.join(repo, '.claude-plugin', 'plugin.json'), 'utf8')).version ?? '0.0.0'; }
+  catch { return '0.0.0'; }
+}
 
 function readManifest(destDir, root = destDir) {
   try {
@@ -593,126 +677,14 @@ function safeSkillNames(names) {
   );
 }
 
-// The installer writes into the USER's directory — a trust boundary. A target
-// skill dir is safe for CoalMine to delete/overwrite ONLY when we can PROVE we own
-// it; a blind name match is banned (resilience-audit/checks.md:15, "never
-// delete-then-write"). Ownership proofs, cheapest first:
-//   • the dir is absent or empty        → no user data to lose;
-//   • the destDir manifest lists it AND its contents match the manifest's own hashes
-//     (ownedByManifest) → we wrote exactly this; a name in a manifest alone proves nothing,
-//     because a project manifest arrives with a cloned repo (R18, CodeRabbit PR 36);
-//   • it carries our own skill-meta.json → a pre-manifest CoalMine install.
-// Anything else is a FOREIGN dir that merely shares a skill's name — refuse it, so
-// a name collision can never cost the user their files (the H12 root cause).
-// R19 LOW-D: only "not found" (ENOENT) means absent. A plain FILE at the skill's path (ENOTDIR), an unreadable folder
-// (EACCES) or any other error is the user's data we cannot see into, so it is refused and kept -- it used to read as
-// "absent", and install then deleted the file with exit 0 and no message.
-// R20 LOW-E: the verdict carries its reason. foreignReason returns null (absent or provably ours: install may write),
-// 'unreadable' (the folder could not be listed: nothing is known about it, so the message must not blame its contents),
-// or 'foreign' (everything else refused: a file, a link, or content nothing proves). isForeignSkillDir is the boolean.
-function foreignReason(destDir, skillName, manifestSkills, manifest = null) {
-  const p = path.join(destDir, skillName);
-  let st;
-  try { st = fs.lstatSync(p); }
-  catch (e) { return e && e.code === 'ENOENT' ? null : 'unreadable'; } // absent → nothing to protect; any other error (EACCES, ELOOP, EIO) → refuse, and nothing is known about it (R20 LOW-G)
-  if (!st.isDirectory() && !st.isSymbolicLink()) return 'foreign';   // a plain file (or other non-folder) is never ours to clear
-  let entries;
-  try { entries = fs.readdirSync(p); }
-  catch { return 'unreadable'; }                                     // dangling link, unreadable folder: cannot be seen into → refuse
-  if (entries.length === 0) return null;                             // empty dir → no user data
-  if (manifestSkills && manifestSkills.includes(skillName)) return ownedByManifest(destDir, skillName, manifest) ? null : 'foreign'; // named AND proven by content
-  if (entries.includes('skill-meta.json')) return null;             // our own pre-manifest marker
-  return 'foreign';                                                  // has content, none of it ours → foreign
-}
-function isForeignSkillDir(destDir, skillName, manifestSkills, manifest = null) {
-  return foreignReason(destDir, skillName, manifestSkills, manifest) !== null;
-}
 
-// Skill dirs an earlier CoalMine installed under a now-retired name. A very old
-// install (pre-rename / pre-manifest) leaves these behind: they are in neither the
-// manifest nor the current skill set, so the manifest sweep never reaches them and
-// an upgrade keeps showing the stale command. Swept on every install.
-// (rotcanary -> rot-canary, renamed in v3.0.0.)
-const RETIRED_SKILL_NAMES = ['rotcanary'];
-
-// R13 / CWK-158 item 7 (CSV-2): a manifest NAMES a dir, it does not PROVE the dir is ours -- a project
-// manifest arrives with a cloned repo, and "victim-dir" listed in it used to be recursively deleted.
-// Ownership is proven by CONTENT: the manifest's own per-file hashes. Every regular file now in the
-// dir must be recorded under <name>/<rel> with the hash it has today; a file the manifest does not
-// know, a changed file, or anything that is not a plain file (a link) makes it unproven. A manifest
-// that predates the hashes proves nothing by content, so only our own skill-meta.json marker does.
-// R18b: each file is read bounded (regular file inside destDir, at most MAX_DOC_BYTES): no shipped skill file
-// comes near the bound, so a bigger one is not CoalMine's and the folder is unproven, never slurped whole.
-function ownedByManifest(destDir, name, manifest) {
-  const dir = path.join(destDir, name);
+// The install manifest: the per-file hashes of what this run wrote, the baseline `verify.mjs <target>` checks for tampering. It
+// authorizes nothing (see the ownership section above).
+function writeManifest(destDir, installedSkills, root = destDir) {
   try {
-    if (!fs.lstatSync(dir).isDirectory()) return false;
-    const hashes = manifest && manifest.hashes;
-    if (!hashes || typeof hashes !== 'object') return fs.existsSync(path.join(dir, 'skill-meta.json'));
-    const walk = (abs, relParts) => {
-      for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
-        const childAbs = path.join(abs, e.name);
-        const rel = [...relParts, e.name];
-        if (e.isDirectory()) { if (!walk(childAbs, rel)) return false; continue; }
-        if (!e.isFile()) return false;
-        const bytes = readRepoBytesBounded(childAbs, destDir, MAX_DOC_BYTES);
-        if (bytes === null) return false;
-        if (hashes[rel.join('/')] !== createHash('sha256').update(bytes).digest('hex')) return false;
-      }
-      return true;
-    };
-    return walk(dir, [name]);
-  } catch { return false; }
-}
-
-function cleanPreviousInstall(destDir, manifest, current = []) {
-  // Orphan sweep ONLY — remove skill dirs a PREVIOUS CoalMine install left that the
-  // current set no longer has (renamed/removed). Ownership is PROVEN, never guessed:
-  //   • manifest.skills is our package file-list — every dir it names, we wrote;
-  //   • RETIRED_SKILL_NAMES is our tombstone of names only CoalMine ever coined
-  //     (rotcanary), for installs predating the manifest (15-Jun lesson) — the single
-  //     named exception to "no name-match delete", bounded to CoalMine-only coinages.
-  // Current-set dirs are cleared+rewritten by installSkillDir ONLY after installSkills has
-  // proven them ours by content (isForeignSkillDir -> ownedByManifest, or the skill-meta.json
-  // marker); one it cannot prove is refused there and never reaches installSkillDir. So there
-  // is NEVER a blind name-match delete of a live skill name (the H12 data-loss root cause).
-  // The old `: currentSkills` fallback did exactly that and is gone.
-  const owned = safeSkillNames(manifest ? manifest.skills : []);
-  let cleaned = 0;
-  for (const s of [...owned, ...RETIRED_SKILL_NAMES]) {
-    // A current-set dir is not touched here: installSkills has already proven it ours by content
-    // or refused it (R18), and installSkillDir rewrites only what passed. An ORPHAN needs the proof
-    // below (item 7). RETIRED names are CoalMine-only coinages, the named exception.
-    if (current.includes(s)) continue;
-    const dir = path.join(destDir, s);
-    try {
-      if (fs.existsSync(dir) && owned.includes(s) && !ownedByManifest(destDir, s, manifest)) {
-        console.warn(`  [kept] ${dir}: the manifest names it but its contents are not provably CoalMine's -- left in place`);
-        process.exitCode = 1;
-        continue;
-      }
-      if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); cleaned++; }
-    } catch (e) {
-      console.warn(`  [warn] could not remove previous ${s}: ${e.message}`);
-      process.exitCode = 1;
-    }
-  }
-  if (manifest) console.log(`  cleaned previous install v${manifest.version ?? '?'} (${cleaned} skill dir(s))`);
-}
-
-// R18b: `carried` = skills this run REFUSED that the previous manifest named, with their old hashes. They stay in the
-// rewritten manifest so the next run still holds the proof and refuses again; dropping them let the run after a
-// refusal fall back to the skill-meta.json marker and clear the user's file. Their hashes are NOT recomputed (that
-// would bless the user's content as ours).
-function writeManifest(destDir, installedSkills, root = destDir, carried = null) {
-  try {
-    let version = '0.0.0';
-    try { version = JSON.parse(fs.readFileSync(path.join(repo, '.claude-plugin', 'plugin.json'), 'utf8')).version ?? version; } catch {}
-    // Per-file SHA-256 of everything we just wrote — the SFC-lite baseline that
-    // `verify.mjs <target>` checks for post-install tampering.
-    const hashes = { ...hashInstalledTree(destDir, installedSkills), ...(carried ? carried.hashes : {}) };
-    const skills = carried ? [...installedSkills, ...carried.skills] : installedSkills;
-    const manifest = { version, installedAt: new Date().toISOString(), skills, hashes };
+    // Per-file SHA-256 of everything we just wrote — the SFC-lite baseline that `verify.mjs <target>` checks for post-install tampering.
+    const hashes = hashInstalledTree(destDir, installedSkills);
+    const manifest = { version: pluginVersion(), installedAt: new Date().toISOString(), skills: installedSkills, hashes };
     writeRepoFile(path.join(destDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + '\n', root); // CWK-137
   } catch (e) {
     console.warn(`  [warn] could not write install manifest: ${e.message}`);
@@ -729,11 +701,7 @@ function sweepLeftovers(dest) {
 // ─── Reusable install steps (shared by single-agent and `all`) ──────────────
 function installSkills(dest, skills, shared, root = dest) {
   console.log(`\nInstalling ${skills.length} skill(s) → ${dest}`);
-  // CWK-137: a project target (`.github/skills`, `.agents/skills`, ...) must resolve inside
-  // the project -- a junction on `.github` or `.agents` would otherwise carry every
-  // skill write (and the clear-and-rewrite of each skill dir) outside it.
-  // A user-chosen target (global `claude`, an explicit PATH) is its own root: create it
-  // first so it resolves; a project target stays uncreated until its containment passes.
+  // CWK-137: a project target (`.github/skills`, `.agents/skills`, ...) must resolve inside the project; a user-chosen target is its own root.
   if (root === dest) { try { fs.mkdirSync(dest, { recursive: true }); } catch { /* the check below reports it */ } }
   const destWhy = checkRepoDirTarget(dest, root);
   if (destWhy) {
@@ -742,47 +710,18 @@ function installSkills(dest, skills, shared, root = dest) {
     return { installed: 0, failed: skills.length };
   }
   sweepLeftovers(dest); // 14a LOW-3: a killed earlier install's work folder goes first, so it never reads as a stuck skill
-  const manifest = readManifest(dest, root);
-  const manifestSkills = manifest ? manifest.skills : null;
-  // Trust boundary: the target is the user's dir. Refuse any skill whose target dir
-  // already holds FOREIGN files (a name collision we don't own) — installSkillDir would
-  // otherwise clear-and-write it, destroying the user's data (checks.md:15).
+  const tr = targetRecord(dest);
+  // A shipped skill is written only when its folder is provably ours; otherwise it is kept, named, and the run exits 1.
   const toInstall = [];
-  const carried = { skills: [], hashes: {} };
   for (const s of skills) {
-    const why = foreignReason(dest, s, manifestSkills, manifest);
-    if (why !== null) {
-      // Five different truths, five wordings: a plain file (R19), a link, a folder that could not be read (R20), a folder
-      // the manifest names whose contents differ from what CoalMine wrote, and a folder nothing proves is CoalMine's.
-      const named = !!(manifestSkills && manifestSkills.includes(s));
-      // LOW-A: a manifest written before per-file hashes (no `hashes` object) names the folder but can never prove it.
-      const hashed = !!(manifest && manifest.hashes && typeof manifest.hashes === 'object');
-      const p = path.join(dest, s);
-      let isLink = false;
-      let isFile = false;
-      try { const st = fs.lstatSync(p); isLink = st.isSymbolicLink(); isFile = !st.isDirectory() && !isLink; } catch { /* unreadable: neither */ }
-      console.warn(isFile
-        ? `  [refused] ${p}: it is a file, not a folder CoalMine wrote — skipped so it is not deleted (move or remove it, then re-install)`
-        : isLink
-        ? `  [refused] ${p}: it is a link (symlink or junction), not a folder CoalMine wrote — skipped so nothing it points at is touched (remove the link, then re-install)`
-        : why === 'unreadable'
-        ? `  [refused] ${p}: it could not be read (permissions or a read error), so nothing was changed — skipped to protect it (fix the folder's permissions, then re-install)`
-        : named && hashed
-          ? `  [refused] ${p}: the manifest names it but its contents differ from what CoalMine wrote (a changed, added or unrecorded file) — skipped to protect it (move your changes aside or remove the folder, then re-install)`
-          : `  [refused] ${p}: nothing proves it is CoalMine's (no skill-meta.json marker and no recorded file hashes for it) — skipped to protect it (remove or rename the folder, then re-install; moving only some files out of it does not unblock it)`);
-      process.exitCode = 1;
-      if (named && hashed && !isFile) {
-        carried.skills.push(s);
-        for (const [k, v] of Object.entries((manifest && manifest.hashes) || {})) if (k.startsWith(s + '/')) carried.hashes[k] = v;
-      }
-    } else {
-      toInstall.push(s);
-    }
+    const v = ownership(dest, s, tr.entry, shared);
+    if (v.owned) { toInstall.push(s); continue; }
+    console.warn(keepMessage(path.join(dest, s), v.reason));
+    process.exitCode = 1;
   }
-  // Program-style version transition: remove what the PREVIOUS install owned
-  // (manifest orphans + retired tombstone), then write the new set fresh.
-  cleanPreviousInstall(dest, manifest, skills);
-  let n = 0;
+  // A skill the record names that this CoalMine no longer ships: removed only on the record's own proof.
+  const orphans = safeSkillNames(Object.keys((tr.entry && tr.entry.skills) || {})).filter((n) => !skills.includes(n));
+  removeOwnedSkills(dest, [...orphans, ...RETIRED_SKILL_NAMES.filter((n) => !skills.includes(n))], tr.entry, shared, root);
   const installed = [];
   for (const s of toInstall) {
     try {
@@ -790,14 +729,14 @@ function installSkills(dest, skills, shared, root = dest) {
       installSkillDir(path.join(skillsSrc, s), to, shared);
       console.log(`  installed ${s} → ${to}`);
       installed.push(s);
-      n++;
     } catch (e) {
       console.warn(`  [warn] failed to install ${s}: ${e.message}`);
       process.exitCode = 1;
     }
   }
-  writeManifest(dest, installed, root, carried);
-  return { installed: n, failed: skills.length - n };
+  writeManifest(dest, installed, root);
+  recordInstall(dest, installed, tr);
+  return { installed: installed.length, failed: skills.length - installed.length };
 }
 
 function applyConfig(targetKey, label) {
@@ -963,20 +902,27 @@ if (path.resolve(dest) === path.resolve(skillsSrc)) {
 
 if (isUninstall) {
   console.log(`\nUninstalling CoalMine from target: ${targetArg}`);
-  // Manifest is our package file-list (owned — safe to remove). Without one, fall back
-  // to current names but ONLY the dirs we can prove we own — a foreign dir that merely
-  // shares a skill's name is left in place (same H12 guard as install). Retired
-  // tombstone names are swept regardless (the one named exception).
+  // 29ae: a folder is removed only when the install record or a byte match proves CoalMine installed it (see the ownership section).
+  // Retired names are no longer swept by name: they are kept, named, unless proven. The manifest supplies only the hashes a kept
+  // folder keeps, below.
   const uninstallRoot = skillsRootFor(targetKey, dest);
   const destWhy = lexists(dest) ? checkRepoDirTarget(dest, uninstallRoot) : null;
   if (destWhy) { console.warn(refuseMsg(dest, destWhy)); process.exitCode = 1; return; } // CWK-137: never rm through a junction
   if (lexists(dest)) sweepLeftovers(dest); // 14a LOW-3: the same narrow sweep, so an uninstall after a killed install leaves nothing
   const previous = readManifest(dest, uninstallRoot);
-  const ownedNames = previous
-    ? previous.skills
-    : skills.filter((s) => !isForeignSkillDir(dest, s, null));
-  const kept = [];
-  const removedCount = uninstallSkills(dest, [...safeSkillNames(ownedNames), ...RETIRED_SKILL_NAMES], previous, kept);
+  const uninstallShared = loadShared();
+  if (uninstallShared === null) return;
+  const tr = targetRecord(dest);
+  const names = [...new Set(safeSkillNames([...Object.keys((tr.entry && tr.entry.skills) || {}), ...skills, ...RETIRED_SKILL_NAMES]))];
+  const removed = removeOwnedSkills(dest, names, tr.entry, uninstallShared, uninstallRoot);
+  const kept = names.filter((n) => lexists(path.join(dest, n)));
+  const removedCount = removed.length;
+  if (tr.state !== 'newer' && tr.key !== null && tr.entry) {
+    for (const n of removed) delete tr.entry.skills[n];
+    if (Object.keys(tr.entry.skills).length === 0) delete tr.record.targets[tr.key];
+    try { saveInstallRecord(os.homedir(), tr.record); }
+    catch (e) { console.warn(`  [warn] could not write the install record: ${e.message}`); process.exitCode = 1; }
+  }
   if (previous && kept.length) {
     // HIGH-2: a kept folder must stay provable on the next run, so the manifest survives with ONLY the kept skills
     // and their old hashes (the one-shot-guard lesson, applied to uninstall). Nothing kept -> the manifest goes.
