@@ -99,15 +99,18 @@ test('LOW-3: a REINSTALL killed mid-copy leaves every previously installed skill
   assert.deepEqual(dotEntries(dest), ['.coalmine-manifest.json']);
 });
 
-test('LOW-3: an uninstall after a killed first install removes the dead work folder and leaves nothing behind', (t) => {
+test('LOW-3: an uninstall after a killed first install removes the dead work folder; the complete folders it left are kept, named, exit 1', (t) => {
   const sb = sandbox(t);
   const proj = path.join(sb.dir, 'p'); fs.mkdirSync(proj);
   const dest = path.join(proj, 'skills');
   assert.ok(wasKilled(install(sb, proj, [dest], { KILL_AT: '3' })), 'control: killed');
   assert.ok(dotEntries(dest).some((n) => n.includes('.coalmine-tmp-')), 'control: the kill left a work folder');
   const un = install(sb, proj, ['--uninstall', dest]);
-  assert.equal(un.status, 0, un.stdout + un.stderr);
-  assert.deepEqual(fs.readdirSync(dest), [], 'nothing of CoalMine is left');
+  // 29ag: the killed run wrote no record, so the folders it finished are byte-identical copies with no proof of ownership. A byte
+  // match never authorizes a delete, so they are kept and named; the dead work folder is still swept by its own marker.
+  assert.equal(un.status, 1, `the unrecorded folders the killed install finished are kept (${un.stdout}${un.stderr})`);
+  assert.match(un.stdout + un.stderr, /\[kept\]/, 'a [kept] line names them');
+  assert.deepEqual(dotEntries(dest), [], 'nothing dot-named is left: the dead work folder is gone');
 });
 
 // ---- the in-process legs: the leftover sweep's refusals and the rename-failure branch (a fault-injection seam on fs.renameSync) ----
@@ -235,7 +238,9 @@ for (const [label, env, what] of [['the work folder marker write', { KILL_BEFORE
     assert.ok(wasKilled(install(sb, proj, [dest], env)), 'control: killed');
     assert.ok(dotEntries(dest).some((n) => n.includes(what)), `control: the kill left the litter this window leaves (${what})`);
     const un = install(sb, proj, ['--uninstall', dest]);
-    assert.equal(un.status, 0, un.stdout + un.stderr);
+    // 29ag: a complete folder a killed install left has no record, so it is kept (exit 1) rather than removed; exit 0 only when none is.
+    const kept = (un.stdout + un.stderr).match(/\[kept\]/g) || [];
+    assert.equal(un.status, kept.length ? 1 : 0, `exit 1 exactly when a folder is kept (${kept.length} kept): ${un.stdout}${un.stderr}`);
     assert.deepEqual(fs.readdirSync(dest).filter((n) => n.includes('.coalmine-tmp-')), [], 'the uninstall took the dead installer litter');
   });
 }

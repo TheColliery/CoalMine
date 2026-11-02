@@ -55,13 +55,13 @@ function copyFolders(from, to, names) {
   for (const s of names) fs.cpSync(path.join(from, s), path.join(to, s), { recursive: true });
 }
 
-function plantForgedManifest(dest, names, hashesFor) {
+function plantManifest(dest, names, hashesFor) {
   const hashes = {};
   for (const [rel, text] of Object.entries(hashesFor)) hashes[rel] = sha(Buffer.from(text, 'utf8'));
   fs.writeFileSync(path.join(dest, '.coalmine-manifest.json'), JSON.stringify({ version: '9.9.9', installedAt: 'x', skills: names, hashes }, null, 2));
 }
 
-test('a folder the record names is replaced, a folder the record does not name is kept, even with a forged manifest that lists it', (t) => {
+test('a folder the record names is replaced, a folder the record does not name is kept, even with a planted manifest that lists it', (t) => {
   const sb = sandbox(t);
   const dest = path.join(sb.dir, 'target');
   const first = installer(sb, [dest]);
@@ -76,11 +76,11 @@ test('a folder the record names is replaced, a folder the record does not name i
   rec.targets[key].skills['old-skill'] = { 'SKILL.md': sha(Buffer.from('stale\n', 'utf8')) };
   fs.writeFileSync(recordFile(sb), JSON.stringify(rec, null, 2));
 
-  // A folder the installer neither ships nor records, named by a forged project manifest with its true hash: a clone can plant exactly this. It is outside the installer's scope and stays.
+  // A folder the installer neither ships nor records, named by a planted project manifest with its true hash: a clone can plant exactly this. It is outside the installer's scope and stays.
   const foreign = path.join(dest, 'foreign-orphan');
   fs.mkdirSync(foreign);
   fs.writeFileSync(path.join(foreign, 'SKILL.md'), 'not ours\n', 'utf8');
-  plantForgedManifest(dest, ['foreign-orphan'], { 'foreign-orphan/SKILL.md': 'not ours\n' });
+  plantManifest(dest, ['foreign-orphan'], { 'foreign-orphan/SKILL.md': 'not ours\n' });
 
   const second = installer(sb, [dest]);
   assert.equal(second.status, 0, `nothing the installer ships or records fails its proof, so nothing is kept (${second.stdout}${second.stderr})`);
@@ -123,7 +123,7 @@ test('a folder with no record whose bytes differ by one byte is kept: named, exi
   assert.match(r.stdout + r.stderr, new RegExp(`\\[kept\\][^\\n]*${changed}`), 'one [kept] line names the folder');
 });
 
-test('uninstall leaves a folder the record does not name in place, even when a forged manifest lists it', (t) => {
+test('uninstall leaves a folder the record does not name in place, even when a planted manifest lists it', (t) => {
   const sb = sandbox(t);
   const dest = path.join(sb.dir, 'target');
   const first = installer(sb, [dest]);
@@ -131,10 +131,55 @@ test('uninstall leaves a folder the record does not name in place, even when a f
   const foreign = path.join(dest, 'foreign');
   fs.mkdirSync(foreign);
   fs.writeFileSync(path.join(foreign, 'SKILL.md'), 'mine\n', 'utf8');
-  plantForgedManifest(dest, ['foreign'], { 'foreign/SKILL.md': 'mine\n' });
+  plantManifest(dest, ['foreign'], { 'foreign/SKILL.md': 'mine\n' });
   const r = installer(sb, ['--uninstall', dest]);
+  assert.equal(r.status, 0, `the unrecorded folder is not named, so uninstall exits 0 (${r.stdout}${r.stderr})`);
   assert.equal(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8'), 'mine\n', 'the unrecorded folder survives uninstall');
   assert.ok(!fs.existsSync(path.join(dest, SHIPPED[0])), 'control: the recorded shipped skills are removed');
+});
+
+test('uninstall keeps a byte-identical folder that no record names: a byte match authorizes an install, never a delete', (t) => {
+  const sb = sandbox(t);
+  const ref = referenceInstall(sb);
+  const dest = path.join(sb.dir, 'kept-copy');
+  copyFolders(ref, dest, SHIPPED); // a project's own copies, byte-equal to the shipped files, with no record for this target
+  const r = installer(sb, ['--uninstall', dest]);
+  assert.equal(r.status, 1, `the unrecorded folders are kept, so the run exits 1 (${r.stdout}${r.stderr})`);
+  assert.match(r.stdout + r.stderr, new RegExp(`\\[kept\\][^\\n]*${SHIPPED[0]}`), 'a [kept] line names the folder');
+  for (const s of SHIPPED) {
+    assert.equal(fs.readFileSync(path.join(dest, s, 'SKILL.md'), 'utf8'), fs.readFileSync(path.join(ref, s, 'SKILL.md'), 'utf8'), `the bytes of ${s} survive uninstall`);
+  }
+});
+
+test('a folder the record names that a run keeps keeps its OLD hashes in the record', (t) => {
+  const sb = sandbox(t);
+  const dest = path.join(sb.dir, 'carried');
+  const first = installer(sb, [dest]);
+  assert.equal(first.status, 0, `control: the install succeeds (${first.stdout}${first.stderr})`);
+  const key = fs.realpathSync.native(dest);
+  const before = readRecord(sb).targets[key].skills[SHIPPED[0]];
+  const skillMd = path.join(dest, SHIPPED[0], 'SKILL.md');
+  fs.writeFileSync(skillMd, fs.readFileSync(skillMd, 'utf8') + 'edited\n', 'utf8');
+  const second = installer(sb, [dest]);
+  assert.equal(second.status, 1, `the edited folder is kept (${second.stdout}${second.stderr})`);
+  const after = readRecord(sb).targets[key].skills[SHIPPED[0]];
+  assert.ok(after, 'the record still names the kept folder');
+  assert.deepEqual(after, before, 'the kept folder keeps its OLD recorded hashes, not the edited ones');
+});
+
+test('a planted manifest that lists a shipped skill does not authorize writing over a folder with foreign bytes', (t) => {
+  const sb = sandbox(t);
+  const dest = path.join(sb.dir, 'planted-over');
+  const foreign = path.join(dest, SHIPPED[0]);
+  fs.mkdirSync(foreign, { recursive: true });
+  fs.writeFileSync(path.join(foreign, 'SKILL.md'), 'foreign bytes\n', 'utf8');
+  plantManifest(dest, [SHIPPED[0]], { [`${SHIPPED[0]}/SKILL.md`]: 'foreign bytes\n' });
+  const r = installer(sb, [dest]);
+  assert.equal(r.status, 1, `the foreign folder is kept (${r.stdout}${r.stderr})`);
+  assert.equal(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8'), 'foreign bytes\n', 'its bytes are unchanged by install');
+  const u = installer(sb, ['--uninstall', dest]);
+  assert.equal(u.status, 1, `the foreign folder is kept by uninstall too (${u.stdout}${u.stderr})`);
+  assert.equal(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8'), 'foreign bytes\n', 'its bytes are unchanged by uninstall');
 });
 
 test('a record written by a newer CoalMine is left byte-identical, and this run takes the byte-match path', (t) => {
@@ -153,5 +198,5 @@ test('a record written by a newer CoalMine is left byte-identical, and this run 
   assert.match(r.stdout + r.stderr, /newer CoalMine[^\n]*left alone/, 'one line says the record was left alone');
   assert.equal(r.status, 1, 'the byte-changed folder is kept under the byte-match path');
   assert.equal(fs.readFileSync(changedFile, 'utf8'), fs.readFileSync(path.join(ref, changed, 'SKILL.md'), 'utf8') + 'y', 'the changed folder is not overwritten');
-  assert.ok(fs.existsSync(path.join(dest, SHIPPED[0], 'SKILL.md')), 'a byte-equal folder is adopted and present');
+  assert.equal(((r.stdout + r.stderr).match(/\[kept\]/g) || []).length, 1, 'only the byte-changed folder is kept; every byte-equal folder is adopted');
 });

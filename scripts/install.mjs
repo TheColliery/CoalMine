@@ -544,12 +544,13 @@ function uninstallConfig(arg) {
 // The installer writes or removes a skill folder only when it can prove CoalMine installed it. The proof is the install record
 // (lib/install-record.mjs), keyed by the target's real path: a folder the record names is ours when its files are exactly the
 // recorded files (record). A target with no record entry at all adopts a folder whose files are byte-equal to what this installer
-// renders from its own source (adopt), which covers a CoalMine installed before the record existed. An absent or empty folder has
+// renders from its own source (adopt), but only to INSTALL over it: identical bytes change nothing when written again. A DELETE never
+// adopts (29ag): two byte-equal copies cannot say whose they are, and a project may keep its own copy. An absent or empty folder has
 // nothing to protect. Everything else is KEPT: never removed or overwritten, one [kept] line says why, exit 1. Only the record and
 // the byte match authorize anything: a project manifest or a skill-meta.json marker does not. The manifest is the post-install
 // integrity baseline verify.mjs reads.
-// Scope: the installer only considers folders it ships or the record names. An unrelated folder in a shared target is never
-// touched and never named.
+// Scope: the installer only considers folders it ships or the record names, plus the retired names below (kept and named, exit 1,
+// unless proven). An unshipped, unrecorded folder in a shared target is never touched and never named.
 
 function keepMessage(p, reason) {
   return `  [kept] ${p}: not removed or overwritten, because ${reason}. CoalMine cannot prove it installed this folder. Remove the whole folder, or move the whole folder aside, then re-run; an absent folder is installed fresh.`;
@@ -560,8 +561,9 @@ function keepMessage(p, reason) {
 const RETIRED_SKILL_NAMES = ['rotcanary'];
 
 // The verdict for one skill folder under `dest`: { owned: true, via } or { owned: false, reason }.
-// `entry` is this target's record entry, or undefined when the target has none.
-function ownership(dest, name, entry, shared) {
+// `entry` is this target's record entry, or undefined when the target has none. `purpose` is 'install' or 'delete': a byte match
+// (adopt) authorizes an install only, never a delete.
+function ownership(dest, name, entry, shared, purpose = 'install') {
   const p = path.join(dest, name);
   let st;
   try { st = fs.lstatSync(p); }
@@ -578,7 +580,11 @@ function ownership(dest, name, entry, shared) {
   }
   if (!entry) {
     const want = expectedHashes(name, shared);
-    if (want && sameHashes(have, want)) return { owned: true, via: 'adopt' };
+    if (want && sameHashes(have, want)) {
+      if (purpose === 'install') return { owned: true, via: 'adopt' };
+      // 29ag: identical bytes do not show whose copy this is, so they never authorize a delete.
+      return { owned: false, reason: 'the record does not name it, and identical bytes do not show whose copy it is' };
+    }
   }
   return { owned: false, reason: 'the record does not name it, and its contents are not the shipped files' };
 }
@@ -605,7 +611,7 @@ function removeSkillFolder(dest, name, root) {
 function removeOwnedSkills(dest, names, entry, shared, root) {
   const removed = [];
   for (const name of names) {
-    const v = ownership(dest, name, entry, shared);
+    const v = ownership(dest, name, entry, shared, 'delete');
     if (!v.owned) { console.warn(keepMessage(path.join(dest, name), v.reason)); process.exitCode = 1; continue; }
     if (v.via === 'absent') continue;
     try {
@@ -633,8 +639,9 @@ function targetRecord(dest) {
 }
 function isRecordEntry(e) { return e !== null && typeof e === 'object' && e.skills !== null && typeof e.skills === 'object' && !Array.isArray(e.skills); }
 
-// Writes this target's entry: exactly the skills this run wrote, with the hashes they now have. A kept folder never enters it.
-// A newer record is left alone.
+// Writes this target's entry: the skills this run wrote, with the hashes they now have, plus each skill the entry already named that
+// this run kept (29ag: it keeps its OLD hashes, which still prove what CoalMine wrote; a recomputed hash would bless the very edit
+// that made the run keep it). A kept folder that is gone is dropped. A newer record is left alone.
 function recordInstall(dest, installed, tr) {
   if (tr.state === 'newer') return;
   let key;
@@ -644,9 +651,17 @@ function recordInstall(dest, installed, tr) {
     const h = folderHashes(path.join(dest, s));
     if (h) skills[s] = h;
   }
+  const prior = tr.entry ? tr.entry.skills : {};
+  for (const s of safeSkillNames(Object.keys(prior))) {
+    const old = prior[s];
+    if (Object.hasOwn(skills, s) || !old || typeof old !== 'object' || !lexists(path.join(dest, s))) continue;
+    skills[s] = old;
+  }
   const next = tr.record;
-  if (Object.keys(skills).length) next.targets[key] = { version: pluginVersion(), skills };
-  else delete next.targets[key];
+  if (Object.keys(skills).length) {
+    const version = installed.length || !tr.entry || typeof tr.entry.version !== 'string' ? pluginVersion() : tr.entry.version;
+    next.targets[key] = { version, skills };
+  } else delete next.targets[key];
   try { saveInstallRecord(os.homedir(), next); }
   catch (e) { console.warn(`  [warn] could not write the install record: ${e.message}`); process.exitCode = 1; }
 }
@@ -714,7 +729,7 @@ function installSkills(dest, skills, shared, root = dest) {
   // A shipped skill is written only when its folder is provably ours; otherwise it is kept, named, and the run exits 1.
   const toInstall = [];
   for (const s of skills) {
-    const v = ownership(dest, s, tr.entry, shared);
+    const v = ownership(dest, s, tr.entry, shared, 'install');
     if (v.owned) { toInstall.push(s); continue; }
     console.warn(keepMessage(path.join(dest, s), v.reason));
     process.exitCode = 1;
@@ -902,9 +917,9 @@ if (path.resolve(dest) === path.resolve(skillsSrc)) {
 
 if (isUninstall) {
   console.log(`\nUninstalling CoalMine from target: ${targetArg}`);
-  // 29ae: a folder is removed only when the install record or a byte match proves CoalMine installed it (see the ownership section).
-  // Retired names are no longer swept by name: they are kept, named, unless proven. The manifest supplies only the hashes a kept
-  // folder keeps, below.
+  // 29ae/29ag: a folder is removed only when the install record names it and its files match what was recorded (see the ownership
+  // section). A byte match never authorizes a removal, with or without a record. Retired names are kept and named unless proven.
+  // The manifest supplies only the hashes a kept folder keeps, below.
   const uninstallRoot = skillsRootFor(targetKey, dest);
   const destWhy = lexists(dest) ? checkRepoDirTarget(dest, uninstallRoot) : null;
   if (destWhy) { console.warn(refuseMsg(dest, destWhy)); process.exitCode = 1; return; } // CWK-137: never rm through a junction

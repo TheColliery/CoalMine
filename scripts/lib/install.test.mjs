@@ -167,7 +167,7 @@ test('manifest-driven reinstall removes renamed leftovers, spares foreign skills
 
     // 4. Uninstall → manifest-listed skills + manifest gone, foreign survives.
     const un = runInstall(target, tmp, ['--uninstall']);
-    // 29ae: the legacy folder is kept (no record names it), so uninstall exits 1 and the manifest keeps only that folder.
+    // 29ae/29ag: the legacy folder is neither shipped nor recorded, so uninstall never names or touches it: exit 0, and the manifest is removed.
     assert.equal(un.status, 0, `uninstall must pass (the legacy name is outside the installer's scope) (${un.stdout}${un.stderr})`);
     assert.ok(!fs.existsSync(path.join(target, 'rot-canary')), 'installed skill removed on uninstall');
     assert.ok(fs.existsSync(path.join(target, 'old-renamed-skill')), 'a name the installer neither ships nor records is not touched');
@@ -667,6 +667,7 @@ test('CWK-158 item 7: uninstall keeps a manifest-named dir that is not provably 
     fs.writeFileSync(path.join(target, 'victim-dir', 'notes.txt'), 'the users own data', 'utf8');
     plantManifestNaming(target, ['victim-dir']);
     const un = runInstall(target, proj, ['--uninstall']);
+    assert.equal(un.status, 0, `victim-dir is neither shipped nor recorded, so it is not named and uninstall exits 0 (${un.stdout}${un.stderr})`);
     assert.ok(fs.existsSync(path.join(target, 'victim-dir', 'notes.txt')), 'the foreign dir survives the uninstall');
     // 29ae: victim-dir is outside the installer's scope (see the install leg above): never touched and never named.
   } finally {
@@ -956,9 +957,9 @@ test('R18b: once the user moves the change aside, the carried-forward skill re-i
     runInstall(target, proj);
     fs.rmSync(mine);
     const res = runInstall(target, proj);
-    // 29ae, OPEN DECISION (see the build note): the target still has a record entry for its other folders, so the byte match does
-    // not apply to this one. Removing the file alone does not unblock it; removing the whole folder does (an absent folder is installed fresh).
-    assert.notEqual(res.status, 0, `removing one file does not unblock it under the record rule (${res.stdout}${res.stderr})`);
+    // 29ag: the record still names the kept folder with the hashes CoalMine wrote (the carry-forward). Removing the file the user added
+    // restores exactly those bytes, so the record proves the folder again and the refusal lifts.
+    assert.equal(res.status, 0, `removing the added file restores the recorded bytes, so the record proves the folder (${res.stdout}${res.stderr})`);
     fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
     assert.equal(runInstall(target, proj).status, 0, 'removing the whole folder unblocks it: an absent folder is installed fresh');
   } finally {
@@ -984,8 +985,8 @@ test('R18b: uninstall after a refusal keeps the user-edited skill folder and say
     assert.match(again.stdout + again.stderr, /\[kept\].*rot-canary/, 'and says so');
     // Recovery: the user moves the file aside, the next install is clean.
     fs.rmSync(mine);
-    // 29ae, OPEN DECISION (see the build note): removing the one file does not unblock it under the record rule; the whole folder does.
-    assert.notEqual(runInstall(target, proj).status, 0, 'removing one file does not unblock it under the record rule');
+    // 29ag: the record names the folder with its recorded hashes (the carry-forward), so removing the added file restores them and unblocks it.
+    assert.equal(runInstall(target, proj).status, 0, 'removing the added file unblocks it: the folder again holds exactly the recorded bytes');
     fs.rmSync(path.join(target, CURRENT_SKILL), { recursive: true, force: true });
     assert.equal(runInstall(target, proj).status, 0, 'removing the whole folder unblocks it');
   } finally {
