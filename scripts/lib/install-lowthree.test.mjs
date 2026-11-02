@@ -232,7 +232,8 @@ test('LOW-3: the copy is proven complete before the rename -- a missing source f
 // ---- 15b: the two kill windows INSPECT 14a found (MEDIUM-1 the unmarked work folder, LOW-1 the manifest temp file) ----
 // 29ai: the expected exit code and whether the kill leaves complete skill folders are FIXED per leg here, before any run; neither is
 // read from the output the assert checks. Each leg also compares the skill folders and every byte in them before and after uninstall.
-const treeOf = (dest) => Object.fromEntries(skillDirs(dest).map((s) => [s, Object.fromEntries(files(path.join(dest, s)).map((f) => [f, fs.readFileSync(path.join(dest, s, f), 'utf8')]))]));
+// 29ak: each file is a Buffer, so the compare is byte for byte (a text decode folds every non-UTF-8 byte to U+FFFD).
+const treeOf = (dest) => Object.fromEntries(skillDirs(dest).map((s) => [s, Object.fromEntries(files(path.join(dest, s)).map((f) => [f, fs.readFileSync(path.join(dest, s, f))]))]));
 for (const [label, env, what, exit, leavesFolders] of [
   ['the work folder marker write', { KILL_BEFORE_MARKER: '1' }, '.coalmine-tmp-', 0, false],
   ['the manifest rename', { KILL_BEFORE_MANIFEST_RENAME: '1' }, '.coalmine-manifest.json.coalmine-tmp-', 1, true],
@@ -252,6 +253,18 @@ for (const [label, env, what, exit, leavesFolders] of [
     assert.deepEqual(fs.readdirSync(dest).filter((n) => n.includes('.coalmine-tmp-')), [], 'the uninstall took the dead installer litter');
   });
 }
+
+// 29ak: treeOf compares bytes, not decoded text. A UTF-8 decode folds every non-UTF-8 byte to U+FFFD, so 0xFF and 0xFE would compare equal.
+test('29ak: the tree check tells 0xFF from 0xFE: two folders holding different non-UTF-8 bytes are not equal', (t) => {
+  const sb = sandbox(t);
+  const a = path.join(sb.dir, 'a');
+  const b = path.join(sb.dir, 'b');
+  fs.mkdirSync(path.join(a, 'skill'), { recursive: true });
+  fs.mkdirSync(path.join(b, 'skill'), { recursive: true });
+  fs.writeFileSync(path.join(a, 'skill', 'f.bin'), Buffer.from([0xff]));
+  fs.writeFileSync(path.join(b, 'skill', 'f.bin'), Buffer.from([0xfe]));
+  assert.notDeepStrictEqual(treeOf(a), treeOf(b), 'the byte check must not fold 0xFF and 0xFE together');
+});
 
 test('15b sweep: an EMPTY work folder with the installer exact name and a dead pid is removed (the kill landed before the marker write)', (t) => {
   const sb = sandbox(t);
