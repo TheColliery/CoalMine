@@ -41,7 +41,7 @@ export function stripCode(text) {
   return stripFencedBlocks(text).replace(/`[^`\n]*`/g, '');
 }
 
-// 29am (T-29al-2, Deep Scan rows 4 and 20): the heading pattern ^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$ (multiline) was quadratic, because its
+// 29am (T-29al-2): the heading pattern ^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$ (multiline) was quadratic, because its
 // lazy body overlapped its tail. One pass per line gives the same body: the shortest run after the blanks such that only blanks and hashes
 // follow it, at least one character long. A line break is LF, CR, U+2028 or U+2029, as the multiline anchor and the dot both read it.
 const HEADING_LINE_BREAKS = new RegExp('[' + String.fromCharCode(10, 13, 0x2028, 0x2029) + ']');

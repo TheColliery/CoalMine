@@ -1,4 +1,4 @@
-// 29am (T-29al-6, Deep Scan rows for pointer-check.mjs and verify.mjs walkMd): a document reached by two names is read ONCE, by its
+// 29am (T-29al-6): a document reached by two names is read ONCE, by its
 // realpath, and a token's trailing slashes are stripped by a counted loop (the replaced pattern /\/+$/ restarted at every slash of a long
 // run). Zero-dep (node:test + built-ins); the witness counts reads and steps, never a clock.
 import { test } from 'node:test';

@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listSkills } from './render.mjs';
 
-// 29am (T-29al-1, Deep Scan rows 1 and 22): the two count scans are single passes with a step counter. The blank class is space and
+// 29am (T-29al-1): the two count scans are single passes with a step counter. The blank class is space and
 // tab, and a line start follows a line break (LF, CR, U+2028 or U+2029), as the multiline anchor did.
 const isBlank = (c) => c === ' ' || c === '\t';
 const isLetter = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');

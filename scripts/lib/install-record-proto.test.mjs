@@ -1,4 +1,4 @@
-// 29am (T-29al-7, Deep Scan row 16): folderHashes keys its result by file name. A plain object takes a file named __proto__ as the
+// 29am (T-29al-7): folderHashes keys its result by file name. A plain object takes a file named __proto__ as the
 // prototype, so that file is never hashed and a change to its bytes is invisible to sameHashes. Hermetic: a temp folder under os.tmpdir().
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

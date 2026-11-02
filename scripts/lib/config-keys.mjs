@@ -171,7 +171,7 @@ const TICK = new RegExp('`([^`' + BS + 'n]+)`', 'g');
 // A JS single-quoted string literal, escape-aware so a value ending in a backslash
 // cannot leak escape state into the next token.
 const LINE_BREAK_CHARS = String.fromCharCode(10, 13, 0x2028, 0x2029);
-// 29am (T-29al-9, Deep Scan row 33): one pass per literal. A failed start covers every later start that lies inside it (each such start
+// 29am (T-29al-9): one pass per literal. A failed start covers every later start that lies inside it (each such start
 // is the second character of an escape pair, so it reads the same boundaries), so the scan resumes at the backslash that stopped it. The
 // dot of the replaced pattern did not match a line break after a backslash, and this scan reads that the same way.
 // The bodies of the single-quoted JS string literals in text, in order. The optional counter receives one step per character visit.

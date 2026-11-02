@@ -1,4 +1,4 @@
-// 29am (T-29al-2, Deep Scan rows 4 and 20): the heading scan in link-check.mjs is one pass per line with a step counter. The pattern it
+// 29am (T-29al-2): the heading scan in link-check.mjs is one pass per line with a step counter. The pattern it
 // replaces, kept below as OLD_HEADING, had a lazy body that overlapped its tail, so a long run of blanks inside a heading cost quadratic
 // work. The witness counts STEPS, never a clock; the differential checks the scanner against OLD_HEADING on random lines (fixed seed).
 // Zero-dep (node:test + built-ins); testing.md Determinism.

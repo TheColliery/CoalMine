@@ -1,4 +1,4 @@
-// 29am (T-29al-9, Deep Scan row 33): the JS single-quoted string scan in config-keys.mjs is one pass with a step counter. The pattern it
+// 29am (T-29al-9): the JS single-quoted string scan in config-keys.mjs is one pass with a step counter. The pattern it
 // replaces, kept below as OLD_JS_STRING, restarted at every apostrophe of an unterminated string of escaped apostrophes, so the work was
 // quadratic. The witness counts STEPS, never a clock. The differential checks the scanner against OLD_JS_STRING on random inputs (fixed seed).
 // Zero-dep (node:test + built-ins); testing.md Determinism.

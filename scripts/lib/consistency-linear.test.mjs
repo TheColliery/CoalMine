@@ -1,4 +1,4 @@
-// 29am (T-29al-1, Deep Scan rows 1 and 22): the two count scans in consistency.mjs are single passes with a step counter, so no input
+// 29am (T-29al-1): the two count scans in consistency.mjs are single passes with a step counter, so no input
 // shape costs more than a constant per character. The witness counts STEPS, never a clock. Its differential checks the scanners
 // against the patterns they replace (kept below as OLD_*) on ordinary inputs, over the blank class the scanners use.
 // Zero-dep (node:test + built-ins); testing.md Determinism: a fixed seed, no clock.

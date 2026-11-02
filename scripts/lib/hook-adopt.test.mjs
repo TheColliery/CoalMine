@@ -1,4 +1,4 @@
-// 29am (T-29al-5, Deep Scan row 'parseBackupHash'): a wrapper that recorded no backup (want='') is not an old wrapper. Only a wrapper
+// 29am (T-29al-5): a wrapper that recorded no backup (want='') is not an old wrapper. Only a wrapper
 // with NO want= line is old enough to adopt a backup beside it. A backup planted after a no-backup install stays unrun and is kept.
 // Hermetic: every child runs with HOME, TEMP and TMP in a fixture under os.tmpdir(); the hook runs with `sh`, and a missing `sh`
 // skips visibly (a capability probe). Zero-dep (node:test + built-ins).
