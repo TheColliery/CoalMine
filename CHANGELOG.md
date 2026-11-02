@@ -2,6 +2,21 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.25.1] - 2026-11-02
+
+Uninstall removes only the skill folders the install record names
+
+Uninstall now removes a skill folder only when the install record names it (or the folder is empty), and a run that keeps a recorded folder leaves its record entry in place. Only `scripts/` changed; `plugin/` did not, so this is a PATCH release.
+
+### Changed
+- **Uninstall removes only the skill folders the install record names, plus empty ones.** A folder whose files are identical to the shipped files, but which the record does not name, is kept with a `[kept]` line and the run exits 1. A target whose first install was cut short before the record was written keeps the complete folders it finished, named in `[kept]` lines, until you remove them. — test: scripts/lib/install-ownership.test.mjs, scripts/lib/install-lowthree.test.mjs
+- **A run that keeps a folder the record names leaves that folder's entry in the record.** The entry keeps its recorded hashes, so removing the one file you added to such a folder lets the next install replace it; a target's entry goes only when none of its recorded folders is still present, and a new `version` is stamped only when the run installed something. — test: scripts/lib/install-ownership.test.mjs, scripts/lib/install.test.mjs
+- **Correction to the 3.25.0 notes.** They said a folder that is neither shipped nor recorded is never named. That holds for an unknown folder; the retired `rotcanary` folder is named, and kept with exit 1, when it is present and the record does not name it. — test: scripts/lib/install.test.mjs
+
+### Internal
+- **A planted manifest authorizes nothing, and a test says so.** A new leg plants a manifest that lists a shipped skill beside a folder with other bytes: install and uninstall both keep the folder and leave its bytes unchanged. The helper is now `plantManifest`. — test: scripts/lib/install-ownership.test.mjs
+- **The `[kept]` assertion counts lines.** It asserts exactly one `[kept]` line, where it used to test only that a folder still existed; two test variables that were assigned and never read are now asserted on (code-scanning alerts 94 and 95); a stale comment in `install.test.mjs` now matches its assertions. — test: scripts/lib/install-ownership.test.mjs, scripts/lib/install.test.mjs
+
 ## [3.25.0] - 2026-11-02
 
 The installer changes only a skill folder it can show it installed
