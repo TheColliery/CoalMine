@@ -68,3 +68,24 @@ test('29am: a wrapper that recorded no backup (want=\'\') does not adopt a backu
   runHook(sb, repoDir, 'pre-commit');
   assert.ok(!fs.existsSync(marker), 'the planted backup is never run');
 });
+
+// 29am (T-29al-8): the tracked check covers a hook that carries our own header too, not only a foreign one. A wrapper the repository
+// tracks is the maintainer's file: rewriting it leaves a modified tracked file.
+test('29am: a tracked hook that carries our own header is refused and not rewritten, as a tracked foreign hook is', (t) => {
+  const sb = sandbox(t);
+  const repoDir = path.join(sb, 'proj');
+  gitInit(repoDir);
+  const env = gitEnv(path.dirname(repoDir));
+  const cfg = spawnSync('git', ['config', 'core.hooksPath', 'githooks'], { cwd: repoDir, encoding: 'utf8', env, timeout: TIMEOUT });
+  assert.equal(cfg.status, 0, 'control: core.hooksPath set to a versioned directory');
+  const first = installer(sb, repoDir, [path.join(sb, 'skills')]);
+  assert.equal(first.status, 0, `control: the first install writes our wrapper (${first.stdout}${first.stderr})`);
+  const hook = path.join(repoDir, 'githooks', 'pre-commit');
+  const add = spawnSync('git', ['add', 'githooks/pre-commit'], { cwd: repoDir, encoding: 'utf8', env, timeout: TIMEOUT });
+  assert.equal(add.status, 0, 'control: the wrapper is tracked');
+  const before = fs.readFileSync(hook, 'utf8');
+  const second = installer(sb, repoDir, [path.join(sb, 'skills')]);
+  assert.match(second.stdout + second.stderr, /\[refused\] pre-commit:/, 'the tracked wrapper is refused');
+  assert.equal(second.status, 1, 'the refusal makes the run exit 1');
+  assert.equal(fs.readFileSync(hook, 'utf8'), before, 'the tracked file is not rewritten');
+});

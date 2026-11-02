@@ -333,17 +333,18 @@ function installGitHooks() {
         if (hookWhy) { console.warn(refuseMsg(`git hook ${hookName}`, hookWhy)); process.exitCode = 1; continue; }
         const current = lexists(hookPath) ? readRepoFileBounded(hookPath, hooksRoot, MAX_DOC_BYTES) : '';
         if (current === null) throw new Error(`${hookPath} is unreadable or larger than ${MAX_DOC_BYTES} bytes`);
-        if (lexists(hookPath) && !isOwnHook(current)) {
-          // R13 / CWK-158 item 2: a hook the repo TRACKS (core.hooksPath at a versioned directory) is
-          // the maintainer's file, not ours to move aside: rewriting it would leave a modified tracked
-          // file that, once committed, replaces the team's hook with a stub. Same refusal as uninstall
-          // (CWK-096); "could not tell" is not "untracked".
+        // R13 / CWK-158 item 2: a hook the repo TRACKS (core.hooksPath at a versioned directory) is the maintainer's file, not ours to
+        // rewrite: that would leave a modified tracked file that, once committed, replaces the team's hook with a stub. Same refusal as
+        // uninstall (CWK-096); "could not tell" is not "untracked". 29am (T-29al-8): this covers a hook that carries our own header too.
+        if (lexists(hookPath)) {
           const tracked = hookTrackedStatus(hookPath, hooksDir, gitDir);
           if (tracked !== 'untracked') {
             console.warn(`  [refused] ${hookName}: ${tracked === 'tracked' ? 'core.hooksPath points at a versioned directory and this hook is tracked' : 'its tracked-ness could not be confirmed'} -- CoalMine does not rewrite a file it cannot confirm is untracked. Add CoalMine to that hook yourself, or point core.hooksPath at an untracked directory.`);
             process.exitCode = 1;
             continue;
           }
+        }
+        if (lexists(hookPath) && !isOwnHook(current)) {
           const backup = hookPath + '.pre-coalmine';
           // lexists, not existsSync: a DANGLING link in the backup slot reads as absent to
           // existsSync and a copy would then write through it.

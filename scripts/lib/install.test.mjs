@@ -326,7 +326,10 @@ test('installer run from the CoalMine source repo does NOT drop a project config
     // rather than pass silently, the way it did before this test carried a reporter.
     const reporter = writeHomeReporter(sandbox);
     const r = withHomeReporter(reporter, () => runInstall(target, repo, [], sandbox));
-    assert.equal(r.status, 0, `install from source repo must pass:\n${r.stdout}${r.stderr}`);
+    // 29am (T-29al-8): this clone's .githooks are TRACKED (core.hooksPath), so the installer now refuses to rewrite them and exits 1 with
+    // the [refused] lines. The skills still install; a refusal of a tracked hook is the only non-zero cause this leg accepts.
+    const trackedRefusals = (r.stdout + r.stderr).match(/\[refused\] pre-(commit|push):/g) || [];
+    assert.ok(r.status === 0 || (r.status === 1 && trackedRefusals.length > 0), `install from source repo must pass, or refuse only its tracked hooks:\n${r.stdout}${r.stderr}`);
     if (cfgBefore === null) {
       assert.ok(!fs.existsSync(rootCfg), 'no .coalmine.json may be created at the source repo root');
     }
