@@ -243,7 +243,14 @@ export function collectSurfaces(repo, plan, io) {
     if (row.dir) {
       const abs = io.join(repo, row.root);
       if (row.kind === 'md') {
-        for (const f of io.walkMd(abs)) surfaces.push({ label: io.rel(f), text: io.read(f) });
+        const docs = new Set();
+        for (const f of io.walkMd(abs)) {
+          // 29am (T-29al-6): two names for one document are one document: read it once, by its realpath when the caller can name it.
+          const key = io.realpath ? io.realpath(f) : f;
+          if (docs.has(key)) continue;
+          docs.add(key);
+          surfaces.push({ label: io.rel(f), text: io.read(f) });
+        }
       } else {
         const keep = row.ext ? (n) => row.ext.test(n) : () => true;
         for (const f of io.walkSrc(abs, keep)) {
@@ -549,8 +556,15 @@ export function looksPathShaped(tok) {
 
 // `docs/x.md:12` and `scripts/` both name a real thing; the suffix and the trailing
 // slash are punctuation, not part of the path.
+// 29am (T-29al-6): a counted loop, not /\/+$/ (which restarted at every slash of a long run). counter.steps counts the slashes read.
+export function stripTrailingSlashes(s, counter = { steps: 0 }) {
+  let e = s.length;
+  while (e > 0 && s[e - 1] === '/') { e--; counter.steps++; }
+  return s.slice(0, e);
+}
+
 function normalise(tok) {
-  return tok.replace(/:\d+(-\d+)?$/, '').replace(/\/+$/, '');
+  return stripTrailingSlashes(tok.replace(/:\d+(-\d+)?$/, ''));
 }
 
 export function checkPointers({

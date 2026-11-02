@@ -82,6 +82,8 @@ const TESTS = [
   'scripts/lib/config-keys-linear.test.mjs',
   // 29am (T-29al-5): a wrapper that recorded no backup does not adopt a backup planted beside it later.
   'scripts/lib/hook-adopt.test.mjs',
+  // 29am (T-29al-6): two names for one document are read once; trailing slashes are stripped by a counted loop.
+  'scripts/lib/pointer-check-dedupe.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',

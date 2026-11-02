@@ -413,7 +413,7 @@ try {
     const hashComments = (src) => src.split('\n').filter((l) => /^\s*#/.test(l)).join('\n');
     const surfaces = collectSurfaces(repo, DEFAULT_SURFACE_PLAN, {
       // 09a: a source file DECLARED OUT above is not walked, as the table's own header says (it used to bind only files outside the plan's walk).
-      join: path.join, walkMd, walkSrc: (...args) => walkSrc(...args).filter((p) => !declaredOut(rel(p))), read, rel, commentLines, hashComments,
+      join: path.join, realpath: (p) => fs.realpathSync.native(p), walkMd, walkSrc: (...args) => walkSrc(...args).filter((p) => !declaredOut(rel(p))), read, rel, commentLines, hashComments,
     });
 
     // AGENT INSTALL HOMES, derived from the tool's OWN TARGETS map rather than enumerated:
