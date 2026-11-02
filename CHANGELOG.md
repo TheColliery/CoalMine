@@ -2,6 +2,21 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.25.0] - 2026-11-02
+
+The installer changes only a skill folder it can show it installed
+
+The installer now keeps a record of the skill folders it wrote and writes or removes only those. A folder it cannot show it installed is kept, named to you, and the run exits 1. The installer gains a record file and changes what it does to folders it used to replace, so this is a MINOR release.
+
+### Changed
+- **The installer keeps a record of the skill folders it installs.** After each install it saves each folder's file hashes, per install target, in `~/.claude/coal/coalmine/install-record.json`. A record written by a newer CoalMine is never rewritten; the installer prints one line and judges folders by their contents. — test: scripts/lib/install-ownership.test.mjs
+- **The installer writes or removes only a folder the record names.** A folder the record names, whose files all still match the record, is replaced or removed. Any other folder is left alone, even when the project manifest (`.coalmine-manifest.json`) lists it. — test: scripts/lib/install-ownership.test.mjs
+- **With no record for a target, a byte-identical folder is adopted.** When every file in a shipped skill folder equals the bytes the installer would write, the installer records the folder as its own and carries on. — test: scripts/lib/install-ownership.test.mjs
+- **Every other folder is kept, with a `[kept]` line, and the run exits 1.** A folder with an edited file, an added file, an old name or a listing only in the manifest is not overwritten or removed. The line names the folder and the reason, and tells you to remove the whole folder, or move it aside, and run the installer again; an absent folder is installed fresh. A folder that is neither shipped nor recorded is never touched and never named. — test: scripts/lib/install-ownership.test.mjs, scripts/lib/install.test.mjs
+- **The project manifest is an integrity baseline only.** `verify.mjs` still checks it, and it lists only what the run wrote; it no longer decides which folder the installer may replace or remove. — test: scripts/lib/install-ownership.test.mjs
+- **What an existing install sees on its first upgrade.** An install made by 3.24.0 or earlier has no record, so its folders are checked against the shipped bytes. Measured on the 3.24.0 installer's own output with 9 skills, one edited `SKILL.md` and one added file: 7 unchanged folders adopted, the 2 changed ones kept, exit 1. Once a target has a record, only the record decides, so removing one added file does not unblock a kept folder; removing or moving the whole folder does. — test: scripts/lib/install.test.mjs
+- **Deleting the record returns the installer to the byte-match check.** Remove `~/.claude/coal/coalmine/install-record.json` and the next install adopts byte-identical folders again and keeps the rest. — test: scripts/lib/install-ownership.test.mjs
+
 ## [3.24.0] - 2026-11-01
 
 The installer runs only the git hook backup it recorded
