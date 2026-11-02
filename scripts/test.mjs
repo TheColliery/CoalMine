@@ -78,6 +78,8 @@ const TESTS = [
   'scripts/lib/consistency-linear.test.mjs',
   // 29am (T-29al-2): the heading scan in link-check.mjs is one counted pass per line.
   'scripts/lib/link-check-heading-linear.test.mjs',
+  // 29am (T-29al-9): the escaped-string scan in config-keys.mjs is one counted pass per literal.
+  'scripts/lib/config-keys-linear.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',

@@ -170,7 +170,38 @@ const BS = String.fromCharCode(92); // a literal backslash, built not typed
 const TICK = new RegExp('`([^`' + BS + 'n]+)`', 'g');
 // A JS single-quoted string literal, escape-aware so a value ending in a backslash
 // cannot leak escape state into the next token.
-const JS_STRING = new RegExp("'((?:" + BS + BS + ".|[^'" + BS + BS + "])*)'", 'g');
+const LINE_BREAK_CHARS = String.fromCharCode(10, 13, 0x2028, 0x2029);
+// 29am (T-29al-9, Deep Scan row 33): one pass per literal. A failed start covers every later start that lies inside it (each such start
+// is the second character of an escape pair, so it reads the same boundaries), so the scan resumes at the backslash that stopped it. The
+// dot of the replaced pattern did not match a line break after a backslash, and this scan reads that the same way.
+// The bodies of the single-quoted JS string literals in text, in order. The optional counter receives one step per character visit.
+export function jsStringBodies(region, counter = { steps: 0 }) {
+  const out = [];
+  const n = region.length;
+  let cur = 0;
+  while (cur < n) {
+    counter.steps++;
+    const open = region.indexOf("'", cur);
+    if (open < 0) break;
+    let j = open + 1;
+    let closed = false;
+    let stop = -1;
+    while (j < n) {
+      counter.steps++;
+      const c = region[j];
+      if (c === "'") { closed = true; break; }
+      if (c === BS) {
+        const d = region[j + 1];
+        if (d === undefined || LINE_BREAK_CHARS.includes(d)) { stop = j; break; }
+        j += 2;
+        continue;
+      }
+      j++;
+    }
+    if (closed) { out.push(region.slice(open + 1, j)); cur = j + 1; } else cur = stop >= 0 ? stop : n;
+  }
+  return out;
+}
 // Blank out escape sequences BEFORE scanning a literal's contents. Without this the
 // two characters of an escape fuse with the following word and manufacture a phantom
 // identifier -- MEASURED: nReport, nMemory, nTripwires, nAlertas, nInforme, five false
@@ -243,8 +274,8 @@ function candidatesInHookStrings(text, blockName) {
   const out = new Set();
   const region = noticeRegion(text, blockName);
   if (!region) return out; // a hook with no notice block contributes nothing, silently
-  for (const lit of region.matchAll(JS_STRING)) {
-    const clean = lit[1].replace(JS_ESCAPE, ' ');
+  for (const body of jsStringBodies(region)) {
+    const clean = body.replace(JS_ESCAPE, ' ');
     for (const id of clean.matchAll(IDENT)) if (KEY_SHAPE.test(id[1])) out.add(id[1]);
   }
   return out;
