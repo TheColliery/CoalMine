@@ -2,15 +2,23 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.25.4] - 2026-11-03
 
-A file name with a line break is not recorded, and a marker line with a control character is not read
+A file name with a line break cannot add a line to the report
 
-Interim entry from the 29am build, so the dist gate passes. The DOCS station (doc-writer) owns the final wording, the version and the heading.
+The touch and Stop hooks (`plugin/hooks/`) and several repository scripts changed, so this is a PATCH release.
+
+### Security
+- **A file name can no longer add a line of its own to the Stop hook's report.** The touch hook does not record a file name that holds a control character or a line or paragraph separator, and the Stop hook skips any touched or smells list line that holds one (a clean line beside it still surfaces). — test: scripts/lib/marker-line-break.test.mjs, scripts/lib/markers.test.mjs
 
 ### Fixed
-- **The touch hook refuses a file name that holds a control character or a line or paragraph separator.** Such a name would have written a second line into the session's touched list, and the Stop report prints that list. The file is not recorded, so it is not scanned.
-- **The Stop hook skips a touched or smells marker line that holds a control character or a separator, instead of cleaning it.** A clean line beside it still surfaces.
+- **The installer hashes a file named `__proto__` like any other** when it records or checks a skill folder. — test: scripts/lib/install-record-proto.test.mjs
+- **A hook wrapper that recorded no backup does not run a backup planted beside it later.** Adoption of a backup applies only to a wrapper that carries no backup record at all. — test: scripts/lib/hook-adopt.test.mjs
+- **The tracked-file check also covers a hook that carries CoalMine's own header.** A hook your repository tracks is refused with `[refused]` and left as it is, whether or not it is CoalMine's. — test: scripts/lib/hook-adopt.test.mjs, scripts/lib/install.test.mjs
+
+### Internal
+- **The repository's own count, heading and string scans are single passes.** The two count scans in `consistency.mjs`, the heading scan in `link-check.mjs` and the escaped-string scan in `config-keys.mjs` each make one pass with a step counter; each is checked against the pattern it replaced on 20,000 random inputs. — test: scripts/lib/consistency-linear.test.mjs, scripts/lib/link-check-heading-linear.test.mjs, scripts/lib/config-keys-linear.test.mjs
+- **`pointer-check` reads a document reached by two names once.** — test: scripts/lib/pointer-check-dedupe.test.mjs
 
 ## [3.25.3] - 2026-11-03
 
