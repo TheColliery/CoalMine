@@ -96,7 +96,28 @@ const EXTERNAL_RE = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i; // a scheme: or a protocol-
 // context). Sibling walkers (CoalFace, CoalTipple) use an allowlist keep-filter
 // instead of a paired-delimiter strip and never hit this query at all -- a different
 // mechanism, not a scan gap this room's shape happens to dodge.
-const HTML_TAG_RE = /<\/?[a-z][^>]*>/gi;
+// 29am (T-29al-2, F2): one pass. A tag is an opening bracket, an optional slash, an ASCII letter, then everything up to the first closing
+// bracket. If no closing bracket follows an opening one, no later bracket can close either, so the scan stops there. Each character is read
+// once, and counter.steps counts the reads.
+export function stripHtmlTags(text, counter = { steps: 0 }) {
+  let out = '';
+  let i = 0;
+  const isLetter = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+  while (i < text.length) {
+    counter.steps++;
+    const open = text.indexOf('<', i);
+    if (open < 0) break;
+    let j = open + 1;
+    if (text[j] === '/') j++;
+    if (j >= text.length || !isLetter(text[j])) { out += text.slice(i, open + 1); i = open + 1; continue; }
+    const close = text.indexOf('>', j);
+    if (close < 0) { out += text.slice(i); return out; }
+    counter.steps += close - open;
+    out += text.slice(i, open);
+    i = close + 1;
+  }
+  return out + text.slice(i);
+}
 
 // GitHub's own algorithm (documented behaviour of github-slugger, its reference
 // implementation): strip a surviving HTML tag, lowercase, drop anything that is not a
@@ -117,8 +138,7 @@ const HTML_TAG_RE = /<\/?[a-z][^>]*>/gi;
 // `coalmine-evals--rot-canary-pilot` (double hyphen), reproduced only by NOT
 // collapsing runs.
 function slugify(heading) {
-  return heading
-    .replace(HTML_TAG_RE, '')
+  return stripHtmlTags(heading)
     .toLowerCase()
     .replace(/[^\w -]/g, '')
     .replace(/ /g, '-');
