@@ -80,6 +80,8 @@ const TESTS = [
   'scripts/lib/link-check-heading-linear.test.mjs',
   // 29am (T-29al-9): the escaped-string scan in config-keys.mjs is one counted pass per literal.
   'scripts/lib/config-keys-linear.test.mjs',
+  // 29am (T-29al-5): a wrapper that recorded no backup does not adopt a backup planted beside it later.
+  'scripts/lib/hook-adopt.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',

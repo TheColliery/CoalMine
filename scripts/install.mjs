@@ -265,9 +265,10 @@ function gitBlobHash(text) {
 }
 
 // The backup id an installed CoalMine wrapper recorded, or '' (no backup of ours).
+// 29am (T-29al-5): null when the wrapper has no want= line (an old wrapper, which may adopt a backup beside it); '' when it recorded no backup.
 function parseBackupHash(content) {
   const m = /^want='([0-9a-f]*)'$/m.exec(content);
-  return m ? m[1] : '';
+  return m ? m[1] : null;
 }
 
 // Tracked-ness of a hook file, asked of git only where git can answer: a hooks dir INSIDE the
@@ -361,13 +362,14 @@ function installGitHooks() {
           const legacyBackup = hookPath + '.pre-coalmine';
           // 29q c36 item 1: an OLD CoalMine wrapper (no want= line) beside a backup. That backup was made by an earlier CoalMine
           // install, so it is adopted and its blob id recorded; a backup beside any other active hook is never adopted.
-          if (!backupHash && isOwnHook(current) && lexists(legacyBackup)) {
+          if (backupHash === null && isOwnHook(current) && lexists(legacyBackup)) {
             const legacyBytes = readRepoBytesBounded(legacyBackup, hooksRoot, MAX_DOC_BYTES);
             if (legacyBytes === null) throw new Error(`${legacyBackup} is unreadable or larger than ${MAX_DOC_BYTES} bytes`);
             backupHash = gitBlobHash(legacyBytes);
             if (!backupHash) throw new Error(`could not record the hash of ${legacyBackup}, so the backup would not be trusted`);
             console.log(`  adopted ${legacyBackup}`);
           }
+          if (backupHash === null) backupHash = ''; // no want= line and nothing adopted: no backup of ours
         }
         const backupPath = hookPath + '.pre-coalmine';
         if (!backupHash && lexists(backupPath)) {
