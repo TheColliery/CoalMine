@@ -288,48 +288,47 @@ test('corrupt manifest entries can never escape the target directory', () => {
   }
 });
 
-test('installer run from the CoalMine source repo does NOT drop a project config anywhere (self-pollution guard)', () => {
+test('installer run from the CoalMine source repo does NOT drop a project config anywhere (self-pollution guard)', (t) => {
+  // 29am bounce F4: the run happens in a COPY of the source tree, so this repository's tracked .githooks are never written. The copy tracks its
+  // own .githooks (core.hooksPath), so the installer refuses them; the leg accepts exit 1 only when that refusal is the sole notice.
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-selfpol-'));
-  // r34 findings-back round 2, NOTE-3: sandboxDir is its OWN mkdtemp, separate from
-  // `target` -- the installer's child TEMP/HOME must not double as the very directory
-  // it is installing skills into (a future stray temp write there would sit exactly
-  // where cleanPreviousInstall/manifest logic looks, unmeasured today but decoupled
-  // for free by giving it a different fixture).
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-selfpol-sb-'));
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-selfpol-src-'));
   const rootCfg = path.join(repo, '.coalmine.json');
-  // The new-shape default write target (namespace campaign #69+#39,
-  // owner-designated 2026-08-08) — snapshotted too, so a regression that
-  // resurrects the self-pollution one level deeper is still caught.
   const newCfg = path.join(repo, '.claude', 'coal', 'coalmine.json');
-  // The full installer also rewrites the git hooks from the source copies — into
-  // .githooks/ when this clone sets core.hooksPath, else .git/hooks/. Snapshot BOTH
-  // configs and the hooks so the test leaves the real repo byte-identical either way.
   const snap = (p) => (fs.existsSync(p) ? fs.readFileSync(p) : null);
-  const restore = (p, buf) => { if (buf === null) { try { fs.rmSync(p, { force: true }); } catch {} } else fs.writeFileSync(p, buf); };
+  const restoreIfChanged = (p, buf) => {
+    const now = snap(p);
+    const same = buf === null ? now === null : (now !== null && now.equals(buf));
+    if (same) return;
+    if (buf === null) fs.rmSync(p, { force: true }); else fs.writeFileSync(p, buf);
+  };
   const cfgBefore = snap(rootCfg);
   const newCfgBefore = snap(newCfg);
-  const hookPaths = ['pre-commit', 'pre-push'].flatMap((h) => [
-    path.join(repo, '.githooks', h),
-    path.join(repo, '.git', 'hooks', h),
-  ]);
-  const hooksBefore = hookPaths.map(snap);
+  const liveHooks = ['pre-commit', 'pre-push'].map((h) => path.join(repo, '.githooks', h));
+  const liveBefore = liveHooks.map(snap);
   try {
-    // cwd === repo → copyDefaultConfig must skip the write entirely. r34 LOW-1: cwd
-    // MUST be the live repo for this test's own subject, so the sandbox dir is passed
-    // SEPARATELY (`sandbox`, its own throwaway fixture -- round 2 NOTE-3, no longer
-    // `target`) -- HOME/TEMP resolve there, never into the live tree, even though cwd
-    // deliberately does not.
-    //
-    // round 2, LOW-C Mutation D: reverting to `runInstall(target, repo)` (no explicit
-    // sandboxDir) makes `sandboxDir` default back to `cwd` = `repo`, and the reporter
-    // below then reports `home === repo` -- this is what makes that regression FAIL
-    // rather than pass silently, the way it did before this test carried a reporter.
+    for (const d of ['scripts', 'skills', 'hooks', 'platform-configs', 'plugin-src', '.claude-plugin', '.githooks']) {
+      const from = path.join(repo, d);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(copy, d), { recursive: true });
+    }
+    const git = (args) => spawnSync('git', args, { cwd: copy, encoding: 'utf8', env: gitEnv(path.dirname(copy)), timeout: 100000 });
+    assert.equal(git(['init', '-q']).status, 0, 'control: the copy is a git repository');
+    assert.equal(git(['config', 'core.hooksPath', '.githooks']).status, 0, 'control: the copy points core.hooksPath at its own .githooks');
+    assert.equal(git(['add', '.githooks']).status, 0, 'control: the copy tracks its .githooks');
+    const copyHooks = ['pre-commit', 'pre-push'].map((h) => path.join(copy, '.githooks', h));
+    const copyBefore = copyHooks.map(snap);
     const reporter = writeHomeReporter(sandbox);
-    const r = withHomeReporter(reporter, () => runInstall(target, repo, [], sandbox));
-    // 29am (T-29al-8): this clone's .githooks are TRACKED (core.hooksPath), so the installer now refuses to rewrite them and exits 1 with
-    // the [refused] lines. The skills still install; a refusal of a tracked hook is the only non-zero cause this leg accepts.
-    const trackedRefusals = (r.stdout + r.stderr).match(/\[refused\] pre-(commit|push):/g) || [];
-    assert.ok(r.status === 0 || (r.status === 1 && trackedRefusals.length > 0), `install from source repo must pass, or refuse only its tracked hooks:\n${r.stdout}${r.stderr}`);
+    const r = withHomeReporter(reporter, () => spawnSandboxed(process.execPath, [path.join(copy, 'scripts', 'install.mjs'), target], { cwd: copy, sandboxDir: sandbox }));
+    const out = r.stdout + r.stderr;
+    // Every notice the installer prints as "  [kept]", "  [warn]" or "  [refused]" must be a tracked-hook refusal, and nothing may FAIL.
+    const notices = out.split('\n').filter((l) => /^\s*\[(kept|warn|refused)\]/.test(l));
+    const refusals = notices.filter((l) => /\[refused\] pre-(commit|push):/.test(l));
+    assert.ok(r.status === 0 || (r.status === 1 && refusals.length > 0), `install from the source copy must pass, or refuse only its tracked hooks:\n${out}`);
+    assert.equal(notices.length, refusals.length, `the tracked-hook refusal is the only notice:\n${notices.join('\n')}`);
+    assert.ok(!/\bFAIL\b/.test(out), `no FAIL line:\n${out}`);
+    assert.deepEqual(copyHooks.map(snap), copyBefore, 'the copy\'s tracked .githooks are unchanged');
+    assert.deepEqual(liveHooks.map(snap), liveBefore, 'this repository\'s tracked .githooks are unchanged');
     if (cfgBefore === null) {
       assert.ok(!fs.existsSync(rootCfg), 'no .coalmine.json may be created at the source repo root');
     }
@@ -341,12 +340,11 @@ test('installer run from the CoalMine source repo does NOT drop a project config
     assert.equal(reported.home, sandbox, 'the installer child\'s HOME must be the throwaway sandbox, never the live repo');
     assert.notEqual(reported.home, repo, 'the installer child must never resolve os.homedir() to the source repo it is running from');
   } finally {
-    // Leave the real repo exactly as found (both config homes + git hooks).
-    restore(rootCfg, cfgBefore);
-    restore(newCfg, newCfgBefore);
-    hookPaths.forEach((p, i) => restore(p, hooksBefore[i]));
+    restoreIfChanged(rootCfg, cfgBefore);
+    restoreIfChanged(newCfg, newCfgBefore);
     removeTree(target);
     removeTree(sandbox);
+    removeTree(copy);
   }
 });
 
