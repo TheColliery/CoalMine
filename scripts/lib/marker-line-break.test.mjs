@@ -42,6 +42,35 @@ test('29am: a file name holding a line break writes no record, so no touched lin
   assert.ok(!text.split('\n').some((l) => l.startsWith('[CoalMine]')), 'no line of the touched list begins [CoalMine]');
 });
 
+// 29am bounce F3: the C1 controls (U+0080 to U+009F, NEL U+0085 among them) are refused like the other controls. Built with
+// String.fromCharCode so no raw character reaches the source.
+const NEL = String.fromCharCode(0x85);
+const C1_HIGH = String.fromCharCode(0x9b);
+
+test('29am: a file name holding NEL (U+0085) or a C1 control is not recorded', (t) => {
+  const tmp = mkTmp(t);
+  const name = 'C:\\proj\\a.js' + NEL + 'PLANTED-29AM' + C1_HIGH + '.js';
+  const r = runHook(TOUCH, JSON.stringify({ session_id: SID, tool_input: { file_path: name } }), tmp);
+  assert.equal(r.status, 0, 'the touch hook exits 0 (fail-silent)');
+  const touched = path.join(tmp, 'coalmine', `rot-canary-${SID}.touched`);
+  const text = fs.existsSync(touched) ? fs.readFileSync(touched, 'utf8') : '';
+  assert.ok(!text.includes('PLANTED-29AM'), 'a name holding a C1 control writes no record');
+});
+
+test('29am: the Stop hook never prints a .smells line that holds NEL or a C1 control', (t) => {
+  const tmp = mkTmp(t);
+  const proj = path.join(tmp, 'proj');
+  fs.mkdirSync(proj);
+  const real = path.join(proj, 'a.js');
+  fs.writeFileSync(real, 'const x = 1;\n', 'utf8');
+  fs.writeFileSync(path.join(tmp, 'coalmine', `rot-canary-${SID}.touched`), `${real}\n`, 'utf8');
+  fs.writeFileSync(path.join(tmp, 'coalmine', `rot-canary-${SID}.smells`), `${real}: x${NEL}PLANTED-29AM${C1_HIGH}\n`, 'utf8');
+  const r = runHook(STOP, JSON.stringify({ session_id: SID, stop_hook_active: false }), tmp);
+  assert.equal(r.status, 0, 'the Stop hook exits 0 (fail-silent)');
+  assert.ok(!r.stdout.includes('PLANTED-29AM'), 'a .smells line holding a C1 control is skipped, never printed');
+  assert.ok(!r.stdout.includes(NEL) && !r.stdout.includes(C1_HIGH), 'no C1 control reaches the Stop output');
+});
+
 test('29am: the Stop hook never prints a marker line that holds a line separator', (t) => {
   const tmp = mkTmp(t);
   // A real recorded file, so the Stop hook reaches its report; the marker lines are planted as an older hook could have left them.

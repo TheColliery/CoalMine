@@ -1208,7 +1208,7 @@ function agBaseFromStdin() {
 
 // 29am (T-29al-3): a record is one line. A name or marker line that holds a C0 control, DEL or a line or paragraph separator
 // would write or read a second record line, so the touch hook refuses such a name and the Stop hook skips such a marker line.
-const UNSAFE_RECORD_CHARS = new RegExp('[\\x00-\\x1f\\x7f' + String.fromCharCode(0x2028, 0x2029) + ']');
+const UNSAFE_RECORD_CHARS = new RegExp('[\\x00-\\x1f\\x7f-\\x9f' + String.fromCharCode(0x2028, 0x2029) + ']');
 function markerLines(raw) {
   return raw.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l && !UNSAFE_RECORD_CHARS.test(l));
 }
