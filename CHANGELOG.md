@@ -2,6 +2,21 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.25.2] - 2026-11-03
+
+A kept folder's message says to undo your change or remove it
+
+The `[kept]` line for a folder you changed now tells you how to unblock it. The code change is confined to `scripts/`; `plugin/` moves only the version string in `plugin/.claude-plugin/plugin.json`, so this is a PATCH release.
+
+### Changed
+- **The `[kept]` reason for a folder whose contents differ from the record says what to do.** It now reads "its contents differ from what CoalMine recorded (undo your change inside it, or remove the folder)", so a folder you edited is unblocked by undoing the edit or by removing the folder. — test: scripts/lib/install.test.mjs
+- **Correction to the 3.25.1 notes.** They said `plugin/` did not change. It changed only the version string in `plugin/.claude-plugin/plugin.json` (3.25.0 to 3.25.1); the code change was confined to `scripts/`. — check: `git diff --stat v3.25.0 v3.25.1 -- plugin .claude-plugin`
+
+### Internal
+- **The two interrupted-install legs fix their outcome and check the folders.** Each leg now asserts a fixed exit code (0 when no skill folder was left, 1 when complete folders were kept) and that every skill folder and its bytes are the same before and after uninstall, where the expectation used to be read from the output it checked. — test: scripts/lib/install-lowthree.test.mjs
+- **The planted manifest is re-planted before uninstall.** The leg that plants a manifest listing a shipped skill now plants it again right before the uninstall call, so the uninstall is what is tested. — test: scripts/lib/install-ownership.test.mjs
+- **The re-run advice is pinned.** The tests assert the `[kept]` line says to re-run the installer and that an absent folder is installed fresh, and, for a changed folder, to undo the change inside it. — test: scripts/lib/install.test.mjs
+
 ## [3.25.1] - 2026-11-02
 
 Uninstall removes only the skill folders the install record names
