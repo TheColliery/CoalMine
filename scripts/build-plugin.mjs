@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadShared, listSkills, installSkillDir } from './lib/render.mjs';
 import { REGION_TARGETS, syncRegion } from './lib/shared-regions.mjs';
+import { MAX_DOC_BYTES, readRepoFileBounded, writeRepoFile } from './lib/repo-fs.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const skillsSrc = path.join(repo, 'skills');
@@ -61,9 +62,13 @@ for (const s of skills) {
 // copy-one-file portable (Phoenix #9). Sync runs BEFORE the dist copy.
 for (const t of REGION_TARGETS) {
   try {
+    // 29ao (T-29al-4): the partial and the target are read bounded (a link or an oversize file is refused, never read through), and the
+    // target is written through the contained writer (a link at the target is refused, nothing it points at changes).
     const p = path.join(repo, t.file);
-    const partial = fs.readFileSync(path.join(repo, t.partial), 'utf8');
-    const cur = fs.readFileSync(p, 'utf8');
+    const partial = readRepoFileBounded(path.join(repo, t.partial), repo, MAX_DOC_BYTES);
+    if (partial === null) throw new Error(`${t.partial} is unreadable, not a plain file, or over ${MAX_DOC_BYTES} bytes`);
+    const cur = readRepoFileBounded(p, repo, MAX_DOC_BYTES);
+    if (cur === null) throw new Error(`${t.file} is unreadable, not a plain file, or over ${MAX_DOC_BYTES} bytes`);
     const synced = syncRegion(cur, t.name, t.comment, partial);
     if (synced === null) {
       console.error(`  [fail] ${t.file}: shared region '${t.name}' markers missing`);
@@ -71,7 +76,7 @@ for (const t of REGION_TARGETS) {
       continue;
     }
     if (synced !== cur) {
-      fs.writeFileSync(p, synced);
+      writeRepoFile(p, synced, repo);
       console.log(`  synced shared region '${t.name}' in ${t.file}`);
     }
   } catch (e) {
