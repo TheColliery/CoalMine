@@ -264,14 +264,41 @@ function pidMayBeAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return !(e && e.code === 'ESRCH'); }
 }
 
-function buildSkillTree(from, to, shared) {
-  for (const f of fs.readdirSync(from, { withFileTypes: true })) {
-    if (f.name === 'SKILL.md') continue;
-    const src = path.join(from, f.name);
-    const dst = path.join(to, f.name);
-    if (f.isDirectory()) fs.cpSync(src, dst, { recursive: true });
-    else fs.copyFileSync(src, dst);
+// 29ao (T-29al-10): a skill source tree may not hold a link, at any depth. The walk reads directory entries (a link is never followed),
+// and the first link refuses the whole copy with a named error before anything is written.
+function refuseLinks(dir) {
+  for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, f.name);
+    if (f.isSymbolicLink()) {
+      const e = new Error(`${p} is a link: a skill source tree may not hold a link, so nothing was written`);
+      e.name = 'SkillSourceLinkError';
+      throw e;
+    }
+    if (f.isDirectory()) refuseLinks(p);
   }
+}
+
+// Copies the tree through the bounded reader, one plain file at a time: a file is read from inside the source root and written
+// through the contained writer. The top-level SKILL.md is rendered separately, so it is skipped here.
+function copyBounded(dir, rel, from, to) {
+  for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (rel === '' && f.name === 'SKILL.md') continue;
+    const src = path.join(dir, f.name);
+    const dst = path.join(to, rel, f.name);
+    if (f.isDirectory()) {
+      fs.mkdirSync(dst, { recursive: true });
+      copyBounded(src, path.join(rel, f.name), from, to);
+    } else {
+      const bytes = readRepoBytesBounded(src, from, MAX_DOC_BYTES);
+      if (bytes === null) throw new Error(`${src} is unreadable, not a plain file, or over ${MAX_DOC_BYTES} bytes`);
+      writeRepoFile(dst, bytes, to);
+    }
+  }
+}
+
+function buildSkillTree(from, to, shared) {
+  refuseLinks(from);
+  copyBounded(from, '', from, to);
   // Inject the shared reference(s) into references/ AFTER the per-skill copy, so
   // the always-resident footer can point here instead of inlining the detail ×9.
   const refs = shared.sharedReferences ?? {};

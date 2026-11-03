@@ -24,7 +24,8 @@ function sandbox(t) {
   fs.writeFileSync(pre, [
     "import fs from 'node:fs';",
     'const N = Number(process.env.KILL_AT || 0);',
-    'if (N > 0) { const real = fs.copyFileSync; let n = 0; fs.copyFileSync = function (...a) { if (++n === N) process.kill(process.pid, "SIGKILL"); return real.apply(this, a); }; }',
+    // 29ao (T-29al-10): a skill file is published by a rename into the work folder's new/ tree (the bounded copy), so the Nth such rename is the Nth copy.
+    'if (N > 0) { const real = fs.renameSync; let n = 0; fs.renameSync = function (a, b) { if (/\\/new\\/[^/]+$/.test(String(b).replace(/\\\\/g, "/")) && ++n === N) process.kill(process.pid, "SIGKILL"); return real.call(this, a, b); }; }',
     'if (process.env.KILL_AT_SKILLMD === "1") { const real = fs.writeFileSync; fs.writeFileSync = function (f, ...a) { if (String(f).endsWith("SKILL.md")) process.kill(process.pid, "SIGKILL"); return real.call(this, f, ...a); }; }',
     'if (process.env.KILL_BEFORE_MARKER === "1") { const real = fs.writeFileSync; fs.writeFileSync = function (f, ...a) { if (String(f).endsWith(".coalmine-installing")) process.kill(process.pid, "SIGKILL"); return real.call(this, f, ...a); }; }',
     'if (process.env.KILL_BEFORE_MANIFEST_RENAME === "1") { const real = fs.renameSync; fs.renameSync = function (a, b) { if (String(b).endsWith(".coalmine-manifest.json")) process.kill(process.pid, "SIGKILL"); return real.call(this, a, b); }; }',
@@ -222,9 +223,10 @@ test('LOW-3: the copy is proven complete before the rename -- a missing source f
   const { from, shared } = fixtureSkill(sb);
   const to = path.join(sb.dir, 'skills', 'sk'); fs.mkdirSync(to, { recursive: true });
   fs.writeFileSync(path.join(to, 'old.md'), 'OLD');
-  const real = fs.copyFileSync;
-  fs.copyFileSync = function (a, b, ...r) { if (String(a).endsWith('skill-meta.json')) return undefined; return real.call(this, a, b, ...r); }; // a copy that "succeeds" and writes nothing
-  try { assert.throws(() => render.installSkillDir(from, to, shared), /incomplete/i); } finally { fs.copyFileSync = real; }
+  // 29ao (T-29al-10): a skill file is published by a rename (the bounded copy), so the fault is a publish that "succeeds" and writes nothing.
+  const real = fs.renameSync;
+  fs.renameSync = function (a, b) { if (String(b).endsWith('skill-meta.json')) { try { fs.rmSync(a, { force: true }); } catch {} return undefined; } return real.call(this, a, b); };
+  try { assert.throws(() => render.installSkillDir(from, to, shared), /incomplete/i); } finally { fs.renameSync = real; }
   assert.deepEqual(files(to), ['old.md']);
   assert.deepEqual(fs.readdirSync(path.join(sb.dir, 'skills')), ['sk']);
 });
