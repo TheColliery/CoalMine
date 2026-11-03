@@ -2,6 +2,20 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.25.5] - 2026-11-03
+
+The installer refuses a skill source folder that holds a link
+
+The installer and the plugin build changed under `scripts/`; `plugin/` moves only the version string in `plugin/.claude-plugin/plugin.json`, so this is a PATCH release.
+
+### Fixed
+- **The installer refuses a skill source folder that holds a link anywhere, and copies the skill files bounded.** The render step stops with a named error before it writes anything, reads each file through the bounded reader and writes through the checked writer. — test: scripts/lib/render-link.test.mjs, scripts/lib/install-lowthree.test.mjs
+
+### Internal
+- **The plugin build's region sync writes through the checked writer and reads bounded.** A hook that is a link is refused with a named line instead of being written through. — test: scripts/lib/build-region-link.test.mjs
+- **The consistency check's last two raw reads go through the bounded reader.** The plugin description read and the mirror byte compare now stop with a FAIL line on a link or a file over 4 MB; the read census allowance drops from 9 to 7. — test: scripts/lib/read-census.test.mjs, scripts/lib/consistency.test.mjs
+- **The installer test checks the copy's own paths too.** The leg that runs the installer in a copy of this repository asserts that no config is created at the copy's own paths, beside the checks on the live paths. — test: scripts/lib/install.test.mjs
+
 ## [3.25.4] - 2026-11-03
 
 A file name with a line break cannot add a line to the report
