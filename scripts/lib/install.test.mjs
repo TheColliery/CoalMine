@@ -318,6 +318,10 @@ test('installer run from the CoalMine source repo does NOT drop a project config
     assert.equal(git(['add', '.githooks']).status, 0, 'control: the copy tracks its .githooks');
     const copyHooks = ['pre-commit', 'pre-push'].map((h) => path.join(copy, '.githooks', h));
     const copyBefore = copyHooks.map(snap);
+    // 29am-1: a config written into the COPY is the same pollution one tree over, so both config paths are checked there too.
+    const copyRootCfg = path.join(copy, '.coalmine.json');
+    const copyNewCfg = path.join(copy, '.claude', 'coal', 'coalmine.json');
+    assert.ok(!fs.existsSync(copyRootCfg) && !fs.existsSync(copyNewCfg), 'control: the copy starts without a config at either path');
     const reporter = writeHomeReporter(sandbox);
     const r = withHomeReporter(reporter, () => spawnSandboxed(process.execPath, [path.join(copy, 'scripts', 'install.mjs'), target], { cwd: copy, sandboxDir: sandbox }));
     const out = r.stdout + r.stderr;
@@ -335,6 +339,8 @@ test('installer run from the CoalMine source repo does NOT drop a project config
     if (newCfgBefore === null) {
       assert.ok(!fs.existsSync(newCfg), 'no config may be created at the new own-dir home either');
     }
+    assert.ok(!fs.existsSync(copyRootCfg), 'no .coalmine.json may be created in the copy (the run must skip, not write one)');
+    assert.ok(!fs.existsSync(copyNewCfg), 'no config may be created at the copy\'s own-dir home (the run must skip, not write one)');
     assert.match(r.stdout, /self-pollution|source repo/i, 'the skip is reported');
     const reported = JSON.parse(r.stderr.trim().split('\n')[0]);
     assert.equal(reported.home, sandbox, 'the installer child\'s HOME must be the throwaway sandbox, never the live repo');
