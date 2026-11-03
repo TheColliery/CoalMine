@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listSkills } from './render.mjs';
+import { MAX_DOC_BYTES, readRepoBytesBounded, readRepoFileBounded } from './repo-fs.mjs';
 
 // 29am (T-29al-1): the two count scans are single passes with a step counter. The blank class is space and
 // tab, and a line start follows a line break (LF, CR, U+2028 or U+2029), as the multiline anchor did.
@@ -203,7 +204,10 @@ export function checkCanaryCount(repo) {
     return [{ level: 'FAIL', msg: `consistency: cannot count skills/: ${e.message}` }];
   }
   try {
-    const desc = JSON.parse(fs.readFileSync(path.join(repo, '.claude-plugin', 'plugin.json'), 'utf8').replace(/^\uFEFF/, '')).description || '';
+    // T-29q-1: read through the bounded reader, so a link or an oversize plugin.json is refused into the FAIL line below, never read through.
+    const pluginJson = readRepoFileBounded(path.join(repo, '.claude-plugin', 'plugin.json'), repo, MAX_DOC_BYTES);
+    if (pluginJson === null) throw new Error('refused, unreadable, not a plain file, or over the size bound');
+    const desc = JSON.parse(pluginJson.replace(/^\uFEFF/, '')).description || '';
     const declared = qualityCanaryCount(desc);
     if (declared === null) {
       out.push({ level: 'FAIL', msg: `consistency: plugin.json description has no "<N> quality-canary" count to cross-check` });
@@ -423,7 +427,11 @@ export function checkDoctrineMirrors(repo) {
   // function as the machine that keeps them so. The gate enforced a weaker standard than
   // the constitution it implements. Read raw bytes; the CRLF strip survives below only to
   // CLASSIFY a mismatch, never to hide one.
-  const read = (abs) => { try { return fs.readFileSync(abs); } catch (e) { return e; } };
+  // T-29q-1: the bounded reader, contained to the mirror root the file was walked from. A refused read (a link, a non-file, over the bound) is an Error, as before.
+  const read = (abs, root) => {
+    const bytes = readRepoBytesBounded(abs, root, MAX_DOC_BYTES);
+    return bytes === null ? new Error('refused, unreadable, not a plain file, or over the size bound') : bytes;
+  };
   const side = (root) => { try { return new Map([...walkMd(root)].map((f) => [f.rel, f.abs])); } catch (e) { return e; } };
   const a = side(claudeRoot);
   const b = side(agentsRoot);
@@ -449,7 +457,7 @@ export function checkDoctrineMirrors(repo) {
       out.push({ level: 'FAIL', msg: `consistency: doctrine '${rel}' UNMIRRORED — present in ${have}/ but MISSING from ${missing}/ (the two agent populations would read different rulebooks)` });
       continue;
     }
-    const [ba, bb] = [read(pa), read(pb)];
+    const [ba, bb] = [read(pa, claudeRoot), read(pb, agentsRoot)];
     for (const [body, root] of [[ba, MIRROR_ROOTS[0]], [bb, MIRROR_ROOTS[1]]]) {
       if (body instanceof Error) out.push({ level: 'FAIL', msg: `consistency: ${root}/${rel} unreadable: ${body.message}` });
     }

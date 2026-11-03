@@ -14,7 +14,7 @@ const COMMENT = /^\s*(\/\/|\*|\/\*)/;
 
 // The target state after item 3.2's conversions. Files converted in that group are absent: a raw read left in one is a violation.
 export const ALLOWLIST = {
-  'scripts/lib/consistency.mjs': { count: 9, reason: 'conversion owed, T-29q-1' },
+  'scripts/lib/consistency.mjs': { count: 7, reason: 'conversion owed, T-29q-1' },
   'scripts/verify-release-shape.mjs': { count: 3, reason: 'conversion owed, T-29q-1' },
   'scripts/install.mjs': { count: 3, reason: 'conversion owed, T-29q-1' },
   'scripts/decide-upload.mjs': { count: 2, reason: 'conversion owed, T-29q-1' },
