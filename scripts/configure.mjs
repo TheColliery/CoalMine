@@ -1,3 +1,4 @@
+// 29ap: named divergence from the canon template, on purpose: this room's own write and refusal rules come ahead of the template.
 // CoalMine configurator — edit .coalmine.json from the command line.
 // Flags, parsing, validation, and help all come from one table
 // (scripts/lib/config-schema.mjs, shared with verify.mjs): a key added there

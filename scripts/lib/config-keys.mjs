@@ -1,3 +1,4 @@
+// 29ap: named divergence from the canon template, on purpose: this room's own gate is much larger than the template; its single-pass string scan is owed upward to the canon.
 // CWK-059 — documentation-vs-schema drift gate. Every config key NAMED on a
 // user-facing surface must RESOLVE in config-schema.mjs, or be declared.
 //
