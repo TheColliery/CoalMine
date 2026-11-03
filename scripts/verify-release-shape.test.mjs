@@ -240,4 +240,11 @@ test('verify-release-shape.mjs: a published title or body that gained a LEADING 
   assert.equal(body.status, 1, body.stdout + body.stderr); assert.match(body.stderr, /BODY MISMATCH/);
   const ok = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix', body: 'A fix.\n' }));
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  // 17b (CoalLedger t142, CoalMine t148, CoalWash E1): trimEnd() also forgave trailing spaces and tabs; only the one newline is tolerated
+  const space = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix ', body: 'A fix.' }));
+  assert.equal(space.status, 1, space.stdout + space.stderr); assert.match(space.stderr, /TITLE MISMATCH/);
+  const tab = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix', body: 'A fix.\t\n' }));
+  assert.equal(tab.status, 1, tab.stdout + tab.stderr); assert.match(tab.stderr, /BODY MISMATCH/);
+  const two = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix', body: 'A fix.\n\n' }));
+  assert.equal(two.status, 1, two.stdout + two.stderr); assert.match(two.stderr, /BODY MISMATCH/);
 });

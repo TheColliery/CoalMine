@@ -472,7 +472,7 @@ test('a 200k-character line dense with key-like names scans in linear work (no c
     'console.log(JSON.stringify(out));',
   ].join('\n');
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-    encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, NODE_OPTIONS: '--max-old-space-size=512' },
+    encoding: 'utf8', timeout: 15000, env: childEnv({ NODE_OPTIONS: '--max-old-space-size=512' }),
   });
   assert.strictEqual(r.status, 0, `every scan must finish inside the kill timeout; status ${r.status}, signal ${r.signal}\n${r.stderr}`);
   const { __reread: reread, ...counts } = JSON.parse(r.stdout);
@@ -754,6 +754,26 @@ test('(1028b, X-1) 4,000 never-closing regex candidates read under 6x the litera
   assert.ok(ratio < COUNT_CEILING, `count ratio ${ratio.toFixed(2)} (4,000: ${big}, 1,000: ${small}); the ceiling is ${COUNT_CEILING}`);
 });
 
+// (1103e) The flag run after a literal's closing slash was read with no bound, and each candidate that shares that closing slash read the
+// whole run again: the work was candidates x flag-run length. A literal has at most eight distinct flags, which bounds the run. The M
+// assignments below each open a class `/[`, and every one of them closes at the one `]/` followed by F flag letters. Counted steps only.
+const sharedCloseLine = (M, F) => {
+  const rnd = seededRandom(20261103);
+  const parts = [];
+  for (let i = 0; i < M; i++) parts.push(`k${i}_secret = /[` + pickB62(rnd, 30));
+  return parts.join(' ') + ' ]/' + 'g'.repeat(F);
+};
+test('(1103e) a flag run of 4,000 letters after one shared closing slash costs no more counted work than a run of 8 (counted steps, no clock)', () => {
+  const countLiteral = (line) => { _resetWorkCountForTests(); scanLine(line); return _workCountForTests('literal'); };
+  const short = countLiteral(sharedCloseLine(200, 8));
+  const long = countLiteral(sharedCloseLine(200, 4000));
+  const ratio = long / short;
+  assert.ok(ratio < 1.1, `counted literal steps ${long} with a 4,000-letter flag run and ${short} with 8 (ratio ${ratio.toFixed(2)}): the flag run is read in full per candidate, with no bound`);
+});
+test('(1103e) a literal carrying the eight distinct flags is still read whole and is not judged as a value', () => {
+  assert.deepStrictEqual(scanLine('const SECRET_RE = /^[A-Za-z0-9]{40}=?$/dgimsuyv;'), []);
+});
+
 // (c) C5, the differential. Seeded random lines are scanned by the lib and by a brute-force reference that states the containment
 // rule in its own words: a generic candidate is dropped only when one provider match covers it whole. The candidate decision is
 // restated from the lib's own exported gates (below), NOT read from scanLine: scanLine applies the containment rule itself, so a
@@ -846,6 +866,14 @@ const gitEnv = () => ({
   TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX, HOME: SANDBOX, USERPROFILE: SANDBOX, XDG_CONFIG_HOME: SANDBOX,
   GIT_CONFIG_NOSYSTEM: '1',
 });
+// The environment of a child this file starts beside git: the names it needs to start, and HOME, USERPROFILE and XDG_CONFIG_HOME pointed at
+// the sandbox. Without the three home keys a child's os.homedir() falls back to the OS profile path, outside the sandbox (the 1102c witness below).
+// Extra keys are named by the caller.
+const childEnv = (extra = {}) => ({
+  PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir,
+  HOME: SANDBOX, USERPROFILE: SANDBOX, XDG_CONFIG_HOME: SANDBOX,
+  ...extra,
+});
 // The same sandbox environment for a call whose exit status is the answer (execFileSync throws on a non-zero exit, so gitAt cannot give it).
 const gitStatus = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 30000, env: gitEnv() });
 // A spawn that never ran answers status null, and null is not 0, so "non-zero" proved nothing: an assertion on status alone passes when the call never ran. The decoy checks below
@@ -874,7 +902,7 @@ function shortForm(p, cmd = CMD) {
   try {
     const r = spawnSync(cmd, ['/d', '/c', script], {
       encoding: 'utf8', timeout: 30000, windowsHide: true,
-      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT, TEMP: SANDBOX, TMP: SANDBOX },
+      env: childEnv({ ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT, TEMP: SANDBOX, TMP: SANDBOX }),
     });
     if (r.error) throw new Error(`shortForm: the cmd call did not run (${r.error.code || r.error.message})`, { cause: r.error });
     if (r.status !== 0) throw new Error(`shortForm: the cmd call exited ${r.status}`);
@@ -1040,10 +1068,20 @@ test('a fixture call is handed GIT_CONFIG_NOSYSTEM and no other GIT_ name beyond
 // left out of the child's environment and never becomes the string "undefined"; this proves it of the node running the suite, through a real child.
 test('a named environment key whose value is undefined is left out of a child\'s environment, never passed as the string "undefined"', () => {
   const r = spawnSync(process.execPath, ['-p', "'SCAN_TEST_UNSET' in process.env"], {
-    encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir, SCAN_TEST_UNSET: undefined },
+    encoding: 'utf8', timeout: 15000, env: childEnv({ SCAN_TEST_UNSET: undefined }),
   });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(r.stdout.trim(), 'false');
+});
+
+// The witness for the child environment (1102c). A child started with the environment the call sites build must resolve its home inside the
+// sandbox. Without HOME, USERPROFILE and XDG_CONFIG_HOME a child's os.homedir() falls back to the OS profile path, outside the sandbox.
+test('a child started with the call sites\' environment resolves its home inside the sandbox, never the OS profile (1102c)', () => {
+  const env = childEnv();
+  const r = spawnSync(process.execPath, ['-p', "require('os').homedir()"], { encoding: 'utf8', timeout: 15000, env });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const home = r.stdout.trim();
+  assert.ok(path.resolve(home) === path.resolve(SANDBOX) || path.resolve(home).startsWith(path.resolve(SANDBOX) + path.sep), `the child's home is ${home}, outside the sandbox ${SANDBOX}`);
 });
 
 // The witness for the sandbox: it plants a hostile global git configuration (an executable hooks path whose pre-commit hook
@@ -1313,4 +1351,18 @@ test('a tag object missing the object header, the type header, or both FAILS CLO
   for (const [label, text] of cases) {
     assert.throws(() => scanPushed(refLine(stubA, ZERO40, 'refs/tags/half'), tagStub(text)), (e) => e.code === 'ETAGCHAIN', label);
   }
+});
+
+// (1103f) A skip decided by a file NAME alone is a hole: a text file named like a binary carries its secrets past the scan. looksBinary
+// decides from the bytes, by git's own text-or-binary rule (a NUL byte among the first 8,000 bytes).
+test('(1103f) looksBinary reads the content: a token in text is text, a NUL in the first 8,000 bytes is binary, a NUL after them is not', () => {
+  const text = Buffer.from(`aws = ${SAMPLES['aws-access-key-id']}\n`);
+  assert.strictEqual(scanLib.looksBinary(text), false, 'a provider-shaped token in text is not binary');
+  const early = Buffer.alloc(9000, 0x61);
+  early[7999] = 0;
+  assert.strictEqual(scanLib.looksBinary(early), true, 'a NUL at byte 8,000 (index 7,999) is inside the probe');
+  assert.strictEqual(scanLib.looksBinary(new Uint8Array(early)), true, 'a Uint8Array is accepted as well as a Buffer');
+  const late = Buffer.alloc(9000, 0x61);
+  late[8000] = 0;
+  assert.strictEqual(scanLib.looksBinary(late), false, 'a NUL after the first 8,000 bytes is outside the probe');
 });

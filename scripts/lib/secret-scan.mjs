@@ -263,7 +263,8 @@ function regexLiteralEnd(line, start) {
     if (c === '[') { inClass = true; continue; }
     if (c === '/') {
       let j = i + 1;
-      while (j < line.length && LITERAL_FLAGS.includes(line[j])) j++;
+      // 1103e: a literal has at most eight distinct flags, so a longer run is not a literal, and the run is read at most eight characters.
+      while (j < line.length && j - i - 1 < LITERAL_FLAGS.length && LITERAL_FLAGS.includes(line[j])) { work.literal++; j++; }
       return j;
     }
   }
@@ -460,10 +461,20 @@ function unquotePath(p) {
   return Buffer.from(bytes).toString('utf8');
 }
 
+// The probe for "binary" by content, git's own text-or-binary rule (xdiff buffer_is_binary): a NUL byte among the first 8,000 bytes.
+// A caller that skips a file decides "binary" from these bytes, never from the name: see looksBinary and the skipFile note below.
+const BINARY_PROBE_BYTES = 8000;
+export function looksBinary(bytes) {
+  const n = Math.min(bytes.length, BINARY_PROBE_BYTES);
+  for (let i = 0; i < n; i++) if (bytes[i] === 0) return true;
+  return false;
+}
+
 // Scan the ADDED lines of a `git log -p --unified=0` patch stream whose commits are introduced by
 // a line `\0COMMIT <sha>` (the caller's --format). hits: [{ commit, file, line, pattern, fp }]
 // opts.skipFile(path) -> true skips that file's added lines: the ONLY way a path escapes the scan,
-// and the caller's explicit choice (e.g. a path it knows is a genuine binary).
+// and the caller's explicit choice (e.g. a path it knows is a genuine binary). A skip decided by a NAME alone is a hole: a text file
+// named like a binary carries its secrets past the scan. Decide "binary" from the content, with looksBinary above.
 export function scanPatch(patch, opts = {}) {
   const skip = typeof opts.skipFile === 'function' ? opts.skipFile : null;
   const hits = [];

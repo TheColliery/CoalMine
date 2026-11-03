@@ -86,8 +86,15 @@ async function main() {
       return { mode: m[1], sha: m[2], name: m[4] };
     });
   } catch (e) {
-    const noRepo = /not a git repository/i.test(String((e && e.stderr) || ''));
-    console.log(`FAIL SECRETS: ${noRepo ? 'this directory is not inside a git repository' : 'git could not list the tracked files (is git on PATH?)'}; the scan did NOT run`);
+    const err = String((e && e.stderr) || '');
+    // git words "no repository above here" two ways, each with a parenthetical (the upward walk reached the root, or stopped
+    // at a mount boundary); "not a git repository: '<path>'" with none is a BROKEN repository, not an absent one: older git
+    // prints it for a .git link to a missing directory (the ubuntu runner, 2026-10-23), and the bare phrase misread it
+    const noRepo = /not a git repository \(or any (?:of the parent directories\)|parent up to mount point )/.test(err);
+    // a git that ran and refused (a broken .git link, a dubious-ownership refusal) names its own cause; PATH is only the guess
+    // when git printed nothing at all
+    const first = (err.split('\n').find((l) => l.trim()) || '').trim();
+    console.log(`FAIL SECRETS: ${noRepo ? 'this directory is not inside a git repository' : `git could not list the tracked files (${first || 'is git on PATH?'})`}; the scan did NOT run`);
     process.exitCode = 1;
     return;
   }

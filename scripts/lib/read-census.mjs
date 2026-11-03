@@ -23,7 +23,7 @@ export const ALLOWLIST = {
   'scripts/lib/machine-reading.mjs': { count: 1, reason: 'conversion owed, T-29q-1' },
   'scripts/lib/dist-changelog.mjs': { count: 1, reason: 'conversion owed, T-29q-1' },
   'scripts/front-door-links.mjs': { count: 1, reason: 'conversion owed, T-29q-1' },
-  'scripts/release-notes.mjs': { count: 2, reason: "canon copy, the .github deputy's" },
+  'scripts/release-notes.mjs': { count: 1, reason: "canon copy, the .github deputy's" },
   'scripts/build-claude-ai-zips.mjs': { count: 1, reason: "canon copy, the .github deputy's" },
   'scripts/lib/git-env-census.mjs': { count: 1, reason: "canon copy, the .github deputy's" },
 };
