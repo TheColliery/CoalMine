@@ -86,6 +86,8 @@ const TESTS = [
   'scripts/lib/pointer-check-dedupe.test.mjs',
   // 29am bounce F2: the HTML tag strip in link-check.mjs is one counted pass.
   'scripts/lib/link-check-tag-linear.test.mjs',
+  // 29ao (T-29al-10): a skill source tree that holds a link is refused before anything is written.
+  'scripts/lib/render-link.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
