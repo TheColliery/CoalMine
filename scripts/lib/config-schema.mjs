@@ -1,3 +1,4 @@
+// 29ap: named divergence from the canon template, on purpose: this room's own keys for .coalmine.json.
 // Single source of truth for every .coalmine.json key.
 // verify.mjs validates against it; configure.mjs builds its CLI flags, parsing,
 // and help text from it — a key added here is automatically validated,

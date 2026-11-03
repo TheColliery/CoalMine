@@ -1,3 +1,4 @@
+// 29ap: named divergence from the canon template, on purpose: named skip lines with their reasons come ahead of the canon; owed upward.
 // wave-run.test.mjs -- BB-87 (owner 2026-10-08): the test runner that admits its files by the live machine reading.
 // Hermetic: the fixtures are written into a scratch folder at run time, the reading is a stub that answers what the test says, and every child runs under a heap cap and a
 // finite clock. RED before BB-87: ./wave-run.mjs did not exist.

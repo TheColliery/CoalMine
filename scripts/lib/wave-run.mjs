@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// 29ap: named divergence from the canon template, on purpose: named skip lines with their reasons come ahead of the canon; owed upward.
 // wave-run.mjs -- run a room's enumerated test files in waves admitted by the LIVE machine reading (BB-87, owner 2026-10-08).
 //
 //   node scripts/lib/wave-run.mjs --heap-mb N --file-timeout-ms N --deadline-ms N [--file-clock-ms N] [--cpu-max N] [--mem-min N] [--serial] -- <test files...>
