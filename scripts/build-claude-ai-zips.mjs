@@ -13,7 +13,7 @@
 // not recognized as a skill) and checks every archive's layout before upload.
 // Canonical exemplar: CoalMine (board #40).
 //
-// REPRODUCIBLE, AND REFUSING WHAT IT CANNOT PACKAGE (09g, CoalMine issue 42 M1-M3). A symlink or any entry that is neither a regular file nor a folder is REFUSED, never
+// REPRODUCIBLE, AND REFUSING WHAT IT CANNOT PACKAGE (09g, CoalMine issue 42 M1-M3). A junction or symlink directly under plugin/skills is refused by name too (29e (a)). A symlink or any entry that is neither a regular file nor a folder is REFUSED, never
 // followed (copyFileSync would read the link's target into a public asset); an entry whose name starts with a dot is not staged at any depth (a nested .DS_Store); a name with a
 // control character is refused. When SOURCE_DATE_EPOCH is set (whole seconds, 1980 or later: the reproducible-builds variable, which the workflow sets to the tag commit's time) every
 // staged file and folder gets that mtime, because zip stores mtimes and a time of the build would make every rebuild a different archive. The zip step then zips a sorted list.
@@ -101,9 +101,24 @@ async function main() {
     return;
   }
   fs.rmSync(outDir, { recursive: true, force: true });
-  const skills = fs.readdirSync(pluginSkills, { withFileTypes: true }).filter((e) => e.isDirectory()).sort(byCodeUnit);
+  // Each entry of plugin/skills is read by lstat, never by its Dirent alone: a junction reads as a link, so a filter on isDirectory() drops it with exit 0.
+  // A dot name is not a skill: it is not staged, and the run names it on a `skipped <name>` line; a plain file is not a skill; a folder is one; a symlink,
+  // junction or special entry is refused by name below, never skipped and never followed.
+  const skills = [];
+  for (const entry of fs.readdirSync(pluginSkills, { withFileTypes: true }).sort(byCodeUnit)) {
+    if (entry.name.startsWith('.')) { console.log(`skipped ${entry.name}`); continue; } // named, never silent: a dot folder is not a skill
+    const st = fs.lstatSync(path.join(pluginSkills, entry.name));
+    if (st.isDirectory()) skills.push({ name: entry.name, refused: false });
+    else if (st.isSymbolicLink() || !st.isFile()) skills.push({ name: entry.name, refused: true });
+  }
   let failed = 0;
   for (const skill of skills) {
+    if (skill.refused) {
+      console.error(`FAIL ${skill.name}: is neither a regular file nor a folder (a symlink or junction is refused, not followed or skipped)`);
+      failed++;
+      process.exitCode = 1;
+      continue;
+    }
     try {
       const srcDir = path.join(pluginSkills, skill.name);
       const destDir = path.join(outDir, skill.name);

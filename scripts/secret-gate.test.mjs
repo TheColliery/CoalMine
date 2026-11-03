@@ -195,6 +195,22 @@ test('a scan that cannot run fails: a missing scanner and a directory that is no
   assert.match(r.out, /FAIL SECRETS: .*not inside a git repository/);
 });
 
+test('a git that runs and refuses is reported with its own first line, never as git missing from PATH (found 2026-10-23 while testing the one-wording classifier class)', () => {
+  // a .git FILE naming a directory that is gone: git 2.56 answers "gitfile does not point to a valid repository", exit 128.
+  // RED before the fix: the gate printed the cause "is git on PATH?" although git ran (git 2.56), or, on the ubuntu runner's
+  // older git, which answers "not a git repository: <path>", the wrong cause "not inside a git repository" (CI, 2026-10-23).
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'secret-gate-brokenlink-'));
+  made.push(dir);
+  fs.mkdirSync(path.join(dir, 'scripts', 'lib'), { recursive: true });
+  fs.copyFileSync(GATE, path.join(dir, 'scripts', 'secret-gate.mjs'));
+  fs.copyFileSync(LIB, path.join(dir, 'scripts', 'lib', 'secret-scan.mjs'));
+  fs.writeFileSync(path.join(dir, '.git'), 'gitdir: ' + path.join(dir, 'gone-gitdir') + '\n');
+  const r = run(dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.out, /FAIL SECRETS: git could not list the tracked files \(fatal: /);
+  assert.ok(!/is git on PATH/.test(r.out), 'git ran, so PATH is not the cause');
+});
+
 test('--help prints the usage and exits 0; an unknown flag is an error with the usage on stderr (64)', () => {
   const dir = repo([{ 'a.txt': 'x\n' }]);
   const h = run(dir, ['--help']);

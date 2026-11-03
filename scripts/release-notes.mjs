@@ -24,6 +24,34 @@ const USAGE = 'usage: node scripts/release-notes.mjs            (derive mode: th
   + '  example: node scripts/release-notes.mjs --check --repo CoalBoard\n'
   + '  exit 0 done · 1 refused or a failed check · 64 usage error';
 
+// The CHANGELOG is the tag's own file, so it is read only as a regular file (a link or a device in its place is refused by name) and only under a byte
+// bound (ours: 8 MiB, twenty times the longest CHANGELOG of the flock), checked before the read and again on the open descriptor.
+const MAX_CHANGELOG_BYTES = 8388608;
+function readChangelog() {
+  const name = 'CHANGELOG.md';
+  const refuse = (why) => { throw new Error(`${name} ${why}`); };
+  const st = fs.lstatSync(name);
+  if (!st.isFile()) refuse('is not a regular file (a link or a device is refused, never followed)');
+  if (st.size > MAX_CHANGELOG_BYTES) refuse(`is ${st.size} bytes, past the byte bound of ${MAX_CHANGELOG_BYTES}: refused before it is read`);
+  const fd = fs.openSync(name, 'r');
+  try {
+    const open = fs.fstatSync(fd);
+    if (!open.isFile()) refuse('is not a regular file (a link or a device is refused, never followed)');
+    if (open.size > MAX_CHANGELOG_BYTES) refuse(`is ${open.size} bytes, past the byte bound of ${MAX_CHANGELOG_BYTES}: refused before it is read`);
+    return fs.readFileSync(fd, 'utf8');
+  } finally { fs.closeSync(fd); }
+}
+
+// A release file is written to a new temporary name beside it and renamed into place (node/runtime.md section 5): the rename replaces the directory entry,
+// so a link or a second name already standing there is replaced, never written through.
+function writeOutput(name, text) {
+  const tmp = `${name}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, text, { flag: 'wx' });
+    fs.renameSync(tmp, name);
+  } finally { fs.rmSync(tmp, { force: true }); }
+}
+
 function repoName(args) {
   const at = args.indexOf('--repo');
   if (at !== -1) return args[at + 1] || '';
@@ -43,7 +71,7 @@ function check(args) {
   const repo = repoName(args);
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repo)) { console.error('release-notes --check: cannot tell the repository name; pass --repo <name>'); process.exitCode = 1; return; }
   let changelog;
-  try { changelog = fs.readFileSync('CHANGELOG.md', 'utf8'); } catch (e) { console.error('release-notes --check: could not read CHANGELOG.md: ' + e.message); process.exitCode = 1; return; }
+  try { changelog = readChangelog(); } catch (e) { console.error('release-notes --check: could not read CHANGELOG.md: ' + e.message); process.exitCode = 1; return; }
   const version = /^##\s*\[([^\]]+)\]/m.exec(changelog)?.[1] ?? '';
   try {
     const { summary } = extractChangelogEntry(changelog, version);
@@ -93,7 +121,7 @@ function main() {
 
   let changelog;
   try {
-    changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+    changelog = readChangelog();
   } catch (e) {
     console.error(`release-notes: could not read CHANGELOG.md: ${e.message}`);
     process.exitCode = 1;
@@ -104,10 +132,10 @@ function main() {
     const { summary, lead, sectionsBody } = extractChangelogEntry(changelog, tagVersion, { previousStable: prev.slice(1) });
     // A pre-release is never Latest, even when the repo has no Latest yet.
     const latestFlag = launch ? 'false' : makeLatestFlag(tagVersion, latest);
-    fs.writeFileSync('release-title.txt', buildReleaseTitle(tagVersion, summary));
-    fs.writeFileSync('release-body.md', buildReleaseBody(summary, sectionsBody, lead));
-    fs.writeFileSync('release-latest.txt', latestFlag);
-    fs.writeFileSync('release-prerelease.txt', launch ? 'true' : 'false');
+    writeOutput('release-title.txt', buildReleaseTitle(tagVersion, summary));
+    writeOutput('release-body.md', buildReleaseBody(summary, sectionsBody, lead));
+    writeOutput('release-latest.txt', latestFlag);
+    writeOutput('release-prerelease.txt', launch ? 'true' : 'false');
     console.log(`release-notes: derived the Release title + body for ${ref} from CHANGELOG.md's [${tagVersion}] entry`);
     console.log(prev ? `release-notes: the entry is followed by the previous stable tag's heading [${prev.slice(1)}]` : 'release-notes: no previous stable tag -- the heading-continuity check is skipped');
     console.log(`release-notes: make_latest=${latestFlag} (current Latest: ${latest || 'none'})`);

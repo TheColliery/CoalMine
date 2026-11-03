@@ -107,6 +107,9 @@ import { createHash } from 'node:crypto';
 // keeps GIT_INDEX_FILE by design) is a pin of the room that carries it, never of the canon: the canon test asserts that none ships. With the token census a file that defines its OWN gitEnv() is judged by
 // that body, never by the name (F42).
 export const CENSUS_EXEMPT = [];
+// The census's own work counter: one step per token or character a scan visits, so its test can show the work grows with the size of a file,
+// not with its square, without reading a clock (Deep Scan 2026-11-01: three scans walked the whole file again for every reference).
+export const CENSUS_WORK = { steps: 0 };
 
 // The git blob id of `text` (what `git hash-object` prints for that content), CRLF -> LF first so
 // a Windows autocrlf checkout of the same file pins the same row.
@@ -177,6 +180,31 @@ export function lexAmb(text, force = null) {
   let i = 0;
   if (text.startsWith('#!')) { while (i < text.length && !LINE_TERMINATORS.has(text[i])) i++; } // a shebang line is not code, and ends at any line terminator
   const push = (k, v, s) => toks.push({ k, v, i: s, ln: line });
+  // Where a regex body that starts at `from` ends: the index of its closing slash (outside a [class], a backslash escaping the next character), or -1 when a
+  // line feed or the end comes first. Computed for every start in one backward pass the first time it is asked, so a line of slashes that never close is not
+  // searched again from every later slash (quadratic, Deep Scan 2026-11-01). close[2*j + s] = the answer from j with s = 1 inside a class.
+  let reClose = null;
+  const regexClose = (from) => {
+    if (reClose === null) {
+      const len = text.length;
+      reClose = new Int32Array(2 * len + 4).fill(-1);
+      const at = (j, s) => (j >= len ? -1 : reClose[2 * j + s]);
+      for (let j = len - 1; j >= 0; j--) {
+        CENSUS_WORK.steps++;
+        const d = text[j];
+        let out, inn;
+        if (d === '\n') { out = -1; inn = -1; }
+        else if (d === '\\') { out = at(j + 2, 0); inn = at(j + 2, 1); }
+        else if (d === '[') { out = at(j + 1, 1); inn = out; }
+        else if (d === ']') { out = at(j + 1, 0); inn = out; }
+        else if (d === '/') { out = j; inn = at(j + 1, 1); }
+        else { out = at(j + 1, 0); inn = at(j + 1, 1); }
+        reClose[2 * j] = out;
+        reClose[2 * j + 1] = inn;
+      }
+    }
+    return from >= text.length ? -1 : reClose[2 * from];
+  };
   const regexAllowed = () => {
     const p = toks[toks.length - 1];
     if (!p) return true;
@@ -249,17 +277,8 @@ export function lexAmb(text, force = null) {
       const p = toks[toks.length - 1];
       const maybe = !allowed && forced === undefined && !!p && p.k === 'p' && (p.v === ')' || p.v === '}' || p.v === '++' || p.v === '--');
       if (allowed || maybe) {
-        let j = i + 1;
-        let inClass = false;
-        let ok = false;
-        while (j < text.length && text[j] !== '\n') {
-          const d = text[j];
-          if (d === '\\') { j += 2; continue; }
-          if (d === '[') inClass = true;
-          else if (d === ']') inClass = false;
-          else if (d === '/' && !inClass) { ok = true; break; }
-          j++;
-        }
+        let j = regexClose(i + 1);
+        const ok = j >= 0;
         if (ok && allowed) {
           if (soft) amb.push({ i, ln: line, dir: 'div' });
           j++;
@@ -552,36 +571,58 @@ function directCallee(ctx, n) {
   return parts.length ? parts.join('.') : null;
 }
 
+const isOpenerTok = (t) => (t.k === 'p' && (t.v === '(' || t.v === '[' || t.v === '{')) || t.k === 'tplopen';
+const isCloserTok = (t) => (t.k === 'p' && (t.v === ')' || t.v === ']' || t.v === '}')) || t.k === 'tplclose';
+
+// Both questions below walk back from a token over the closed brackets before it to the brackets that enclose it. The walk is done ONCE per token array, in one
+// forward pass, and every lookup reads the result: walking back again for each reference went over every earlier statement each time, quadratic on a long file
+// (Deep Scan 2026-11-01). open[j] = the opener a backward walk that starts AT token j stops on (-1 at the start of the file or at a closer with no opener);
+// decide[o] = for an opener o, the first opener up its chain (o itself included) that settles inAssignTarget, or -1.
+const UP = new WeakMap();
+function upIndex(ctx) {
+  const { toks, m } = ctx;
+  let u = UP.get(toks);
+  if (u) return u;
+  const open = new Int32Array(toks.length);
+  const decide = new Int32Array(toks.length).fill(-1);
+  for (let j = 0; j < toks.length; j++) {
+    CENSUS_WORK.steps++;
+    const t = toks[j];
+    if (isCloserTok(t)) { const o = m.get(j); open[j] = o === undefined || o === 0 ? -1 : open[o - 1]; continue; }
+    if (!isOpenerTok(t)) { open[j] = j > 0 ? open[j - 1] : -1; continue; }
+    open[j] = j;
+    const c = m.get(j);
+    if (t.k === 'p' && (t.v === '[' || t.v === '{') && c !== undefined && isP(toks[c + 1], '=')) decide[j] = j;
+    else if (isP(t, '(') && isId(toks[j - 1], 'for')) decide[j] = j;
+    else { const up = j > 0 ? open[j - 1] : -1; decide[j] = up < 0 ? -1 : decide[up]; }
+  }
+  u = { open, decide };
+  UP.set(toks, u);
+  return u;
+}
+
 // The index of the nearest bracket that encloses token n and is still open there, or -1.
 function nearestOpener(ctx, n) {
-  const { toks, m } = ctx;
-  for (let j = n - 1; j >= 0; j--) {
-    const t = toks[j];
-    if ((t.k === 'p' && (t.v === ')' || t.v === ']' || t.v === '}')) || t.k === 'tplclose') { const o = m.get(j); if (o === undefined) return -1; j = o; continue; }
-    if ((t.k === 'p' && (t.v === '(' || t.v === '[' || t.v === '{')) || t.k === 'tplopen') return j;
-  }
-  return -1;
+  CENSUS_WORK.steps++;
+  return n > 0 ? upIndex(ctx).open[n - 1] : -1;
 }
 
 // true when token n is inside the target of a destructuring assignment ({ a: x.y } = o, [x.y] = a) or the left of a for-in / for-of head.
 function inAssignTarget(ctx, n) {
   const { toks, m } = ctx;
-  let j = n - 1;
-  while (j >= 0) {
-    const t = toks[j];
-    if ((t.k === 'p' && (t.v === ')' || t.v === ']' || t.v === '}')) || t.k === 'tplclose') { const o = m.get(j); if (o === undefined) return false; j = o - 1; continue; }
-    if (t.k === 'p' && (t.v === '[' || t.v === '{')) { const c = m.get(j); if (c !== undefined && isP(toks[c + 1], '=')) return true; }
-    else if (isP(t, '(') && isId(toks[j - 1], 'for')) {
-      const c = m.get(j);
-      if (c === undefined) return false;
-      for (let k = n; k < c; k++) {
-        if ((toks[k].k === 'p' && (toks[k].v === '(' || toks[k].v === '[' || toks[k].v === '{')) || toks[k].k === 'tplopen') { const e = m.get(k); if (e === undefined) return false; k = e; continue; }
-        if (isP(toks[k], ';')) return false;
-        if (isId(toks[k], 'of') || isId(toks[k], 'in')) return true;
-      }
-      return false;
-    }
-    j--;
+  CENSUS_WORK.steps++;
+  const { open, decide } = upIndex(ctx);
+  const s = n > 0 ? open[n - 1] : -1;
+  const j = s < 0 ? -1 : decide[s];
+  if (j < 0) return false;
+  if (!isP(toks[j], '(')) return true; // a [ or { whose closer is followed by =
+  // the ( of a for head: n is on its left when an `of` or `in` comes before the first `;`
+  const c = m.get(j);
+  if (c === undefined) return false;
+  for (let k = n; k < c; k++) {
+    if (isOpenerTok(toks[k])) { const e = m.get(k); if (e === undefined) return false; k = e; continue; }
+    if (isP(toks[k], ';')) return false;
+    if (isId(toks[k], 'of') || isId(toks[k], 'in')) return true;
   }
   return false;
 }
@@ -842,9 +883,22 @@ function helperReturns(ctx, name) {
     if (isId(toks[n], 'return')) {
       const e = Math.min(exprEnd(ctx, n + 1, true, true), body.block[1]); // a comma in a return is the comma operator: the value is the last operand, so the whole statement is read (F46)
       if (e > n + 1) out.push([n + 1, e]);
+      else return `${name} has a return with no value, which hands the child undefined, and Node then gives it the parent's whole environment`;
     }
   }
-  return out.length ? out : `${name} returns nothing this census can read`;
+  if (!out.length) return `${name} returns nothing this census can read`;
+  // Every way out must return a value (Deep Scan 2026-11-01): the body's last statement at its own level is a return or a throw that nothing makes conditional
+  // (it opens the body or follows a ; or a closed block), or the body can end with no return and hand the child undefined.
+  const [b0, b1] = body.block;
+  let last = -1;
+  for (let k = b0; k < b1; k++) {
+    if (isOpenerTok(toks[k])) { const e = m.get(k); if (e === undefined) break; k = e; continue; }
+    if ((isId(toks[k], 'return') || isId(toks[k], 'throw')) && (k === b0 || isP(toks[k - 1], ';') || isP(toks[k - 1], '}'))) last = k;
+  }
+  let tail = last < 0 ? -1 : Math.min(exprEnd(ctx, last + 1, true, true), b1);
+  while (tail >= 0 && tail < b1 && isP(toks[tail], ';')) tail++;
+  if (tail !== b1) return `${name} can end without returning a value (its last statement is not a return), which hands the child undefined, and Node then gives it the parent's whole environment`;
+  return out;
 }
 
 function judgeCall(ctx, a, b, st) {
@@ -978,11 +1032,18 @@ function scanOne(rel, ctx, accept) {
     if (close === undefined) { findings.push(`${rel}:${t.ln} unbalanced parens scanning a ${t.v}('git', ...) call -- census cannot verify it`); continue; }
     // The env must be a top-level member of an OBJECT ARGUMENT of this call (the options), never one nested in the args array
     // or in another value: a decoy env elsewhere in the call would be judged while the real options inherit process.env.
+    // Only the argument Node reads as the options counts (Deep Scan 2026-11-01: an env in an ignored argument certified a call that inherits the parent's
+    // environment): the second argument when it is an object literal (spawnSync(cmd, options)), else the third (spawnSync(cmd, args, options)).
+    const args = [];
+    for (let ca = open + 1; ca < close;) { const ce = Math.min(exprEnd(ctx, ca, false), close); args.push([ca, ce]); ca = ce + 1; }
+    const isObjArg = (x) => !!x && isP(toks[x[0]], '{') && m.get(x[0]) === x[1] - 1;
+    const optArg = isObjArg(args[1]) ? args[1] : args[2];
+    // an env in an object argument Node ignores is refused by itself: it proves nothing, and a reader takes it for the options (F48)
+    const decoy = args.find((x) => x !== optArg && isObjArg(x) && toks.slice(x[0] + 1, x[1] - 1).some((tk, k) => (isId(tk, 'env') || (tk.k === 'str' && tk.v === 'env')) && nearestOpener(ctx, x[0] + 1 + k) === x[0]));
+    if (decoy) { findings.push(`${rel}:${t.ln} ${t.v}('git', ...) has an env: in an argument Node does not read as the options (the options are the second argument when it is an object, else the third) -- the census cannot count it`); continue; }
     const sites = [];
-    let ca = open + 1;
-    while (ca < close) {
-      const ce = Math.min(exprEnd(ctx, ca, false), close);
-      if (isP(toks[ca], '{') && m.get(ca) === ce - 1) {
+    for (const [ca, ce] of optArg ? [optArg] : []) {
+      if (isObjArg([ca, ce])) {
         const found = [];
         let spread = false;
         for (let k = ca + 1; k < ce - 1;) {
@@ -994,7 +1055,6 @@ function scanOne(rel, ctx, accept) {
         }
         for (const x of found) sites.push({ ...x, spread });
       }
-      ca = ce + 1;
     }
     if (!sites.length) { findings.push(`${rel}:${t.ln} ${t.v}('git', ...) carries no 'env:' -- must route through gitEnv() (CWK-133/C-4)`); continue; }
     for (const s of sites) fileSites.add(s.shorthand ? s.j : s.b - s.a === 1 ? s.a : -1);
@@ -1061,16 +1121,28 @@ export function censusGitSpawns(files, exempt = CENSUS_EXEMPT) {
 
 // Real filesystem walk of scripts/**/*.mjs, `rel` relative to `repo` so a finding names the
 // exact path the reviewer's own manual census used (a forward-slash path under the repository's scripts folder).
+// It reads regular files only, each within MAX_SOURCE_BYTES (ours, far above any script the flock ships): a symlink or junction anywhere under scripts/, a .mjs
+// that is not a regular file and a .mjs past the budget are refused by name with a throw, never followed, skipped or read (Deep Scan 2026-11-01: a .mjs link
+// to an endless device made the census read without end). The file type is checked again on the open descriptor, so a swap after the listing is caught too.
+export const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
 export function collectScriptsMjs(repo) {
   const scriptsDir = path.join(repo, 'scripts');
   const files = [];
   (function walk(d) {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith('.mjs')) {
-        files.push({ rel: path.relative(repo, p).replace(/\\/g, '/'), text: fs.readFileSync(p, 'utf8') });
-      }
+      const rel = path.relative(repo, p).replace(/\\/g, '/');
+      if (e.isSymbolicLink()) throw new Error(`${rel} is a symlink or junction: the census refuses it by name and never follows it`);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!e.name.endsWith('.mjs')) continue;
+      if (!e.isFile()) throw new Error(`${rel} is not a regular file: the census refuses it by name and never reads it`);
+      const fd = fs.openSync(p, 'r');
+      try {
+        const st = fs.fstatSync(fd);
+        if (!st.isFile()) throw new Error(`${rel} is not a regular file: the census refuses it by name and never reads it`);
+        if (st.size > MAX_SOURCE_BYTES) throw new Error(`${rel} is ${st.size} bytes, past the census budget of ${MAX_SOURCE_BYTES}: refused by name, not read`);
+        files.push({ rel, text: fs.readFileSync(fd, 'utf8') });
+      } finally { fs.closeSync(fd); }
     }
   })(scriptsDir);
   return files;

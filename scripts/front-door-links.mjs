@@ -20,6 +20,27 @@ const USAGE = 'usage: node scripts/front-door-links.mjs [--skip-host=<host>]... 
 
 const env = (k, d) => (Number(process.env[k]) > 0 ? Number(process.env[k]) : d);
 
+// A front door is a page a visitor reads, so a named file is read only as a regular file under a byte bound (ours: 4 MiB, far past any README),
+// checked on the open descriptor before the read: a device or a pipe in its place has no end to read to.
+const MAX_FILE_BYTES = 4194304;
+function readBounded(f) {
+  const fd = fs.openSync(f, 'r');
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw Object.assign(new Error('not a regular file'), { code: 'not a regular file' });
+    if (st.size > MAX_FILE_BYTES) throw Object.assign(new Error('too large'), { code: `${st.size} bytes, past the byte bound of ${MAX_FILE_BYTES}` });
+    return fs.readFileSync(fd, 'utf8');
+  } finally { fs.closeSync(fd); }
+}
+
+// A file name, a link or a server's redirect target can carry a control character (C0, DEL, C1, a line or paragraph separator). Each is written as
+// its code point, so no FAIL line can be forged, split or erased on the terminal or in a log that parses these lines (CWE-117).
+const BACKSLASH = String.fromCharCode(92);
+const printable = (s) => Array.from(String(s), (ch) => {
+  const c = ch.codePointAt(0);
+  return c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029 ? `${BACKSLASH}u{${c.toString(16)}}` : ch;
+}).join('');
+
 async function main(argv) {
   if (argv.includes('-h') || argv.includes('--help')) { console.log(USAGE); return 0; }
   const skipHosts = [];
@@ -33,17 +54,17 @@ async function main(argv) {
   let fails = 0;
   const texts = [];
   for (const f of files) {
-    try { texts.push({ name: f, text: fs.readFileSync(f, 'utf8') }); } catch (e) { console.log(`FAIL ${f}: cannot be read (${e.code || e.message})`); fails++; }
+    try { texts.push({ name: f, text: readBounded(f) }); } catch (e) { console.log(`FAIL ${printable(f)}: cannot be read (${printable(e.code || e.message)})`); fails++; }
   }
   let summary = '';
   try {
     const lib = await import(pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'lib', 'front-door-links.mjs')).href);
     const r = await lib.checkFiles(texts, { timeoutMs: env('FRONT_DOOR_LINKS_TIMEOUT_MS', lib.DEFAULT_TIMEOUT_MS), retryMs: env('FRONT_DOOR_LINKS_RETRY_MS', lib.DEFAULT_RETRY_MS), skipHosts });
-    for (const x of r.findings) console.log(`FAIL ${x.file}:${x.line}: ${x.url}: ${x.message}`);
+    for (const x of r.findings) console.log(`FAIL ${printable(x.file)}:${x.line}: ${printable(x.url)}: ${printable(x.message)}`);
     fails += r.findings.length;
     summary = `${r.links} link(s) in ${texts.length} file(s), ${r.fetched} fetched${r.skipped.length ? `, ${r.skipped.length} skipped by host` : ''}`;
   } catch (e) {
-    console.log(`FAIL front-door-links: the engine could not run (${e && e.message ? e.message : e})`);
+    console.log(`FAIL front-door-links: the engine could not run (${printable(e && e.message ? e.message : e)})`);
     fails++;
   }
   console.log(`${fails} finding(s)${summary ? `; ${summary}` : ''}`);

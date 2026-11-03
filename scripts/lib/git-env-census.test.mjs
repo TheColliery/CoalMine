@@ -96,3 +96,76 @@ test('the lexer reads a quote inside a regex and a backtick inside a template wi
   assert.ok(toks.some((t) => t.k === 'id' && t.v === 'marker'), 'the call after them is still seen');
   assert.ok(!toks.some((t) => t.v === 'usr'), 'the shebang line is skipped');
 });
+
+// ---- 2026-11-02a (a): the four Deep Scan classes of 2026-11-01, each with a witness that was red before its fix ---------------------------------------------
+// (1) Work grows with the file, not its square: three scans walked the whole file again for each reference (the assignment-target test and the enclosing-
+// bracket test walked back over every earlier statement; a regex candidate that found no closing slash searched to the end of its line again for every later
+// slash). The counter is the census's own (CENSUS_WORK); the bound is per character and on the doubling, never a clock.
+test('the census does linear work on the three shapes that made it quadratic: repeated reads of a declared name, a spawner named many times, and a line of unclosed regex candidates -- RED before 2026-11-02a', async () => {
+  const { CENSUS_WORK } = await import('./git-env-census.mjs');
+  const shapes = {
+    reads: (n) => 'const a = 1;\n' + 'a;\n'.repeat(n),
+    spawnerNames: (n) => 'spawnSync;\n'.repeat(n),
+    regexLine: (n) => '/['.repeat(n) + '\n',
+  };
+  for (const [name, make] of Object.entries(shapes)) {
+    const at = (n) => { const text = make(n); CENSUS_WORK.steps = 0; scan(text); return { chars: text.length, steps: CENSUS_WORK.steps }; };
+    const small = at(2000), big = at(4000);
+    assert.ok(big.steps > 0, `${name}: the counter moved`);
+    assert.ok(big.steps / big.chars <= 8, `${name}: ${big.steps / big.chars} steps per character`);
+    assert.ok(big.steps / small.steps <= 2.3, `${name}: doubling the file took ${big.steps / small.steps} times the work`);
+  }
+});
+
+// (2) The collector reads only regular files, within a byte budget: a .mjs symlink (or a link to a directory) under scripts/ is refused by name, never
+// followed and never skipped, and a file past the budget is refused by name before it is read.
+test('collectScriptsMjs refuses a symlink or junction under scripts/ by name, and a .mjs past the byte budget, instead of following or reading it -- RED before 2026-11-02a', async (t) => {
+  const { MAX_SOURCE_BYTES } = await import('./git-env-census.mjs');
+  assert.ok(Number.isInteger(MAX_SOURCE_BYTES) && MAX_SOURCE_BYTES > 0, 'the budget is a named number');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-env-census-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'scripts', 'big.mjs'), 'x'.repeat(MAX_SOURCE_BYTES + 1));
+    assert.throws(() => collectScriptsMjs(dir), /scripts\/big\.mjs.*budget/, 'an over-budget file is refused by name');
+    fs.rmSync(path.join(dir, 'scripts', 'big.mjs'));
+    fs.writeFileSync(path.join(dir, 'real.mjs'), 'export const x = 1;\n');
+    let made = true;
+    try { fs.symlinkSync(process.platform === 'win32' ? dir : path.join(dir, 'real.mjs'), path.join(dir, 'scripts', 'link.mjs'), process.platform === 'win32' ? 'junction' : 'file'); } catch { made = false; }
+    if (!made) { t.skip('this account cannot make a symlink or junction here'); return; }
+    assert.throws(() => collectScriptsMjs(dir), /scripts\/link\.mjs.*(symlink|regular file)/, 'a link is refused by name');
+  } finally { removeTree(dir); }
+});
+
+// The fixture calls are built from these names, so the repository's spawn-timeout scan does not read a fixture string as a spawn of this file.
+const SP = 'spawn' + 'Sync';
+const EF = 'execFile' + 'Sync';
+
+// (3) The env must sit in the argument Node reads as the options: the second argument when it is an object, else the third. An env in any other argument is a decoy.
+test('an env in an argument Node does not read as the options is not counted: a decoy after an options object, or after the options position -- RED before 2026-11-02a', () => {
+  const head = "import { spawnSync, execFileSync } from 'node:child_process';\n";
+  for (const call of [
+    `${SP}('git', { cwd: '.' }, { env: gitEnv() });`,
+    `${SP}('git', ['status'], {}, { env: gitEnv() });`,
+    `${EF}('git', { cwd: '.' }, { env: gitEnv() });`,
+  ]) assert.ok(scan(head + call + '\n').findings.length >= 1, `passed: ${call}`);
+  for (const call of [`${SP}('git', { env: gitEnv() });`, `${SP}('git', ['status'], { env: gitEnv() });`, `${SP}('git', args, { env: gitEnv() });`]) {
+    const r = scan(head + call + '\n');
+    assert.deepEqual([r.findings, r.safe], [[], 1], `refused: ${call}`);
+  }
+});
+
+// (4) A helper is safe only when every way out of it returns a safe value: a bare return, or a body that can end without a return, hands the child undefined, and Node then
+// gives it the parent's whole environment.
+test('a helper with a bare return, or one whose body can end without returning, is not a safe env -- RED before 2026-11-02a', () => {
+  const head = "import { spawnSync } from 'node:child_process';\n";
+  const call = `${SP}('git', ['status'], { env: mk() });\n`;
+  for (const fn of [
+    'function mk() { if (process.argv[2]) return gitEnv(); }',
+    'function mk() { if (process.argv[2]) return; return gitEnv(); }',
+    'const mk = () => { if (process.argv[2]) return gitEnv(); };',
+  ]) assert.ok(scan(head + fn + '\n' + call).findings.length >= 1, `passed: ${fn}`);
+  for (const fn of ['function mk() { return gitEnv(); }', 'function mk() { if (process.argv[2]) return gitEnv(); return gitEnv(); }', 'const mk = () => gitEnv();']) {
+    const r = scan(head + fn + '\n' + call);
+    assert.deepEqual([r.findings, r.safe], [[], 1], `refused: ${fn}`);
+  }
+});

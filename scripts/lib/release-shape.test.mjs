@@ -267,3 +267,17 @@ test('mirroredTitleOverflow counts UTF-16 units (the conservative count: an astr
   assert.equal(Array.from(mirroredTitle('R', 'v1.0.0', name)).length < 200, true);
   assert.ok(mirroredTitleOverflow('R', 'v1.0.0', name) !== null, '100 emoji are 200 units: held, never risked');
 });
+
+test('extractChangelogEntry: a summary line carrying a control character is refused by name, never printed or posted -- RED before 2026-11-03a', () => {
+  // Built from code points so no escape travels through a tool: ESC (C0), a lone CR (C0), DEL, and CSI (C1).
+  for (const cp of [0x1b, 0x0d, 0x7f, 0x9b]) {
+    const bad = String.fromCharCode(cp);
+    const text = `# Changelog\n\n## [1.2.3] - 2026-11-03\n\nA summary with a ${bad}[31m hidden control.\n\n### Fixed\n- Thing.\n`;
+    assert.throws(() => extractChangelogEntry(text, '1.2.3'), (e) => e instanceof ChangelogShapeError && /control character/.test(e.message) && !e.message.includes(bad), `code point ${cp} is refused, and the message never echoes it`);
+  }
+  // A tab is a C0 character too: refused the same way.
+  assert.throws(() => extractChangelogEntry('## [1.2.3] - 2026-11-03\n\nA\tsummary.\n\n### Fixed\n- x.\n', '1.2.3'), ChangelogShapeError);
+  // An ordinary summary (Thai and an em dash included) still passes.
+  const ok = extractChangelogEntry('## [1.2.3] - 2026-11-03\n\nสรุป: a summary \u2014 fine.\n\n### Fixed\n- x.\n', '1.2.3');
+  assert.equal(ok.summary, 'สรุป: a summary \u2014 fine.');
+});

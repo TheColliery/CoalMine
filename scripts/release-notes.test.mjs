@@ -351,3 +351,55 @@ test('sandboxEnv: one literal of named keys with GIT_CONFIG_NOSYSTEM the literal
   assert.deepEqual(spreads, ['...Object.fromEntries(BASE_ENV_KEYS.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),']);
   assert.ok(/GIT_CONFIG_NOSYSTEM: '1'/.test(body));
 });
+
+// 2026-11-03a: the CHANGELOG is read only as a regular file under a byte bound, and the four release files are written by replacing their directory entry, never
+// through whatever an existing entry points at (a link left in the tag's tree, or a second name of another file).
+test('release-notes.mjs: a CHANGELOG.md past the byte bound is refused by name before it is read, exit 1, no files written -- RED before 2026-11-03a', () => {
+  // read from the script's text: importing it would run it
+  const MAX_CHANGELOG_BYTES = Number((/^const MAX_CHANGELOG_BYTES = ([0-9]+);/m.exec(fs.readFileSync(SCRIPT, 'utf8')) || [])[1]);
+  assert.ok(Number.isInteger(MAX_CHANGELOG_BYTES) && MAX_CHANGELOG_BYTES > 0, 'the bound is a named number');
+  const dir = scratchWithLib();
+  const head = '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n';
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), head + ' '.repeat(MAX_CHANGELOG_BYTES + 1 - head.length));
+  const res = run(dir, { GITHUB_REF_NAME: 'v1.2.0' });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /CHANGELOG\.md .*byte bound/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
+  const chk = run(dir, { GITHUB_REPOSITORY: 'o/Demo' }, ['--check']);
+  assert.equal(chk.status, 1, chk.stdout + chk.stderr);
+  assert.match(chk.stderr, /CHANGELOG\.md .*byte bound/);
+});
+
+test('release-notes.mjs: a CHANGELOG.md that is a symlink is refused by name, never followed (skipped visibly where the account cannot make one) -- RED before 2026-11-03a', (t) => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'real.md'), '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n');
+  try { fs.symlinkSync(path.join(dir, 'real.md'), path.join(dir, 'CHANGELOG.md'), 'file'); } catch { t.skip('this account cannot make a file symlink here'); return; }
+  const res = run(dir, { GITHUB_REF_NAME: 'v1.2.0' });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /CHANGELOG\.md .*not a regular file/);
+});
+
+test('release-notes.mjs: a release file that already exists as a second name of another file is replaced, and the other file keeps its bytes -- RED before 2026-11-03a', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n');
+  const victim = path.join(dir, 'victim.txt');
+  fs.writeFileSync(victim, 'keep me\n');
+  for (const name of ['release-title.txt', 'release-body.md', 'release-latest.txt', 'release-prerelease.txt']) fs.linkSync(victim, path.join(dir, name));
+  const res = run(dir, { GITHUB_REF_NAME: 'v1.2.0' });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me\n', 'the write went through the existing entry to the other file');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'v1.2.0 - a test-only CLI wiring proof');
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.includes('.tmp-')), [], 'no temporary file is left behind');
+});
+
+test('release-notes.mjs: a release file that is a symlink is replaced by a plain file, never written through (skipped visibly where the account cannot make one) -- RED before 2026-11-03a', (t) => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n');
+  const victim = path.join(dir, 'victim.txt');
+  fs.writeFileSync(victim, 'keep me\n');
+  try { fs.symlinkSync(victim, path.join(dir, 'release-body.md'), 'file'); } catch { t.skip('this account cannot make a file symlink here'); return; }
+  const res = run(dir, { GITHUB_REF_NAME: 'v1.2.0' });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me\n');
+  assert.equal(fs.lstatSync(path.join(dir, 'release-body.md')).isSymbolicLink(), false);
+});

@@ -82,6 +82,12 @@ export function extractChangelogEntry(changelogText, tagVersion, { previousStabl
     throw new ChangelogShapeError(`the [${version}] entry has no one-line summary before its first "### " section -- add one sentence stating what changed and why it matters (this becomes the Release's title and Lead)`);
   }
   const summary = body[firstContentIdx].trim();
+  // The summary becomes the Release title, the announcement and every log line that prints them, so a control character in it (C0, DEL or C1:
+  // an escape sequence, a lone carriage return) refuses the entry by name, and only its code point is echoed, never the character (CWE-117).
+  for (const ch of summary) {
+    const c = ch.codePointAt(0);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) throw new ChangelogShapeError(`the [${version}] summary line carries a control character (code point ${c}) -- remove it; the summary becomes the Release title`);
+  }
 
   const afterSummary = body.slice(firstContentIdx + 1);
   const sectionsStart = afterSummary.findIndex((l) => /^###\s/.test(l));
