@@ -17,6 +17,7 @@ Report a security issue in this repo through GitHub's private vulnerability repo
 - [CoalMine hooks read a planted path with no bound (crash or hang)](https://github.com/TheColliery/CoalMine/security/advisories/GHSA-mv22-vqwr-5hq9) (low, fixed in v3.20.2)
 - [CoalMine hooks spent quadratic time stripping comments from a malformed project config](https://github.com/TheColliery/CoalMine/security/advisories/GHSA-8f9c-p8xr-mj4r) (low, fixed in v3.23.7)
 - [CoalMine hooks printed a config-supplied autoFixMode line as the hook's own answer](https://github.com/TheColliery/CoalMine/security/advisories/GHSA-74cp-x76q-wqwg) (low, fixed in v3.23.7)
+- [A file name holding a line break can add a line to the Stop hook's report](https://github.com/TheColliery/CoalMine/security/advisories/GHSA-7jrp-467q-v6qp) (low, fixed in v3.25.4)
 
 ---
 
