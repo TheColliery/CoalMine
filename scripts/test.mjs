@@ -88,6 +88,8 @@ const TESTS = [
   'scripts/lib/link-check-tag-linear.test.mjs',
   // 29ao (T-29al-10): a skill source tree that holds a link is refused before anything is written.
   'scripts/lib/render-link.test.mjs',
+  // 29ao (T-29al-4): a link at a region sync target is refused; the bytes it points at keep theirs.
+  'scripts/lib/build-region-link.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',

@@ -18,7 +18,6 @@ export const ALLOWLIST = {
   'scripts/verify-release-shape.mjs': { count: 3, reason: 'conversion owed, T-29q-1' },
   'scripts/install.mjs': { count: 3, reason: 'conversion owed, T-29q-1' },
   'scripts/decide-upload.mjs': { count: 2, reason: 'conversion owed, T-29q-1' },
-  'scripts/build-plugin.mjs': { count: 2, reason: 'conversion owed, T-29q-1' },
   'scripts/secret-gate.mjs': { count: 1, reason: 'conversion owed, T-29q-1' },
   'scripts/lib/publish-release.mjs': { count: 1, reason: 'conversion owed, T-29q-1' },
   'scripts/lib/machine-reading.mjs': { count: 1, reason: 'conversion owed, T-29q-1' },
