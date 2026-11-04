@@ -2,20 +2,22 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [3.25.5] - 2026-11-03
+## [3.25.5] - 2026-11-05
 
 The installer refuses a skill source folder that holds a link
 
-The installer and the plugin build changed under `scripts/`; `plugin/` moves only the version string in `plugin/.claude-plugin/plugin.json`, so this is a PATCH release.
+The installer and the plugin build changed under `scripts/`; `plugin/` moves the version string in `plugin/.claude-plugin/plugin.json` and one character in `plugin/commands/stats.md`, so this is a PATCH release.
 
 ### Fixed
 - **The installer refuses a skill source folder that holds a link anywhere, and copies the skill files bounded.** The render step stops with a named error before it writes anything, reads each file through the bounded reader and writes through the checked writer. — test: scripts/lib/render-link.test.mjs, scripts/lib/install-lowthree.test.mjs
+
+- **`/coalmine:stats` no longer carries a hidden character.** The status legend in `commands/stats.md` had a variation selector (U+FE0F) after the warning sign, which an installer reports as a hidden character; it is gone from the command and its rendered copy in `plugin/commands/stats.md`. — test: none (one character in prose; `verify.mjs` checks that the rendered copy matches its source)
 
 ### Internal
 - **The plugin build's region sync writes through the checked writer and reads bounded.** A hook that is a link is refused with a named line instead of being written through. — test: scripts/lib/build-region-link.test.mjs
 - **Two of the consistency check's raw reads go through the bounded reader.** The plugin description read and the mirror byte compare now stop with a FAIL line on a link or a file over 4 MB; the read census allowance drops from 9 to 7. — test: scripts/lib/read-census.test.mjs, scripts/lib/consistency.test.mjs
 - **The installer test checks the copy's own paths too.** The leg that runs the installer in a copy of this repository asserts that no config is created at the copy's own paths, beside the checks on the live paths. — test: scripts/lib/install.test.mjs
-- **The shared release, link-check, environment-census and secret-gate scripts are re-copied byte for byte from the series canon, and the secret scanner and its test from its source repository.** Five room files keep a named first-line note where they differ from the canon on purpose: `configure.mjs`, `config-keys.mjs`, `config-schema.mjs` and the `wave-run` pair. The re-copy brings the canon's tests with it, and `scripts/build-claude-ai-zips.test.mjs` is new. — test: scripts/build-claude-ai-zips.test.mjs, scripts/lib/git-env-census.test.mjs, scripts/lib/release-shape.test.mjs, scripts/release-notes.test.mjs, scripts/verify-release-shape.test.mjs, scripts/front-door-links.test.mjs, scripts/secret-gate.test.mjs, scripts/secret-scan.test.mjs, scripts/lib/wave-run.test.mjs
+- **The shared release, link-check, environment-census and secret-gate scripts are re-copied byte for byte from the series canon (revision 1af0733), and the secret scanner and its test from the project that carries it.** Five room files keep a named first-line note where they differ from the canon on purpose: `configure.mjs`, `config-keys.mjs`, `config-schema.mjs` and the `wave-run` pair. The re-copy brings the canon's tests with it, and `scripts/build-claude-ai-zips.test.mjs` is new. The release-notes script now opens the CHANGELOG before it checks the file's name. — test: scripts/build-claude-ai-zips.test.mjs, scripts/lib/git-env-census.test.mjs, scripts/lib/release-shape.test.mjs, scripts/release-notes.test.mjs, scripts/verify-release-shape.test.mjs, scripts/front-door-links.test.mjs, scripts/secret-gate.test.mjs, scripts/secret-scan.test.mjs, scripts/lib/wave-run.test.mjs
 
 ## [3.25.4] - 2026-11-03
 
