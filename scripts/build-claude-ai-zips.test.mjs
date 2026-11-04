@@ -192,3 +192,25 @@ test('M1 on a runner: two builds of the same tree at different times give byte-i
   const entries = spawnSync('unzip', ['-Z1', file], { encoding: 'utf8', timeout: 15000, env: childEnv() }).stdout.split('\n').filter(Boolean);
   assert.deepEqual(entries, ['alpha/SKILL.md', 'alpha/references/a.md'], 'sorted by byte value, no folder entries, no dotfile');
 });
+
+// order 2026-11-03b, CoalLedger T-43: two of that room's fixes hold for every room and join the canon (its third, a main-module guard, guards an
+// import no room makes of this script, which exports nothing).
+test('an EMPTY plugin/skills is a failure, exit 1, never "Done: 0/0" with exit 0 -- RED before 2026-11-03b (CoalLedger T-43)', () => {
+  const root = repo([]);
+  fs.mkdirSync(path.join(root, 'plugin', 'skills'), { recursive: true });
+  const r = stage(root);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /^FAIL: .*holds no skill directories/m);
+  assert.doesNotMatch(r.stdout, /Done: 0\/0/);
+});
+
+test('a block-scalar description with a blank line inside is replaced whole: no tail line is left in the staged frontmatter -- RED before 2026-11-03b (CoalLedger T-43)', () => {
+  const root = repo(['alpha'], (dir) => fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: alpha\ndescription: >\n  first paragraph\n\n  orphaned tail\nlicense: Apache-2.0\n---\nbody\n'));
+  const r = stage(root);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const text = fs.readFileSync(path.join(root, 'dist-claude-ai', 'alpha', 'SKILL.md'), 'utf8');
+  const front = /^---\n([\s\S]*?)\n---/.exec(text)[1].split('\n');
+  assert.equal(front.filter((l) => l.startsWith('description:')).length, 1, text);
+  assert.ok(!text.includes('orphaned tail'), 'the tail of the old description is gone: ' + text);
+  assert.ok(front.includes('license: Apache-2.0') && front.includes('name: alpha'), 'the fields around it stay: ' + text);
+});

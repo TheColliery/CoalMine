@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { extractLinks, probe, judge, checkFiles } from './lib/front-door-links.mjs';
 
@@ -259,5 +259,32 @@ test('CLI: a named file past the byte bound, or one that is not a regular file, 
     assert.ok(lines.some((l) => l.startsWith('FAIL ') && l.endsWith(`README.md: cannot be read (${bound + 1} bytes, past the byte bound of ${bound})`)), r.stdout);
     assert.match(r.stdout, /^FAIL .*: cannot be read \((not a regular file|EISDIR)\)$/m);
     assert.match(r.stdout, /^2 finding\(s\)/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// order 2026-11-03b: a named file is opened before any check of its name, a link is refused rather than followed, and a pipe never holds the open.
+// The link and pipe legs need a file symlink and mkfifo; each skips visibly where the platform or the account cannot make one.
+test('CLI: a named file that is a symlink is refused, never followed -- RED before 2026-11-03b where a file symlink can be made', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdl-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'real.md'), `[a](${base}/ok)\n`);
+    const link = path.join(dir, 'README.md');
+    try { fs.symlinkSync(path.join(dir, 'real.md'), link, 'file'); } catch { t.skip('this account cannot make a file symlink here'); return; }
+    const r = await run([link]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(r.stdout.split(/\r?\n/).some((l) => l.startsWith('FAIL ') && l.endsWith('README.md: cannot be read (not a regular file)')), r.stdout);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI: a named file that is a pipe is refused at once, never waited on -- RED before 2026-11-03b where mkfifo exists', async (t) => {
+  if (process.platform === 'win32') { t.skip('no mkfifo on Windows'); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdl-'));
+  try {
+    const fifo = path.join(dir, 'README.md');
+    const mk = spawnSync('mkfifo', [fifo], { timeout: 10000, env: childEnv() });
+    if (mk.status !== 0) { t.skip('mkfifo is not available here'); return; }
+    const r = await run([fifo]);
+    assert.equal(r.status, 1, 'the child ended on its own, refusing the pipe: ' + r.stdout + r.stderr);
+    assert.ok(r.stdout.split(/\r?\n/).some((l) => l.startsWith('FAIL ') && l.endsWith('README.md: cannot be read (not a regular file)')), r.stdout);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

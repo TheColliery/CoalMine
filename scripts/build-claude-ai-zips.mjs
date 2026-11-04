@@ -77,7 +77,9 @@ function replaceDescriptionField(text, newValue) {
   let end = i + 1;
   const v = lines[i].slice('description:'.length).trim();
   if (/^[>|][-+]?$/.test(v)) {
-    while (end < lines.length && /^\s+\S/.test(lines[end])) end++;
+    // A blank line inside a block scalar does not end it (CoalLedger T-43): the scan carries blanks through, ends after the last indented line,
+    // and stops at the next top-level field, so no tail of the old description is left in the frontmatter of a shipped SKILL.md.
+    for (let j = i + 1; j < lines.length && /^(\s|$)/.test(lines[j]); j++) if (/\S/.test(lines[j])) end = j + 1;
   }
   const escaped = newValue.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const newLines = [...lines.slice(0, i), `description: "${escaped}"`, ...lines.slice(end)];
@@ -110,6 +112,12 @@ async function main() {
     const st = fs.lstatSync(path.join(pluginSkills, entry.name));
     if (st.isDirectory()) skills.push({ name: entry.name, refused: false });
     else if (st.isSymbolicLink() || !st.isFile()) skills.push({ name: entry.name, refused: true });
+  }
+  // An EMPTY plugin/skills is a failure too (CoalLedger T-43): the loop below would never run and the workflow would attach no asset, reported as a success.
+  if (skills.length === 0) {
+    console.error(`FAIL: ${pluginSkills} holds no skill directories -- nothing to stage; run node scripts/build-plugin.mjs first.`);
+    process.exitCode = 1;
+    return;
   }
   let failed = 0;
   for (const skill of skills) {

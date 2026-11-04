@@ -54,21 +54,28 @@ const esc = (s) => JSON.stringify(String(s)).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]
 // searches for the repository (a folder under a ceiling is not part of a repository above it; the worst a wrong value does is make the gate fail closed, UMB-456 (1) vi).
 const KEPT = new Set(['GIT_INDEX_FILE', 'GIT_CEILING_DIRECTORIES']);
 const gitEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k) || KEPT.has(k.toUpperCase()))), LC_ALL: 'C', LANGUAGE: 'C' });
+// Windows looks for a program in the CURRENT folder before PATH, and the current folder is the checkout being scanned, so a git.exe planted in
+// it ran in git's place with the committer's rights (measured 2026-11-03; CWE-426). Windows' own switch turns that lookup off, and Node reads it
+// from THIS process's environment, never from a child's env option (measured), so the gate sets it for itself before its first spawn. Elsewhere
+// the current folder is searched only when PATH names it, the user's own setting.
+if (process.platform === 'win32') process.env.NoDefaultCurrentDirectoryInExePath = '1';
 const gitIn = (a) => execFileSync('git', a, { encoding: 'utf8', maxBuffer: 256 << 20, timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() });
-// Reads blobs in one process: "<sha> <type> <size>\n<bytes>\n" per object, "<sha> missing\n" for one git does not have.
+// Reads blobs in one process: "<sha> <type> <size>\n<bytes>\n" per object, "<sha> missing\n" for one git does not have. Each distinct id is asked
+// for once, however many paths stage it: a Map from id to its bytes (a view into git's output, never a copy), or null for a missing object.
 function readBlobs(shas) {
-  const buf = execFileSync('git', ['cat-file', '--batch'], { input: shas.join('\n') + '\n', maxBuffer: 1 << 30, timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'], env: gitEnv() });
-  const out = [];
+  const ids = [...new Set(shas)];
+  const buf = execFileSync('git', ['cat-file', '--batch'], { input: ids.join('\n') + '\n', maxBuffer: 1 << 30, timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'], env: gitEnv() });
+  const out = new Map();
   let pos = 0;
-  for (let i = 0; i < shas.length; i++) {
+  for (const id of ids) {
     const nl = buf.indexOf(10, pos);
     if (nl < 0) throw new Error('cat-file output ended early');
     const head = buf.toString('latin1', pos, nl).split(' ');
     pos = nl + 1;
-    if (head[1] === 'missing') { out.push(null); continue; }
+    if (head[1] === 'missing') { out.set(id, null); continue; }
     const size = Number(head[2]);
     if (!Number.isSafeInteger(size) || pos + size > buf.length) throw new Error('cat-file output was malformed');
-    out.push(buf.toString('utf8', pos, pos + size));
+    out.set(id, buf.subarray(pos, pos + size));
     pos += size + 1;
   }
   return out;
@@ -128,19 +135,23 @@ async function main() {
 
   let scanned = 0;
   const unreadable = [];
-  const wanted = tracked.filter((e) => e.mode !== '160000' && !BINARY.test(e.name)); // a gitlink is a submodule commit, not a file
-  let bodies = [];
+  const wanted = tracked.filter((e) => e.mode !== '160000'); // a gitlink is a submodule commit, not a file
+  let blobs = null;
   if (wanted.length) {
-    try { bodies = readBlobs(wanted.map((e) => e.sha)); } catch (e) {
+    try { blobs = readBlobs(wanted.map((e) => e.sha)); } catch (e) {
       fails.push(`git could not read the staged files (${e && e.code ? e.code : 'cat-file error'}); the tree was NOT scanned`);
-      bodies = wanted.map(() => undefined);
     }
   }
-  wanted.forEach((e, i) => {
-    if (bodies[i] === undefined) return;
-    if (bodies[i] === null) { unreadable.push(esc(e.name)); return; }
+  // A binary-looking NAME only marks a blob for the content probe: it is skipped when its bytes are binary too (a NUL in its first bytes,
+  // git's rule, the scanner's looksBinary), so a text file named .png is scanned like any other. Each distinct blob is decoded once.
+  const texts = new Map();
+  if (blobs) wanted.forEach((e) => {
+    const bytes = blobs.get(e.sha);
+    if (bytes === null) { unreadable.push(esc(e.name)); return; }
+    if (BINARY.test(e.name) && scan.looksBinary(bytes)) return;
+    if (!texts.has(e.sha)) texts.set(e.sha, bytes.toString('utf8'));
     scanned++;
-    for (const h of scan.scanText(bodies[i], e.name)) keep(h, `tree ${esc(e.name)}:${h.line}`, headAcks);
+    for (const h of scan.scanText(texts.get(e.sha), e.name)) keep(h, `tree ${esc(e.name)}:${h.line}`, headAcks);
   });
   if (unreadable.length) fails.push(`${unreadable.length} tracked file(s) could not be read, so were NOT scanned: ${unreadable.slice(0, 3).join('; ')}`);
 

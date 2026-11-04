@@ -21,13 +21,18 @@ const USAGE = 'usage: node scripts/front-door-links.mjs [--skip-host=<host>]... 
 const env = (k, d) => (Number(process.env[k]) > 0 ? Number(process.env[k]) : d);
 
 // A front door is a page a visitor reads, so a named file is read only as a regular file under a byte bound (ours: 4 MiB, far past any README),
-// checked on the open descriptor before the read: a device or a pipe in its place has no end to read to.
+// checked on the open descriptor before the read: a device or a pipe in its place has no end to read to. The open comes first (a stat of the name
+// before it is a race), refuses a link where the platform can (O_NOFOLLOW) and never waits on a pipe (O_NONBLOCK); where it cannot (Windows), the
+// name is checked for a link after the open. The same shape as release-notes.mjs's readChangelog.
 const MAX_FILE_BYTES = 4194304;
+const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
 function readBounded(f) {
-  const fd = fs.openSync(f, 'r');
+  const notRegular = () => Object.assign(new Error('not a regular file'), { code: 'not a regular file' });
+  let fd;
+  try { fd = fs.openSync(f, OPEN_FLAGS); } catch (e) { throw e && e.code === 'ELOOP' ? notRegular() : e; }
   try {
     const st = fs.fstatSync(fd);
-    if (!st.isFile()) throw Object.assign(new Error('not a regular file'), { code: 'not a regular file' });
+    if (!st.isFile() || fs.lstatSync(f).isSymbolicLink()) throw notRegular();
     if (st.size > MAX_FILE_BYTES) throw Object.assign(new Error('too large'), { code: `${st.size} bytes, past the byte bound of ${MAX_FILE_BYTES}` });
     return fs.readFileSync(fd, 'utf8');
   } finally { fs.closeSync(fd); }

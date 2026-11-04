@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'release-notes.mjs');
 const LIB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lib');
@@ -402,4 +402,34 @@ test('release-notes.mjs: a release file that is a symlink is replaced by a plain
   assert.equal(res.status, 0, res.stdout + res.stderr);
   assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me\n');
   assert.equal(fs.lstatSync(path.join(dir, 'release-body.md')).isSymbolicLink(), false);
+});
+
+// order 2026-11-03b: the CHANGELOG is opened FIRST and every check reads the open descriptor. A stat of the name before the open leaves a window in
+// which the entry can be swapped for a link to another file between the check and the read (a file-system race). A preload records the order in which
+// the script touches CHANGELOG.md; the script's own code is never changed for the test.
+test('release-notes.mjs: CHANGELOG.md is opened before any check of its name, so no swap can land between a check and the read -- RED before 2026-11-03b', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n');
+  const preload = path.join(dir, 'order-probe.mjs');
+  const log = path.join(dir, 'order.log');
+  fs.writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const seen = [];',
+    "for (const name of ['lstatSync', 'statSync', 'existsSync', 'accessSync', 'openSync', 'readFileSync']) {",
+    '  const orig = fs[name];',
+    "  fs[name] = function (p, ...rest) { if (typeof p === 'string' && p.endsWith('CHANGELOG.md')) seen.push(name); return orig.call(this, p, ...rest); };",
+    '}',
+    'syncBuiltinESMExports();',
+    "process.on('exit', () => { fs.writeFileSync(process.env.ORDER_LOG, seen.join(' ')); });",
+  ].join('\n'));
+  for (const args of [[], ['--check']]) {
+    const res = spawnIn(dir, SCRIPT, args, { env: { GITHUB_REF_NAME: 'v1.2.0', GITHUB_REPOSITORY: 'o/Demo', NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, ORDER_LOG: log } });
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    const order = fs.readFileSync(log, 'utf8').split(' ').filter(Boolean);
+    const open = order.indexOf('openSync');
+    assert.ok(open >= 0, `the CHANGELOG is opened (${args.join(' ') || 'derive'}): ${order.join(' ')}`);
+    assert.deepEqual(order.slice(0, open), [], `nothing reads the name before the open (${args.join(' ') || 'derive'}): ${order.join(' ')}`);
+    assert.ok(!order.slice(open).includes('readFileSync'), 'the read goes through the open descriptor, never the name');
+  }
 });

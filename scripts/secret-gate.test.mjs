@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GATE = path.join(HERE, 'secret-gate.mjs');
@@ -350,4 +350,47 @@ test('the sandbox is closed against a repository ABOVE the temp folder: a non-re
   const r = spawnSync(process.execPath, ['--max-old-space-size=512', '--test', '--test-timeout=60000', '--test-reporter=tap', '--test-name-pattern=a scan that cannot run', fileURLToPath(import.meta.url)], { encoding: 'utf8', timeout: 120000, env });
   assert.match(r.stdout, /^# pass 1$/m, 'the nested run really ran the test: ' + r.stdout.slice(-400));
   assert.strictEqual(r.status, 0, r.stdout.slice(-800) + r.stderr.slice(-400));
+});
+
+// ---- order 2026-11-03b: a binary-looking NAME no longer skips a blob before its bytes are read; a blob id shared by several paths is read once;
+// git is never launched from the checkout the gate scans. Each was RED on the code before it.
+test('a staged text file with a binary-looking name is still scanned: the bytes decide, never the name -- RED before 2026-11-03b', () => {
+  const nul = String.fromCharCode(0);
+  const r = run(repo([{ 'notes.png': `id ${KEY}\n`, 'real.png': `PNG${nul}${nul} id ${KEY}\n` }]));
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /tree "notes\.png":1 /, 'the text file named .png was read and its key found');
+  assert.doesNotMatch(r.out, /real\.png/, 'a blob whose first bytes hold a NUL is binary by its content and stays out of the text scan');
+});
+
+test('a blob id staged at several paths is handed to git cat-file once, and every path is still reported -- RED before 2026-11-03b', () => {
+  const dir = repo([{ 'a.txt': `id ${KEY}\n`, 'b.txt': `id ${KEY}\n`, 'c/d.txt': `id ${KEY}\n`, 'README.md': 'hello\n' }]);
+  // A preload records what the gate hands to cat-file; the gate's own code is never changed for the test.
+  const preload = path.join(SANDBOX, `catfile-probe-${made.length}.mjs`);
+  const log = preload + '.log';
+  fs.writeFileSync(preload, [
+    "import cp from 'node:child_process';",
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const orig = cp.execFileSync;',
+    "cp.execFileSync = function (file, args, opts) { if (Array.isArray(args) && args.includes('cat-file') && opts && opts.input != null) fs.appendFileSync(process.env.GATE_PROBE_LOG, String(opts.input)); return orig.apply(this, arguments); };",
+    'syncBuiltinESMExports();',
+  ].join('\n'));
+  const r = run(dir, [], '', { NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(preload).href}`].filter(Boolean).join(' '), GATE_PROBE_LOG: log });
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  for (const f of ['a.txt', 'b.txt', 'c/d.txt']) assert.ok(r.out.includes(`tree "${f}":1 `), `${f} is reported: ${r.out}`);
+  const ids = fs.readFileSync(log, 'utf8').split(/\r?\n/).filter(Boolean);
+  assert.ok(ids.length >= 2, 'the probe saw the cat-file input');
+  assert.strictEqual(new Set(ids).size, ids.length, `every id is asked for once: ${ids.length} asked, ${new Set(ids).size} distinct`);
+});
+
+test('a git.exe planted in the scanned checkout is never run in git\'s place on Windows -- RED before 2026-11-03b', (t) => {
+  // Elsewhere the current folder is searched only when PATH names it, the user's own setting, so the case is Windows'.
+  if (process.platform !== 'win32') { t.skip('only Windows looks for a program in the current folder first'); return; }
+  const dir = repo([{ 'README.md': 'hello\n' }]);
+  // any small program stands in for a planted git.exe: it cannot list the index, so a gate that ran it cannot pass
+  fs.copyFileSync(path.join(process.env.SystemRoot, 'System32', 'whoami.exe'), path.join(dir, 'git.exe'));
+  // the sandbox environment never carries Windows' own switch, so the gate must set it for itself
+  const r = run(dir);
+  assert.strictEqual(r.code, 0, r.out + r.err);
+  assert.match(r.out, /^PASS SECRETS: tree scan of \d+ tracked text file\(s\) clean/m);
 });
