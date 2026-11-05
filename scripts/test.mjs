@@ -56,7 +56,7 @@ const TESTS = [
   'scripts/lib/config-paths.test.mjs',
   'scripts/lib/claude-ai-trim.test.mjs',
   'scripts/lib/build-claude-ai-zips.test.mjs',
-  // 29ap (CWK2-114): the canon's build-claude-ai-zips test, re-copied by blob from .github f1c9a4d (templates/overlay-coal-skill).
+  // 29ap (CWK2-114): the canon's build-claude-ai-zips test, re-copied by blob from .github (templates/overlay-coal-skill).
   'scripts/build-claude-ai-zips.test.mjs',
   'scripts/lib/publish-release.test.mjs',
   'scripts/lib/link-check.test.mjs',
