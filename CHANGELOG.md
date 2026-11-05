@@ -2,6 +2,11 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Added
+- An opt-in debug hatch: set `COALMINE_DEBUG=1` and the three hooks write one redacted diagnostic record per run to `~/.claude/coal/coalmine/debug-hatch.jsonl`, with nothing on stdout or stderr.
+
 ## [3.25.5] - 2026-11-05
 
 The installer refuses a skill source folder that holds a link

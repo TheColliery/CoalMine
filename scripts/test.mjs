@@ -92,6 +92,8 @@ const TESTS = [
   'scripts/lib/render-link.test.mjs',
   // 29ao (T-29al-4): a link at a region sync target is refused; the bytes it points at keep theirs.
   'scripts/lib/build-region-link.test.mjs',
+  // 29br (CWK3-007 stage 1): the debug hatch in the three shipped hooks, spawned from the built plugin copies (hermetic, opt-in, never stdout).
+  'scripts/lib/debug-hatch.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
