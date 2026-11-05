@@ -394,6 +394,14 @@ test('hatch-5 days: the collector keeps a pair younger than the days set in the 
   plantHatchPair(b, new Date(Date.now() - 3 * DAY_MS));
   run('stop', b, { debug: undefined });
   assert.equal(fs.existsSync(hatchFile(b, 'live')), false, 'a 3-day pair survived a 2-day global setting');
+  // F2 leg: a project file (1 day) in the cwd the stop hook runs in has no say over a file in the user's home: a 2-day pair stays under a 30-day global.
+  const c = sandbox(t);
+  writeGlobalConfig(c, { tempSweepStaleDays: 30 });
+  fs.mkdirSync(path.join(c.proj, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(c.proj, '.claude', '.coalmine.json'), JSON.stringify({ tempSweepStaleDays: 1 }), 'utf8');
+  plantHatchPair(c, new Date(Date.now() - 2 * DAY_MS));
+  run('stop', c, { debug: undefined });
+  assert.ok(fs.existsSync(hatchFile(c, 'live')) && fs.existsSync(hatchFile(c, 'old')), 'a project value of 1 day reaped a 2-day pair under a 30-day global setting');
 });
 
 test('hatch-4 mode: the record is created at 0600 where the file system keeps modes (skipped visibly where it does not)', (t) => {
