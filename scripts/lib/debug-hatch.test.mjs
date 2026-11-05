@@ -372,7 +372,16 @@ test('hatch-6 fields: a planted error name or code becomes redacted, a plain cod
   for (const c of cases) {
     const sb = sandbox(t);
     const pre = path.join(sb.root, 'field-preload.cjs');
-    fs.writeFileSync(pre, `const p=require('path');const r=p.resolve;p.resolve=function(...a){if(a.some((x)=>typeof x==='string'&&x.includes('CRASHME'))){const e=new Error('boom');e.name=${JSON.stringify(c.name)};e.code=${JSON.stringify(c.code)};throw e}return r.apply(this,a)};\n`, 'utf8');
+    // The preload's source is a fixed string: the case travels in a sibling JSON file, so no value is ever put into generated source.
+    fs.writeFileSync(path.join(sb.root, 'field-case.json'), JSON.stringify(c), 'utf8');
+    fs.writeFileSync(pre, [
+      "const fs = require('fs');",
+      "const path = require('path');",
+      "const kase = JSON.parse(fs.readFileSync(path.join(__dirname, 'field-case.json'), 'utf8'));",
+      'const realResolve = path.resolve;',
+      "path.resolve = function (...a) { if (a.some((x) => typeof x === 'string' && x.includes('CRASHME'))) { const e = new Error('boom'); e.name = kase.name; e.code = kase.code; throw e; } return realResolve.apply(this, a); };",
+      '',
+    ].join('\n'), 'utf8');
     const input = payload('touch', sb, { tool_input: { file_path: path.join(sb.proj, 'CRASHME.js') } });
     const r = run('touch', sb, { debug: '1', preload: pre, input });
     assert.equal(r.status, 0, r.stderr);
@@ -380,6 +389,7 @@ test('hatch-6 fields: a planted error name or code becomes redacted, a plain cod
     assert.ok(rec, 'no crash record was written');
     assert.equal(rec.err, c.err);
     assert.equal(rec.code, c.kept);
+    assert.equal(rec.severity, 'ERROR');
   }
 });
 
@@ -428,4 +438,18 @@ test('hatch-2 honest done: a folder at the touched marker gives a touched-write-
   run('touch', ok, { debug: '1' });
   const ol = readHatch(ok).split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.ok(ol.some((r) => r.ev === 'done' && r.recorded === true), 'a normal run did not write a recorded done record');
+});
+
+test('hatch-2 honest memory: with no marker folder a MEMORY.md edit gives a memory-marker-failed guard and no memory line; a normal run gives memory at INFO', (t) => {
+  const records = (sb) => readHatch(sb).trim().split('\n').map((l) => JSON.parse(l));
+  const input = (sb) => payload('touch', sb, { tool_input: { file_path: path.join(sb.proj, 'MEMORY.md') } });
+  const a = sandbox(t);
+  fs.rmSync(path.join(a.tmp, 'coalmine'), { recursive: true });
+  fs.writeFileSync(path.join(a.tmp, 'coalmine'), 'x', 'utf8');
+  run('touch', a, { debug: '1', input: input(a) });
+  assert.ok(records(a).some((x) => x.guard === 'memory-marker-failed'), 'no memory-marker-failed guard');
+  assert.ok(!records(a).some((x) => x.memory === true), 'a failed marker still reads memory: true');
+  const b = sandbox(t);
+  run('touch', b, { debug: '1', input: input(b) });
+  assert.ok(records(b).some((x) => x.memory === true && x.severity === 'INFO'), 'no memory line at INFO');
 });
