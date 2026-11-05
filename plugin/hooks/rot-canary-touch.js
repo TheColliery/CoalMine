@@ -649,7 +649,8 @@ function hatch(ev, fields) {
   if (!HATCH_ON) return;
   try {
     const rec = Object.assign({}, fields || {}, {
-      ts: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+      severity: ev === 'crash' ? 'ERROR' : 'INFO',
       hook: path.basename(__filename, '.js'),
       plat: process.platform,
       node: process.version,
@@ -1044,8 +1045,9 @@ function main() {
     // #66/#67 (a temp-dir write with no `mode`); found by the CWK-043 batch sweep, never
     // itself reported. The sid in the name is unpredictability, which that rule does not read.
     const mbase = markerBase(sid);
-    if (mbase) { try { fs.writeFileSync(mbase + '.memmoved', '', { flag: 'wx', mode: 0o600 }); } catch {} }
-    return hatch('done', { memory: true }); // .md is never in the watched code-extension set — nothing else to record
+    let marked = false;
+    if (mbase) { try { fs.writeFileSync(mbase + '.memmoved', '', { flag: 'wx', mode: 0o600 }); marked = true; } catch (e) { marked = !!e && e.code === 'EEXIST'; } }
+    return marked ? hatch('done', { memory: true }) : hatchGuard('memory-marker-failed'); // .md is never in the watched code-extension set — nothing else to record
   }
 
   const watchedExts = getWatchedExtensions();
@@ -1066,7 +1068,7 @@ function main() {
   // edited file paths. Letting the scanner's sink list draw our threat boundary would be the
   // tail wagging the dog (CWK-043 INSPECT M1). `mode` applies at CREATE only — the first
   // append makes the file 0o600, later appends leave it alone, which is what we want.
-  if (!existingCompare.includes(fCompare)) appendMarker(touched, normF + '\n');
+  const touchedOk = existingCompare.includes(fCompare) || appendMarker(touched, normF + '\n');
 
   // Tripwire scan — skip very large files to stay inside the latency budget
   // (Phoenix #3: ≤100ms with scan). Default cap 100KB (tripwireMaxFileSizeKb) to
@@ -1102,6 +1104,7 @@ function main() {
     // hardened anyway — the threat, not the sink list, is the boundary.
     appendMarker(base + '.smells', `${normF}: ${smells.join('; ')}\n`);
   }
+  if (!touchedOk) return hatchGuard('touched-write-failed');
   hatch('done', { recorded: true });
 }
 

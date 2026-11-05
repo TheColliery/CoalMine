@@ -651,7 +651,8 @@ function hatch(ev, fields) {
   if (!HATCH_ON) return;
   try {
     const rec = Object.assign({}, fields || {}, {
-      ts: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+      severity: ev === 'crash' ? 'ERROR' : 'INFO',
       hook: path.basename(__filename, '.js'),
       plat: process.platform,
       node: process.version,

@@ -141,7 +141,7 @@ test('hatch-2 on: with COALMINE_DEBUG=1 each hook writes a parseable start recor
   run('stop', n, { debug: '1' });
   const done = readHatch(n).split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((r) => r.ev === 'done');
   assert.ok(done, `no done record after a normal stop: ${readHatch(n)}`);
-  assert.equal(done.path, 'cc', 'done does not name the CC path');
+  assert.equal(done.lane, 'cc', 'done does not name the CC lane');
   assert.equal(done.files, 1, `done does not count the one extant edit: ${done.files}`);
   assert.equal(done.reported, true, 'done does not say the scan was reported');
 });
@@ -360,4 +360,64 @@ test('hatch-8 report: the reference names the variable, both files and the sweep
   const extra = [...named].filter((n) => !written.has(n)).sort();
   assert.deepEqual(missing, [], `step 3 does not name ${missing.join(', ')}`);
   assert.deepEqual(extra, [], `step 3 names what no hook writes: ${extra.join(', ')}`);
+});
+
+
+test('hatch-6 fields: a planted error name or code becomes redacted, a plain code and a 64-character word survive, a 65-character word does not', (t) => {
+  const cases = [
+    { name: 'C:/Users/alice/proj', code: 'ENOENT', err: 'redacted', kept: 'ENOENT' },
+    { name: 'Bad' + String.fromCharCode(10) + 'Name', code: '/home/alice/x', err: 'redacted', kept: 'redacted' },
+    { name: 'A'.repeat(64), code: 'B'.repeat(65), err: 'A'.repeat(64), kept: 'redacted' },
+  ];
+  for (const c of cases) {
+    const sb = sandbox(t);
+    const pre = path.join(sb.root, 'field-preload.cjs');
+    fs.writeFileSync(pre, `const p=require('path');const r=p.resolve;p.resolve=function(...a){if(a.some((x)=>typeof x==='string'&&x.includes('CRASHME'))){const e=new Error('boom');e.name=${JSON.stringify(c.name)};e.code=${JSON.stringify(c.code)};throw e}return r.apply(this,a)};\n`, 'utf8');
+    const input = payload('touch', sb, { tool_input: { file_path: path.join(sb.proj, 'CRASHME.js') } });
+    const r = run('touch', sb, { debug: '1', preload: pre, input });
+    assert.equal(r.status, 0, r.stderr);
+    const rec = readHatch(sb).trim().split('\n').map((l) => JSON.parse(l)).find((x) => x.ev === 'crash');
+    assert.ok(rec, 'no crash record was written');
+    assert.equal(rec.err, c.err);
+    assert.equal(rec.code, c.kept);
+  }
+});
+
+test('hatch-5 days: the collector keeps a pair younger than the days set in the global config and reaps one older', (t) => {
+  const a = sandbox(t);
+  writeGlobalConfig(a, { tempSweepStaleDays: 30 });
+  plantHatchPair(a, new Date(Date.now() - 10 * DAY_MS));
+  run('stop', a, { debug: undefined });
+  assert.ok(fs.existsSync(hatchFile(a, 'live')) && fs.existsSync(hatchFile(a, 'old')), 'a 10-day pair was reaped under a 30-day global setting');
+  const b = sandbox(t);
+  writeGlobalConfig(b, { tempSweepStaleDays: 2 });
+  plantHatchPair(b, new Date(Date.now() - 3 * DAY_MS));
+  run('stop', b, { debug: undefined });
+  assert.equal(fs.existsSync(hatchFile(b, 'live')), false, 'a 3-day pair survived a 2-day global setting');
+});
+
+test('hatch-4 mode: the record is created at 0600 where the file system keeps modes (skipped visibly where it does not)', (t) => {
+  const sb = sandbox(t);
+  const probe = path.join(sb.root, 'mode-probe');
+  fs.writeFileSync(probe, 'x', { mode: 0o600 });
+  if ((fs.statSync(probe).mode & 0o777) !== 0o600) { t.skip('this file system does not keep POSIX modes'); return; }
+  run('touch', sb, { debug: '1' });
+  assert.equal(fs.statSync(path.join(sb.home, ...HATCH_FILE)).mode & 0o777, 0o600);
+});
+
+test('hatch-2 honest done: a folder at the touched marker gives a touched-write-failed guard and no recorded line; a normal run gives recorded', (t) => {
+  const bad = sandbox(t);
+  fs.mkdirSync(path.join(bad.proj, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(bad.proj, 'src', 'a.js'), 'x\n', 'utf8');
+  fs.mkdirSync(path.join(bad.tmp, 'coalmine', 'rot-canary-' + SID + '.touched'));
+  run('touch', bad, { debug: '1' });
+  const bl = readHatch(bad).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(bl.some((r) => r.ev === 'guard' && r.guard === 'touched-write-failed'), 'no touched-write-failed guard record: ' + readHatch(bad));
+  assert.ok(!bl.some((r) => r.ev === 'done' && r.recorded === true), 'a done record claims recorded though the marker was not written');
+  const ok = sandbox(t);
+  fs.mkdirSync(path.join(ok.proj, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(ok.proj, 'src', 'a.js'), 'x\n', 'utf8');
+  run('touch', ok, { debug: '1' });
+  const ol = readHatch(ok).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(ol.some((r) => r.ev === 'done' && r.recorded === true), 'a normal run did not write a recorded done record');
 });
