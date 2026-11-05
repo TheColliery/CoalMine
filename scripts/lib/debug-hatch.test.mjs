@@ -131,6 +131,19 @@ test('hatch-2 on: with COALMINE_DEBUG=1 each hook writes a parseable start recor
     assert.equal(first.ev, 'start', `${which}: first record is not start: ${lines[0]}`);
     assert.equal(first.hook, path.basename(FILE[which], '.js'), `${which}: record names the wrong hook`);
   }
+  // a guard path writes a guard record with its stable name; a normal stop finish writes done with its counts
+  const g = sandbox(t);
+  run('stop', g, { debug: '1', input: 'not json {' });
+  const gl = readHatch(g).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(gl.some((r) => r.ev === 'guard' && r.guard === 'stdin-bad-json'), `no stdin-bad-json guard record: ${readHatch(g)}`);
+  const n = sandbox(t);
+  primeEdit(n);
+  run('stop', n, { debug: '1' });
+  const done = readHatch(n).split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((r) => r.ev === 'done');
+  assert.ok(done, `no done record after a normal stop: ${readHatch(n)}`);
+  assert.equal(done.path, 'cc', 'done does not name the CC path');
+  assert.equal(done.files, 1, `done does not count the one extant edit: ${done.files}`);
+  assert.equal(done.reported, true, 'done does not say the scan was reported');
 });
 
 test('hatch-3 exit: on and off give the same exit code on the normal, guard, bad-stdin and crash paths for all three hooks', (t) => {
@@ -215,4 +228,88 @@ test('hatch-6 structure: planted newline, CR, U+2028 and path words in the paylo
   assert.ok(crash, `no crash record: ${crBytes}`);
   assert.equal(crash.err, 'Error', 'the crash record does not name the error');
   assert.match(crash.at, /^rot-canary-touch\.js:\d+$/, `at is not basename:line: ${crash.at}`);
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const hatchFile = (sb, which) => path.join(sb.home, ...(which === 'live' ? HATCH_FILE : HATCH_OLD));
+function plantHatchPair(sb, when) {
+  for (const which of ['live', 'old']) {
+    const p = hatchFile(sb, which);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, '{"ev":"start"}\n', 'utf8');
+    fs.utimesSync(p, when, when);
+  }
+}
+
+test('hatch-5 collector: the stop hook reaps a stale hatch pair with COALMINE_DEBUG unset, with canary mode off, and with temp coalmine planted as a file; it keeps a fresh pair; a machine with no hatch file grows no coal folder', (t) => {
+  const old = new Date(Date.now() - 30 * DAY_MS);
+  const a = sandbox(t);
+  plantHatchPair(a, old);
+  const ra = run('stop', a, { debug: undefined });
+  assert.equal(ra.status, 0, ra.stderr);
+  assert.equal(fs.existsSync(hatchFile(a, 'live')), false, 'the stale live hatch file survived the stop hook');
+  assert.equal(fs.existsSync(hatchFile(a, 'old')), false, 'the stale rotated hatch file survived the stop hook');
+
+  const b = sandbox(t); // positive twin: a fresh pair is not reaped
+  plantHatchPair(b, new Date());
+  run('stop', b, { debug: undefined });
+  assert.ok(fs.existsSync(hatchFile(b, 'live')) && fs.existsSync(hatchFile(b, 'old')), 'a fresh hatch pair was reaped');
+
+  const c = sandbox(t); // canary mode off still reaps
+  fs.mkdirSync(path.join(c.home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(c.home, '.claude', '.rot-canary-mode'), 'off', 'utf8');
+  plantHatchPair(c, old);
+  run('stop', c, { debug: undefined });
+  assert.equal(fs.existsSync(hatchFile(c, 'live')), false, 'canary mode off stopped the collector');
+
+  const d = sandbox(t); // temp coalmine planted as a regular file (ensureMarkerDir refuses it) still reaps
+  fs.rmSync(path.join(d.tmp, 'coalmine'), { recursive: true, force: true });
+  fs.writeFileSync(path.join(d.tmp, 'coalmine'), 'x', 'utf8');
+  plantHatchPair(d, old);
+  run('stop', d, { debug: undefined });
+  assert.equal(fs.existsSync(hatchFile(d, 'live')), false, 'a temp coalmine planted as a file stopped the collector');
+
+  const e = sandbox(t); // no hatch file: the collector reads nothing and creates no coal folder
+  run('stop', e, { debug: undefined });
+  assert.equal(fs.existsSync(path.join(e.home, '.claude', 'coal')), false, 'a machine with no hatch file grew a coal folder');
+});
+
+const HOOK_FILES = ['rot-canary-touch.js', 'rot-canary-stop.js', 'coalmine-conductor.js'];
+const TRY_MAIN = 'try { main(); } catch (e) { hatchCrash(e); }';
+test('hatch-7 copies: each shipped hook, in hooks/ and plugin/hooks/, carries the debug-hatch region and ends in the crash catch, has no sibling require, and only the stop hook carries the collector region', () => {
+  for (const dir of ['hooks', path.join('plugin', 'hooks')]) {
+    for (const f of HOOK_FILES) {
+      const text = fs.readFileSync(path.join(repo, dir, f), 'utf8');
+      const where = `${dir}/${f}`;
+      assert.ok(text.includes('// <coalmine-shared: debug-hatch>'), `${where}: no debug-hatch region`);
+      assert.ok(text.trimEnd().endsWith(TRY_MAIN), `${where}: the file does not end in the crash catch`);
+      assert.doesNotMatch(text, /\brequire\(\s*['"]\.\.?\//, `${where}: a require of a relative path`);
+      const hasSweep = text.includes('// <coalmine-shared: debug-hatch-sweep>');
+      assert.equal(hasSweep, f === 'rot-canary-stop.js', `${where}: the collector region is ${hasSweep ? 'present' : 'absent'}`);
+    }
+  }
+});
+
+// The bodies R6 names: a bare `return;` in one is a silent exit that leaves no record. A line comment is not code.
+function bodyOf(text, name) {
+  const start = text.indexOf(`function ${name}(`);
+  assert.ok(start !== -1, `no function ${name} in the file`);
+  const end = text.indexOf('\n}\n', start);
+  assert.ok(end !== -1, `no closing brace for ${name}`);
+  return text.slice(start, end).split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+}
+test('hatch-7 guards: no bare return leaves main() of the touch and stop hooks or agMain and geminiMain of the conductor, and every guard carries a literal name', () => {
+  const slices = [
+    ['rot-canary-touch.js', 'main'], ['rot-canary-stop.js', 'main'],
+    ['coalmine-conductor.js', 'agMain'], ['coalmine-conductor.js', 'geminiMain'],
+  ];
+  for (const dir of ['hooks', path.join('plugin', 'hooks')]) {
+    for (const [f, name] of slices) {
+      const body = bodyOf(fs.readFileSync(path.join(repo, dir, f), 'utf8'), name);
+      const bare = body.split('\n').filter((l) => /\breturn\s*;/.test(l));
+      assert.deepEqual(bare, [], `${dir}/${f} ${name}: a bare return leaves it: ${bare.join(' | ')}`);
+      const unnamed = body.match(/hatchGuard\((?!'[a-z][a-z-]*'\))/g);
+      assert.equal(unnamed, null, `${dir}/${f} ${name}: a guard without a literal name`);
+    }
+  }
 });

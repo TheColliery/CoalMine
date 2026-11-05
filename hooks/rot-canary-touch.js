@@ -629,7 +629,7 @@ function loadCfg(base) {
 // Debug hatch (CWK3-007 stage 1): an opt-in diagnostic record for a fail-silent hook. OFF unless COALMINE_DEBUG is set.
 // A hook that crashed, a hook whose guard refused and a hook that found nothing are otherwise indistinguishable from outside
 // (hooks-safety.md §4.1). This partial is copied into each hook by build-plugin (region 'debug-hatch'); it stays self-contained.
-// Writes go to ONE file under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
+// Writes go to one file and its one rotated copy under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
 // every field passes hatchClean, so a path, a newline or free text becomes the word 'redacted'.
 const HATCH_ON = !!process.env.COALMINE_DEBUG;
 const HATCH_MAX_BYTES = 256 * 1024;
@@ -981,18 +981,18 @@ const UNSAFE_RECORD_CHARS = new RegExp('[\\x00-\\x1f\\x7f-\\x9f' + String.fromCh
 function main() {
   hatch('start', { argv: process.argv[2] ? 'adapter' : 'plain' });
   const ov = projectOverride();
-  if (ov === 'off') return;
+  if (ov === 'off') return hatchGuard('project-off');
   if (rcMode() === 'off') return hatchGuard('rc-mode-off');
   let raw = '';
-  try { raw = fs.readFileSync(0, 'utf8'); } catch { return; }
-  if (!raw) return;
+  try { raw = fs.readFileSync(0, 'utf8'); } catch { return hatchGuard('stdin-unreadable'); }
+  if (!raw) return hatchGuard('stdin-empty');
 
   let input;
   // trim() also strips a leading BOM some shells prepend when piping stdin.
-  try { input = JSON.parse(raw.trim()); } catch { return; }
+  try { input = JSON.parse(raw.trim()); } catch { return hatchGuard('stdin-bad-json'); }
 
   const f = extractEditedPath(input);
-  if (!f) return;
+  if (!f) return hatchGuard('no-edited-path');
   // Resolve a relative path against the payload's workspace when provided (AG launches
   // the hook with its own cwd = the hooks.json dir; CC's payload cwd equals
   // process.cwd(), so this is a no-op on CC — an absolute file_path ignores the base
@@ -1008,9 +1008,9 @@ function main() {
   // anything is recorded, ahead of the MEMORY.md marker branch below (a temp-resident
   // MEMORY.md must not set .memmoved either — temp files count for nothing) and ahead
   // of the watched-extension gate.
-  if (isUnderTmpdir(normF)) return;
+  if (isUnderTmpdir(normF)) return hatchGuard('under-tmpdir');
   // 29am (T-29al-3): refused before anything is recorded, like an over-size file; such a name is never scanned.
-  if (UNSAFE_RECORD_CHARS.test(normF)) return;
+  if (UNSAFE_RECORD_CHARS.test(normF)) return hatchGuard('unsafe-name');
 
   // No session key → no consumer (the stop hook bails without one). Record nothing.
   // conversationId = the CURRENT AG spec's session field (re-derived 2026-07-23);
@@ -1024,7 +1024,7 @@ function main() {
   // AG constraint: Antigravity's session_id format is undocumented — a sid outside this
   // allowlist records nothing there (safe degrade; fail-closed over widening without
   // evidence. The 2026-07-12 AG pilot's cadence DID fire, so real AG sids passed it).
-  if (!sid || typeof sid !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sid)) return;
+  if (!sid || typeof sid !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sid)) return hatchGuard('no-session-id');
   // R14 (CSV-4/6/7): the markers live in the owner-only <tmpdir>/coalmine/ subdir (markers region above).
   // Resolved lazily below, so an unwatched file pays no mkdir/lstat on the Phoenix #3 happy path.
 
@@ -1045,13 +1045,13 @@ function main() {
     // itself reported. The sid in the name is unpredictability, which that rule does not read.
     const mbase = markerBase(sid);
     if (mbase) { try { fs.writeFileSync(mbase + '.memmoved', '', { flag: 'wx', mode: 0o600 }); } catch {} }
-    return; // .md is never in the watched code-extension set — nothing else to record
+    return hatch('done', { memory: true }); // .md is never in the watched code-extension set — nothing else to record
   }
 
   const watchedExts = getWatchedExtensions();
-  if (!watchedExts.has(path.extname(normF).toLowerCase())) return;
+  if (!watchedExts.has(path.extname(normF).toLowerCase())) return hatchGuard('unwatched-extension');
   const base = markerBase(sid);
-  if (!base) return; // the marker dir is not ours / not trustworthy: record nothing (fail-silent)
+  if (!base) return hatchGuard('no-marker-dir'); // the marker dir is not ours / not trustworthy: record nothing (fail-silent)
   const touched = base + '.touched';
 
   let existing = [];
@@ -1076,7 +1076,7 @@ function main() {
   // over the bound = skipped. No containment root: the edited file may legitimately sit
   // outside the project (the touched list is not project-scoped).
   const text = readRepoFileBounded(normF, null, getTripwireMaxFileSizeKb() * 1024);
-  if (text === null) return;
+  if (text === null) return hatchGuard('unreadable-file');
   const lines = text.split(/\r?\n/);
 
   const smells = [];
@@ -1102,7 +1102,7 @@ function main() {
     // hardened anyway — the threat, not the sink list, is the boundary.
     appendMarker(base + '.smells', `${normF}: ${smells.join('; ')}\n`);
   }
-  hatch('done', {});
+  hatch('done', { recorded: true });
 }
 
 try { main(); } catch (e) { hatchCrash(e); }

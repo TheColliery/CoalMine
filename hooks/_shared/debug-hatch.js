@@ -1,7 +1,7 @@
 // Debug hatch (CWK3-007 stage 1): an opt-in diagnostic record for a fail-silent hook. OFF unless COALMINE_DEBUG is set.
 // A hook that crashed, a hook whose guard refused and a hook that found nothing are otherwise indistinguishable from outside
 // (hooks-safety.md §4.1). This partial is copied into each hook by build-plugin (region 'debug-hatch'); it stays self-contained.
-// Writes go to ONE file under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
+// Writes go to one file and its one rotated copy under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
 // every field passes hatchClean, so a path, a newline or free text becomes the word 'redacted'.
 const HATCH_ON = !!process.env.COALMINE_DEBUG;
 const HATCH_MAX_BYTES = 256 * 1024;

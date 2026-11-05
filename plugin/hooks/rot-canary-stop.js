@@ -647,7 +647,7 @@ function loadCfg(base) {
 // Debug hatch (CWK3-007 stage 1): an opt-in diagnostic record for a fail-silent hook. OFF unless COALMINE_DEBUG is set.
 // A hook that crashed, a hook whose guard refused and a hook that found nothing are otherwise indistinguishable from outside
 // (hooks-safety.md §4.1). This partial is copied into each hook by build-plugin (region 'debug-hatch'); it stays self-contained.
-// Writes go to ONE file under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
+// Writes go to one file and its one rotated copy under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
 // every field passes hatchClean, so a path, a newline or free text becomes the word 'redacted'.
 const HATCH_ON = !!process.env.COALMINE_DEBUG;
 const HATCH_MAX_BYTES = 256 * 1024;
@@ -716,6 +716,28 @@ function hatchCrash(e) {
   } catch { /* swallowed: see hatch() */ }
 }
 // </coalmine-shared: debug-hatch>
+// <coalmine-shared: debug-hatch-sweep> — synced from hooks/_shared/debug-hatch-sweep.js by build-plugin; edit the partial, not this block
+// Debug hatch collector (CWK3-007 stage 1, c61). Synced into the Stop hook ONLY, below its 'debug-hatch' region, which it reads:
+// hatchDir, HATCH_FILE and HATCH_OLD. It also calls getTempSweepStaleDays, which the Stop hook defines. Wholly inside one try/catch
+// that swallows: a collector that throws must never take the host down (Phoenix #4). It removes the hatch's own two files once they are
+// older than the stale window, so a hatch switched off, or a machine that once ran with it on, still ends up collected.
+// It runs whether COALMINE_DEBUG is set or not, and it never depends on the temp folder or the canary's mode: sweepStale calls it first.
+// The days are read only once a file is found, so a machine with no hatch file pays no config read.
+function sweepHatch() {
+  try {
+    const dir = hatchDir();
+    let staleMs = null;
+    for (const name of [HATCH_FILE, HATCH_OLD]) {
+      const file = path.join(dir, name);
+      let st;
+      try { st = fs.lstatSync(file); } catch { continue; } // absent: next
+      if (!st.isFile()) continue; // a link or a folder is not the hatch's file: leave it
+      if (staleMs === null) staleMs = getTempSweepStaleDays() * 24 * 60 * 60 * 1000;
+      if (Date.now() - st.mtimeMs > staleMs) fs.unlinkSync(file);
+    }
+  } catch { /* the collector never throws */ }
+}
+// </coalmine-shared: debug-hatch-sweep>
 // <coalmine-shared: markers> — synced from hooks/_shared/markers.js by build-plugin; edit the partial, not this block
 // R14 / CWK-158 item 8 (CSV-4, CSV-6, CSV-7, B-u1-L6): the per-session temp markers
 // (.touched .smells .scanned .memmoved) used to sit FLAT in os.tmpdir(), where on a shared
@@ -853,6 +875,7 @@ function getTempSweepStaleDays() {
   return 7;
 }
 function sweepStale(canaryActive) {
+  sweepHatch();
   try {
     // The sweep reaches into the markers folder by name, so it runs only when that folder passes ensureMarkerDir's owner,
     // type and mode checks. A folder another local account made, or one left open to group or other users, is left alone.
@@ -1304,13 +1327,14 @@ function main() {
   if (!canaryActive) return hatchGuard('canary-inactive');
 
   let raw = '';
-  try { raw = PRE_RAW !== null ? PRE_RAW : fs.readFileSync(0, 'utf8'); } catch { return; }
-  if (!raw) return;
+  try { raw = PRE_RAW !== null ? PRE_RAW : fs.readFileSync(0, 'utf8'); } catch { return hatchGuard('stdin-unreadable'); }
+  if (!raw) return hatchGuard('stdin-empty');
 
   let input;
   // trim() also strips a leading BOM some shells prepend when piping stdin.
-  try { input = JSON.parse(raw.trim()); } catch { return; }
-  if (!input || input.stop_hook_active) return;
+  try { input = JSON.parse(raw.trim()); } catch { return hatchGuard('stdin-bad-json'); }
+  if (!input) return hatchGuard('stdin-not-object');
+  if (input.stop_hook_active) return hatchGuard('stop-hook-active');
 
   // conversationId = the CURRENT AG spec's session field (re-derived 2026-07-23);
   // session_id/sessionId stay as the CC + legacy fallbacks. MUST match the touch
@@ -1321,18 +1345,18 @@ function main() {
   // AG constraint: Antigravity's session-key format is undocumented — a sid outside this
   // allowlist nudges nothing there (safe degrade; fail-closed over widening without
   // evidence. The 2026-07-12 AG pilot's cadence DID fire, so real AG sids passed it).
-  if (!sid || typeof sid !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sid)) return;
+  if (!sid || typeof sid !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sid)) return hatchGuard('no-session-id');
 
   // R14 (CSV-4/6/7): the session markers live in the owner-only <tmpdir>/coalmine/ subdir and are
   // read bounded + non-blocking (markers region above): a FIFO planted at one cannot hang this hook.
   const base = markerBase(sid);
-  if (!base) return;
+  if (!base) return hatchGuard('no-marker-dir');
   const touched = base + '.touched';
   const touchedRaw = readMarker(touched);
-  if (touchedRaw === null) return;
+  if (touchedRaw === null) return hatchGuard('no-touched-marker');
 
   let touchedMtime = 0;
-  try { touchedMtime = fs.statSync(touched).mtimeMs; } catch { return; }
+  try { touchedMtime = fs.statSync(touched).mtimeMs; } catch { return hatchGuard('touched-unstatable'); }
 
   const scanned = base + '.scanned';
   try {
@@ -1345,7 +1369,7 @@ function main() {
       if (touchedMtime <= lastMtime) {
         // Batch already acknowledged on a previous stop — state no longer needed.
         cleanupSession(base);
-        return;
+        return hatchGuard('already-acknowledged');
       }
     }
   } catch {}
@@ -1353,8 +1377,8 @@ function main() {
   let files = [];
   try {
     files = [...new Set(markerLines(touchedRaw).map((x) => path.normalize(x)))];
-  } catch { return; }
-  if (!files.length) return; // no recorded edit → nothing moved this session
+  } catch { return hatchGuard('files-unparsed'); }
+  if (!files.length) return hatchGuard('no-recorded-edit'); // no recorded edit → nothing moved this session
 
   const lang = detectLang();
   const t = (Object.hasOwn(TRANSLATIONS, lang) && TRANSLATIONS[lang]) || TRANSLATIONS.en;
@@ -1441,7 +1465,7 @@ function main() {
   }
 
   // Nothing extant to scan, no drift, and nothing suppressed → nothing to surface this stop.
-  if (!extant.length && !driftText && !suppressedText) return;
+  if (!extant.length && !driftText && !suppressedText) return hatch('done', { files: 0, drift: false, reported: false });
 
   // ---- Loud scan report (UNCHANGED) — built only when files still exist on disk ----
   let reason = '';
@@ -1561,7 +1585,7 @@ function main() {
   if (agStop) {
     if (reason && acked && engineFinished) process.stdout.write(JSON.stringify({ decision: 'continue', reason }) + '\n');
     else process.stdout.write('{}\n');
-    return;
+    return hatch('done', { files: extant.length, drift: !!driftText, reported: !!reason, path: 'ag' });
   }
   const out = {};
   if (reason) { out.decision = 'block'; out.reason = reason; }
@@ -1572,7 +1596,7 @@ function main() {
   if (suppressedText) quiet.push(suppressedText.trim());
   if (driftText) quiet.push(driftText.trim());
   if (quiet.length) { out.systemMessage = quiet.join('\n\n'); }
-  hatch('done', {});
+  hatch('done', { files: extant.length, drift: !!driftText, reported: !!reason, path: 'cc' });
   process.stdout.write(JSON.stringify(Object.keys(out).length ? out : {}));
 }
 

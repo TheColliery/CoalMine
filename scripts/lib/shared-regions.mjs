@@ -50,6 +50,7 @@ export const REGION_TARGETS = [
   { file: 'hooks/coalmine-conductor.js', name: 'debug-hatch', comment: '//', partial: 'hooks/_shared/debug-hatch.js' },
   { file: 'hooks/rot-canary-touch.js', name: 'debug-hatch', comment: '//', partial: 'hooks/_shared/debug-hatch.js' },
   { file: 'hooks/rot-canary-stop.js', name: 'debug-hatch', comment: '//', partial: 'hooks/_shared/debug-hatch.js' },
+  { file: 'hooks/rot-canary-stop.js', name: 'debug-hatch-sweep', comment: '//', partial: 'hooks/_shared/debug-hatch-sweep.js' },
   { file: 'alt/powershell/rot-canary-touch.ps1', name: 'ps-config', comment: '#', partial: 'hooks/_shared/ps-config.ps1' },
   { file: 'alt/powershell/rot-canary-stop.ps1', name: 'ps-config', comment: '#', partial: 'hooks/_shared/ps-config.ps1' },
 ];

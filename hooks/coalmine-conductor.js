@@ -631,7 +631,7 @@ function loadCfg(base) {
 // Debug hatch (CWK3-007 stage 1): an opt-in diagnostic record for a fail-silent hook. OFF unless COALMINE_DEBUG is set.
 // A hook that crashed, a hook whose guard refused and a hook that found nothing are otherwise indistinguishable from outside
 // (hooks-safety.md §4.1). This partial is copied into each hook by build-plugin (region 'debug-hatch'); it stays self-contained.
-// Writes go to ONE file under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
+// Writes go to one file and its one rotated copy under ~/.claude/coal/coalmine/, never stdout or stderr, and nothing it records can carry a payload value:
 // every field passes hatchClean, so a path, a newline or free text becomes the word 'redacted'.
 const HATCH_ON = !!process.env.COALMINE_DEBUG;
 const HATCH_MAX_BYTES = 256 * 1024;
@@ -1096,13 +1096,13 @@ function payloadBase(mode, input) {
 }
 
 function agMain(cfg, updateMode, input) {
-  if (!input || typeof input !== 'object') return; // no payload → no session key → skip silently (Phoenix #12)
+  if (!input || typeof input !== 'object') return hatchGuard('no-payload'); // no payload → no session key → skip silently (Phoenix #12)
   // conversationId = the CURRENT AG spec's documented session field (re-derived
   // 2026-07-23); the rest stay defensive legacy fallbacks (transcriptPath is
   // also documented + per-conversation).
   const key = [input.conversationId, input.session_id, input.sessionId, input.transcript_path, input.transcriptPath]
     .find((v) => typeof v === 'string' && v);
-  if (!key) return; // un-keyable session: an injection would repeat per model call — skip (fail-closed on spend)
+  if (!key) return hatchGuard('unkeyable-session'); // un-keyable session: an injection would repeat per model call — skip (fail-closed on spend)
   // Atomic once-per-session latch (CodeQL js/insecure-temporary-file +
   // js/file-system-race — one-flock fix with CoalHearth/CoalFace). The marker
   // lives in a private per-tool subdir (mode 0o700 — closes the shared-/tmp
@@ -1128,7 +1128,7 @@ function agMain(cfg, updateMode, input) {
   const marker = path.join(markerDir, `ag-conductor-${djb2(key)}.marker`);
   try {
     fs.mkdirSync(markerDir, { recursive: true, mode: 0o700 });
-    if (fs.lstatSync(markerDir).isSymbolicLink()) return; // dir-symlink residual -> fail-closed (see above)
+    if (fs.lstatSync(markerDir).isSymbolicLink()) return hatchGuard('marker-dir-symlink'); // dir-symlink residual -> fail-closed (see above)
     // `mode: 0o600` — same class as the sweep stamp in rot-canary-stop.js (CodeQL
     // js/insecure-temporary-file #66/#67's rule: a temp-dir write with no `mode` is the
     // sink; the flag is not read). Real work, not appeasement: mkdir's `mode` above is a
@@ -1184,7 +1184,7 @@ function agMain(cfg, updateMode, input) {
     //     measurement of ours — it needs a second account this box does not have.
     // ───────────────────────────────────────────────────────────────────────────────────
     fs.writeFileSync(marker, '', { flag: 'wx', mode: 0o600 });
-  } catch { return; } // EEXIST (already ran) OR any write failure -> fail-closed, no emit
+  } catch { return hatchGuard('marker-write-failed'); } // EEXIST (already ran) OR any write failure -> fail-closed, no emit
   // Resolved ONCE, shared by the onboarding check (buildLines) and KIND 2 below — the payload
   // names the workspace (the hook process's own cwd is the hooks.json dir on AG, not the
   // workspace): `workspacePaths[0]` = the current spec's field (re-derived 2026-07-23),
