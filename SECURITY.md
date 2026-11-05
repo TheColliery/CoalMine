@@ -41,6 +41,10 @@ The `plugin/` distribution directory is generated output gated by checks:
 
 ---
 
+## 🩺 Debug Hatch
+
+The three Node hooks carry an opt-in diagnostic record, the debug hatch. It is off unless `COALMINE_DEBUG` is set in the environment that starts the agent. When on, each run appends one JSON line to `~/.claude/coal/coalmine/debug-hatch.jsonl`: a timestamp, the hook name, the platform, the Node version, an event name and, for a refusal or a crash, the guard name, the error name and code, and the hook's own file name and line. Nothing is written to stdout or stderr. It reads no value out of the hook payload, and every field is checked before it is written: a number, a true/false or a short plain word (letters, digits and `_ . : -`, at most 64) is kept, and anything else, such as a path, a line break or free text, is written as the word `redacted`. The file is opened without following links, at mode `0600`, in a folder at mode `0700`, and is rotated to `debug-hatch.1.jsonl` before a write would take it past 256 KiB, so the two files together stay under 512 KiB. The stop hook removes either file once it is older than `tempSweepStaleDays` days (7 by default), whether or not the hatch is still on. Nothing leaves the machine unless you attach the file to a report yourself.
+
 <!-- version-transition: SkillSpector scan—the re-scan is automatic on one event (E2: this repo's own version bump, gated by a per-repo baseline diff); a genuinely new attack surface is a second, by hand. (E1, a weekly new-SkillSpector-version watcher, was retired on the owner's word on 2026-09-26.) Record the version/score/date/commit here only after a real scan. Last run: SkillSpector v2.12.0 (pin 5cb9385) · CoalMine v3.25.5 (commit 5fc0914) · 2026-11-05 · 100/100 · 20 findings, none a defect, static coverage partial (45/49 files). Line refs drift on skill edits—verify against the fresh scan output. (This file is at the repo root, OUTSIDE the scanned plugin/ dir, so this comment is not scanned.) -->
 ## 🔬 Independent Scanning—NVIDIA SkillSpector
 

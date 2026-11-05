@@ -19,6 +19,7 @@ Each partial below is injected into every `skills/*/SKILL.md` template wherever 
 | Shared reference | Lands at | Holds |
 |---|---|---|
 | `references/escalation.md` | `<each skill>/references/escalation.md` | per-platform Heavy levers + Heavy-run durability (read before a Heavy run) |
+| `references/problem-report.md` | `<each skill>/references/problem-report.md` | the problem-report flow for a hook fault: offer the debug hatch, read and scrub its file, attach it to the drafted issue (read when a user reports a hook fault) |
 
 verify.mjs byte-compares each skill's injected copy to the one source here.
 

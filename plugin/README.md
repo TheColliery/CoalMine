@@ -18,7 +18,7 @@ You can turn the automatic scan off with the `rotCanaryMode` setting (`auto`, `m
 
 ## What is fetched or sent
 
-The hooks fetch and send nothing: CoalMine collects no telemetry and has no server (see `PRIVACY.md` in the repository). The hooks write only to your OS temp folder (session markers) and, under `~/.claude/`, the update-check date and the mode files you set yourself.
+The hooks fetch and send nothing: CoalMine collects no telemetry and has no server (see `PRIVACY.md` in the repository). The hooks write only to your OS temp folder (session markers) and, under `~/.claude/`, the update-check date and the mode files you set yourself, plus, only if you set `COALMINE_DEBUG`, a short debug-hatch record under `~/.claude/coal/coalmine/` (structure only, no file contents or paths).
 
 Some skills can look facts up on the web. `source-grounding` checks version-sensitive facts, and `supply-chain-audit` can look up advisories. Those lookups are your agent's own tool calls, made under your own account. `source-grounding` fetches when it needs a source, with no menu first, and asks you only when a source cannot be fetched; `supply-chain-audit` looks up advisories the same way, itself or through `source-grounding`. Offline, a fact it cannot check is marked "unverified". In `auto` update mode, or when you run `/coalmine:update` yourself, the command asks your agent to run `git ls-remote --tags` against `https://github.com/TheColliery/CoalMine.git` to read the latest version tag; that call sends no project data.
 

@@ -2,10 +2,19 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.26.0] - 2026-11-05
+
+An opt-in debug hatch records why a hook stayed silent
+
+The three Node hooks gain an opt-in diagnostic record, so a hook that stayed silent or crashed can be told apart from one that found nothing. The hooks and their shared build changed, and there is a new shared reference, so this is a MINOR release.
 
 ### Added
-- An opt-in debug hatch: set `COALMINE_DEBUG=1` and the three hooks write one redacted diagnostic record per run to `~/.claude/coal/coalmine/debug-hatch.jsonl`, with nothing on stdout or stderr.
+- **A debug hatch, off unless `COALMINE_DEBUG` is set.** Set it before you start the agent and each of the three hooks writes one short line per run to `~/.claude/coal/coalmine/debug-hatch.jsonl`: which hook ran, which guard refused, whether it crashed and where in the hook's own code. It writes nothing to the screen, reads no value out of the hook payload, and records a path or free text as the word `redacted`. — test: scripts/lib/debug-hatch.test.mjs
+- **The record is bounded and clears itself.** The file is rotated to `debug-hatch.1.jsonl` before it passes 256 KiB, and the stop hook removes either file once it is older than `tempSweepStaleDays` days (7 by default), whether or not the hatch is still on. — test: scripts/lib/debug-hatch.test.mjs
+- **A shared problem-report reference.** Every skill now carries `references/problem-report.md`, the steps for offering the hatch, reading and scrubbing its file and attaching it to a drafted issue that the user submits. The Self error-report line in the skill footer and in the session-start text points to it for a hook fault. — test: scripts/verify.mjs (each skill's copy must equal its source)
+
+### Changed
+- **`README.md`, `SECURITY.md`, `PRIVACY.md` and the plugin README state the new file.** Their lists of what the hooks write now include the hatch record when it is switched on. The PowerShell twins carry no hatch, and say so. — test: none (prose)
 
 ## [3.25.5] - 2026-11-05
 

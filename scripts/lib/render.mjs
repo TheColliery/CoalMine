@@ -15,6 +15,7 @@ import { MANIFEST_NAME } from './manifest.mjs';
 // skill's references/ at build/install so the auto/Light path never pays for it.
 export const SHARED_REFERENCES = [
   { name: 'escalation.md', src: 'references/escalation.md' },
+  { name: 'problem-report.md', src: 'references/problem-report.md' },
 ];
 
 // c36 item 3.2: shared files are read bounded, inside the shared folder. A refusal throws a named error (the old read threw too).
