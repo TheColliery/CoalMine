@@ -313,3 +313,51 @@ test('hatch-7 guards: no bare return leaves main() of the touch and stop hooks o
     }
   }
 });
+
+// hatch-8 report: the problem-report reference, read as text (no spawn). Its step 3 must name exactly the fields the hooks write.
+const REPORT = path.join(repo, 'skills', '_shared', 'references', 'problem-report.md');
+const FOOTER = path.join(repo, 'skills', '_shared', 'escalation-footer.md');
+function step3Of(text) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => l.startsWith('3. **Scrub it.**'));
+  const end = lines.findIndex((l, i) => i > start && /^4\. /.test(l));
+  assert.ok(start !== -1 && end !== -1, 'step 3 is not found between its markers');
+  return lines.slice(start, end).join('\n');
+}
+// The names the hooks can write: the keys of each hatch(...) call in the hook sources, the record's own fields in the partial, and the guard and crash fields.
+function writtenNames() {
+  const names = new Set(['guard', 'err', 'code', 'at']);
+  for (const f of HOOK_FILES) {
+    const src = fs.readFileSync(path.join(repo, 'hooks', f), 'utf8');
+    for (const m of src.matchAll(/\bhatch\('[a-z]+',\s*\{([^}]*)\}\)/g)) {
+      for (const k of m[1].matchAll(/([A-Za-z_]\w*)\s*:/g)) names.add(k[1]);
+    }
+  }
+  const partial = fs.readFileSync(path.join(repo, 'hooks', '_shared', 'debug-hatch.js'), 'utf8');
+  const rec = partial.match(/Object\.assign\(\{\}, fields \|\| \{\}, \{([\s\S]*?)\}\);/);
+  assert.ok(rec, 'the record literal is not found in the partial');
+  for (const k of rec[1].matchAll(/^\s*([A-Za-z_]\w*)\s*[:,]/gm)) names.add(k[1]);
+  return names;
+}
+test('hatch-8 report: the reference names the variable, both files and the sweep days, forbids setting the variable, leaves the submit to the user, and its step 3 lists exactly the names the hooks write; the footers and every plugin skill point at it', () => {
+  const report = fs.readFileSync(REPORT, 'utf8');
+  for (const must of ['COALMINE_DEBUG', 'debug-hatch.jsonl', 'debug-hatch.1.jsonl', 'tempSweepStaleDays']) {
+    assert.ok(report.includes(must), `the reference does not name ${must}`);
+  }
+  assert.ok(report.includes('Never set the variable yourself'), 'the reference does not forbid the agent setting the variable');
+  assert.ok(report.includes('The user reads the whole draft and submits it'), 'the reference does not leave the submit to the user');
+  const footerLine = fs.readFileSync(FOOTER, 'utf8').split('\n').find((l) => l.startsWith('**Self error-report:**'));
+  assert.ok(footerLine && footerLine.includes('references/problem-report.md'), 'the footer Self error-report line does not name the reference');
+  const condLine = fs.readFileSync(path.join(repo, 'hooks', 'coalmine-conductor.js'), 'utf8').split('\n').find((l) => l.includes('Self error-report:'));
+  assert.ok(condLine && condLine.includes('references/problem-report.md'), 'the conductor Self error-report string does not name the reference');
+  const skillsDir = path.join(repo, 'plugin', 'skills');
+  for (const d of fs.readdirSync(skillsDir).filter((n) => fs.statSync(path.join(skillsDir, n)).isDirectory())) {
+    assert.ok(fs.existsSync(path.join(skillsDir, d, 'references', 'problem-report.md')), `${d} carries no references/problem-report.md`);
+  }
+  const named = new Set([...step3Of(report).matchAll(/`([^`]+)`/g)].map((m) => m[1]));
+  const written = writtenNames();
+  const missing = [...written].filter((n) => !named.has(n)).sort();
+  const extra = [...named].filter((n) => !written.has(n)).sort();
+  assert.deepEqual(missing, [], `step 3 does not name ${missing.join(', ')}`);
+  assert.deepEqual(extra, [], `step 3 names what no hook writes: ${extra.join(', ')}`);
+});
