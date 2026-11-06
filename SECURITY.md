@@ -32,7 +32,7 @@ The `plugin/` distribution directory is generated output gated by checks:
 
 ---
 
-<!-- version-transition: SkillSpector scan—the re-scan is automatic on one event (E2: this repo's own version bump, gated by a per-repo baseline diff); a genuinely new attack surface is a second, by hand. Record the version/score/date/commit here only after a real scan, and REPLACE this section, never append to it. Last run: SkillSpector v2.13.4 (pin 5482446) · CoalMine v3.26.0 (commit 5c8b03c) · 2026-11-06 · 100/100 · 36 findings, none a defect, static coverage partial (52/58 files). Line refs drift on skill edits—verify against the fresh scan output. (This file is at the repo root, OUTSIDE the scanned plugin/ dir, so this comment is not scanned.) -->
+<!-- version-transition: SkillSpector scan—the re-scan is automatic on one event (E2: this repo's own version bump, gated by a per-repo baseline diff); a genuinely new attack surface is a second, by hand. Record the version/score/date/commit here only after a real scan, and REPLACE this section, never append to it. Last run: SkillSpector v2.13.4 (pin 5482446) · CoalMine v3.26.0 (commit 5c8b03c) · 2026-11-06 · 100/100 · 36 findings, none a defect, static coverage partial (52/58 files). -->
 ## 🔬 Independent Scanning—NVIDIA SkillSpector
 
 CoalMine is evaluated against [NVIDIA SkillSpector](https://github.com/NVIDIA/skillspector), run locally via `uvx` (no install), static stage only (`--no-llm`).
@@ -41,12 +41,12 @@ CoalMine is evaluated against [NVIDIA SkillSpector](https://github.com/NVIDIA/sk
 * **Score:** 100/100 (CRITICAL static). **36 findings, none a defect**, each read at its source line.
 * **Finding classes:**
   * RA1 Self-Modification ×10—the consent-gated Self-Updating text: the hook only schedules, the agent offers the platform's own `claude plugin update`.
-  * RA2 Session Persistence ×18—prose and comments about local files, none of which sets up anything that runs (the README sentence on what the hooks write, the Stop hook's kill-switch text, one sentence in each skill's `problem-report.md`, comments in the hooks). The count rose from 2 because this pin's rule matches any text from `create`, `write` or `mkdir` up to a `~/.` path, across lines.
+  * RA2 Session Persistence ×18—prose and comments about local files, none of which sets up anything that runs (the README sentence on what the hooks write, the Stop hook's kill-switch text, one sentence in each skill's `problem-report.md`, comments in the hooks). The count rose from 2 because this pin's rule matches any text with no `|` from `create`, `write` or `mkdir` up to a `~/.` path, across lines.
   * AS1 Agent Config Directory Access ×2—a read-only `grep` of the project's rules home for CoalMine's freshness stamps.
-  * AR1 Anti-Refusal ×1—"Always answer **in the user's language**", a localization rule.
+  * AR1 Anti-Refusal Statement ×1—"Always answer **in the user's language**", a localization rule.
   * TM3 Unsafe Defaults ×3—comments naming the world-writable temp residual; the code answers it with `0o700` folders, `0o600` files and a symlink refusal.
   * AS3 Skill Enumeration ×1—the README disclosure that `gold-standard` reads project memory only to verify it.
-  * BH1 Bundled hooks ×1—the scanner's standing note that a plugin registering hooks should have its reach reviewed.
+  * BH1 Bundled hooks can execute when matching lifecycle events occur ×1—the scanner's standing note that a plugin registering hooks should have its reach reviewed.
 * **Coverage:** partial, 52 of 58 files fully inspected. The three hook files are among the partial ones, so each change to the hooks is read by hand at review.
 
 Earlier scans are in this file's git history. Scanning is event-driven (this repository's own version bump, or a genuinely new attack surface); this record names the last scan actually run.
