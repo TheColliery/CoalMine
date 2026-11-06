@@ -2,6 +2,11 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Security
+- The Antigravity conductor checks its marker folder before it writes into it, as the Stop hook does; a folder another user made or left open to others is now refused. (Stub: the doc-writer fills this entry.)
+
 ## [3.26.0] - 2026-11-06
 
 An opt-in debug hatch records why a hook stayed silent
