@@ -1129,18 +1129,24 @@ function agMain(cfg, updateMode, input) {
   const marker = path.join(markerDir, `ag-conductor-${djb2(key)}.marker`);
   try {
     fs.mkdirSync(markerDir, { recursive: true, mode: 0o700 });
-    if (fs.lstatSync(markerDir).isSymbolicLink()) return hatchGuard('marker-dir-symlink'); // dir-symlink residual -> fail-closed (see above)
+    const dirSt = fs.lstatSync(markerDir);
+    if (dirSt.isSymbolicLink()) return hatchGuard('marker-dir-symlink'); // dir-symlink residual -> fail-closed (see above)
+    // The folder may already exist, and then mkdir's mode did nothing. So the owner and mode are checked the way the
+    // Stop hook's ensureMarkerDir checks them (hooks/_shared/markers.js), so both hooks agree on one folder. On a platform
+    // without POSIX uids the check does not apply, as there.
+    if (!dirSt.isDirectory()) return hatchGuard('marker-dir-unsafe');
+    if (typeof process.getuid === 'function') {
+      if (dirSt.uid !== process.getuid() || (dirSt.mode & 0o022) !== 0) return hatchGuard('marker-dir-unsafe');
+    }
     // `mode: 0o600` — same class as the sweep stamp in rot-canary-stop.js (CodeQL
     // js/insecure-temporary-file #66/#67's rule: a temp-dir write with no `mode` is the
-    // sink; the flag is not read). Real work, not appeasement: mkdir's `mode` above is a
-    // no-op when the dir already exists, so a pre-created world-writable `<tmp>/coalmine`
-    // leaves this file's own mode as the only per-user scoping on a shared /tmp.
+    // sink; the flag is not read). It is defence in depth now: the folder check above refuses a folder
+    // another user made or one open to group or other writes, so this file's mode no longer has to scope it.
     //
     // ── WHAT THAT RESIDUAL ACTUALLY BUYS AN ATTACKER (CWK-044) ─────────────────────────
     // Stated HERE rather than cross-referenced, so a reader who finds the residual named
-    // finds its bounds without leaving the file. PRECONDITION: another local user creates
-    // <tmp>/coalmine before we do — unreachable on Windows (%TEMP% is per-user) and on a
-    // single-user box; live only on a shared Unix host.
+    // finds its bounds without leaving the file. PRECONDITION (CLOSED for the folder by the check above, since 3.26.1):
+    // another local user creates <tmp>/coalmine before we do. What remains of it is named in (b) and (c) below.
     //
     // (a) BOUNDED WORST CASE — DENIAL and METADATA only.
     //     Denial: this session's nudge is skipped, see (b). Cost is one missed ADVISORY

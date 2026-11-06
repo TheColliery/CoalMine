@@ -94,6 +94,8 @@ const TESTS = [
   'scripts/lib/build-region-link.test.mjs',
   // 29br (CWK3-007 stage 1): the debug hatch in the three shipped hooks, spawned from the built plugin copies (hermetic, opt-in, never stdout).
   'scripts/lib/debug-hatch.test.mjs',
+  // 3.26.1 (c67): the Antigravity conductor checks its marker folder the way the Stop hook does (owner and mode), spawned from the built copy.
+  'scripts/lib/ag-marker-dir.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
