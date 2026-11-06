@@ -471,6 +471,7 @@ test('a 200k-character line dense with key-like names scans in linear work (no c
     'out.__reread = [reread(N / 2), reread(N)];',
     'console.log(JSON.stringify(out));',
   ].join('\n');
+  // Capped at 512 MiB through NODE_OPTIONS: this child builds 200,000-character lines for every shape, and the cap ends it if a shape makes it grow; the timeout bounds its time.
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
     encoding: 'utf8', timeout: 15000, env: childEnv({ NODE_OPTIONS: '--max-old-space-size=512' }),
   });
@@ -900,9 +901,10 @@ function shortForm(p, cmd = CMD) {
   const script = path.join(SANDBOX, `short-name-${++shortSeq}.cmd`);
   fs.writeFileSync(script, ['@echo off', `for %%I in ("${p}") do @echo %%~sI`, ''].join(cc(13, 10)));
   try {
+    // NODE_OPTIONS is for the seam: the test of a failed call hands in process.execPath, a node child this fixed argv cannot cap.
     const r = spawnSync(cmd, ['/d', '/c', script], {
       encoding: 'utf8', timeout: 30000, windowsHide: true,
-      env: childEnv({ ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT, TEMP: SANDBOX, TMP: SANDBOX }),
+      env: childEnv({ ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT, TEMP: SANDBOX, TMP: SANDBOX, NODE_OPTIONS: '--max-old-space-size=64' }),
     });
     if (r.error) throw new Error(`shortForm: the cmd call did not run (${r.error.code || r.error.message})`, { cause: r.error });
     if (r.status !== 0) throw new Error(`shortForm: the cmd call exited ${r.status}`);
@@ -1066,8 +1068,9 @@ test('a fixture call is handed GIT_CONFIG_NOSYSTEM and no other GIT_ name beyond
 
 // The named-keys environment reads a name that this OS may not have (SystemRoot on Linux). The claim in gitEnv's comment is that such a key is
 // left out of the child's environment and never becomes the string "undefined"; this proves it of the node running the suite, through a real child.
+// This child and the next are capped at 64 MiB in argv: each prints one value and allocates nothing of its own, and the cap ends one that grows.
 test('a named environment key whose value is undefined is left out of a child\'s environment, never passed as the string "undefined"', () => {
-  const r = spawnSync(process.execPath, ['-p', "'SCAN_TEST_UNSET' in process.env"], {
+  const r = spawnSync(process.execPath, ['--max-old-space-size=64', '-p', "'SCAN_TEST_UNSET' in process.env"], {
     encoding: 'utf8', timeout: 15000, env: childEnv({ SCAN_TEST_UNSET: undefined }),
   });
   assert.strictEqual(r.status, 0, r.stderr);
@@ -1078,7 +1081,7 @@ test('a named environment key whose value is undefined is left out of a child\'s
 // sandbox. Without HOME, USERPROFILE and XDG_CONFIG_HOME a child's os.homedir() falls back to the OS profile path, outside the sandbox.
 test('a child started with the call sites\' environment resolves its home inside the sandbox, never the OS profile (1102c)', () => {
   const env = childEnv();
-  const r = spawnSync(process.execPath, ['-p', "require('os').homedir()"], { encoding: 'utf8', timeout: 15000, env });
+  const r = spawnSync(process.execPath, ['--max-old-space-size=64', '-p', "require('os').homedir()"], { encoding: 'utf8', timeout: 15000, env });
   assert.strictEqual(r.status, 0, r.stderr);
   const home = r.stdout.trim();
   assert.ok(path.resolve(home) === path.resolve(SANDBOX) || path.resolve(home).startsWith(path.resolve(SANDBOX) + path.sep), `the child's home is ${home}, outside the sandbox ${SANDBOX}`);
