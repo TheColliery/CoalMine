@@ -433,3 +433,53 @@ test('release-notes.mjs: CHANGELOG.md is opened before any check of its name, so
     assert.ok(!order.slice(open).includes('readFileSync'), 'the read goes through the open descriptor, never the name');
   }
 });
+// order 2026-11-07a (CoalLedger's CodeQL #29 hardening, brought into the canon): the descriptor that is read must be the file the name names when the
+// checks run. A preload swaps the entry right after the script's own open returns, the window a race would use; the script's code is never changed.
+const swapProbe = (dir) => {
+  const preload = path.join(dir, 'swap-probe.mjs');
+  fs.writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const orig = fs.openSync;',
+    'let done = false;',
+    'fs.openSync = function (p, ...rest) {',
+    '  const fd = orig.call(this, p, ...rest);',
+    "  if (!done && typeof p === 'string' && p.endsWith('CHANGELOG.md')) { done = true; fs.rmSync(p, { force: true }); fs.renameSync(process.env.SWAP_FROM, p); }",
+    '  return fd;',
+    '};',
+    'syncBuiltinESMExports();',
+  ].join('\n'));
+  return preload;
+};
+const ENTRY = '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n';
+
+test('release-notes.mjs: a CHANGELOG.md swapped for another file between the open and the read is refused by name, exit 1, no release files -- RED before 2026-11-07a', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), ENTRY);
+  fs.writeFileSync(path.join(dir, 'other.md'), ENTRY.replace('A test-only', 'Another'));
+  const preload = swapProbe(dir);
+  const res = spawnIn(dir, SCRIPT, [], { env: { GITHUB_REF_NAME: 'v1.2.0', NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, SWAP_FROM: path.join(dir, 'other.md') } });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /CHANGELOG\.md changed between the check and the read: refused, never read/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false, 'no release file is written from the file the name no longer names');
+});
+
+test('release-notes.mjs: a CHANGELOG.md that is a link when opened and a plain file by the read is refused with the link message, on every platform (skipped visibly where the account cannot make a file symlink) -- RED before 2026-11-07a where no-follow is missing (Windows)', (t) => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'real.md'), ENTRY);
+  fs.writeFileSync(path.join(dir, 'other.md'), ENTRY.replace('A test-only', 'Another'));
+  try { fs.symlinkSync(path.join(dir, 'real.md'), path.join(dir, 'CHANGELOG.md'), 'file'); } catch { t.skip('this account cannot make a file symlink here'); return; }
+  const preload = swapProbe(dir);
+  const res = spawnIn(dir, SCRIPT, [], { env: { GITHUB_REF_NAME: 'v1.2.0', NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, SWAP_FROM: path.join(dir, 'other.md') } });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /CHANGELOG\.md (is not a regular file|changed between the check and the read)/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
+});
+
+test('release-notes.mjs: an untouched regular CHANGELOG.md still derives (the descriptor and the name agree), so the swap check refuses nothing it should read', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), ENTRY);
+  const res = spawnIn(dir, SCRIPT, [], { env: { GITHUB_REF_NAME: 'v1.2.0' } });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'v1.2.0 - a test-only CLI wiring proof');
+});
