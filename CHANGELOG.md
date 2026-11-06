@@ -2,10 +2,14 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.26.1] - 2026-11-07
+
+The Antigravity conductor checks its marker folder before it writes
+
+The conductor in `plugin/hooks/` changed, so this is a PATCH release.
 
 ### Security
-- The Antigravity conductor checks its marker folder before it writes into it, as the Stop hook does; a folder another user made or left open to others is now refused. (Stub: the doc-writer fills this entry.)
+- **The conductor refuses a marker folder another user made.** On Antigravity the conductor keeps a once-per-conversation marker in a `coalmine` folder inside the OS temp folder. On a shared multi-user host another local user could create that folder first, and the conductor used it as found. It now refuses a link, anything that is not a folder, and, where the system has user ids, a folder owned by another user or open to group or other writes, as the Stop hook already did. Windows is not affected, since its temp folder is per user. — test: scripts/lib/ag-marker-dir.test.mjs
 
 ## [3.26.0] - 2026-11-06
 

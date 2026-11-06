@@ -44,7 +44,7 @@ CoalMine is evaluated against [NVIDIA SkillSpector](https://github.com/NVIDIA/sk
   * RA2 Session Persistence ×18—prose and comments about local files, none of which sets up anything that runs (the README sentence on what the hooks write, the Stop hook's kill-switch text, one sentence in each skill's `problem-report.md`, comments in the hooks). The count rose from 2 because this pin's rule matches any text with no `|` from `create`, `write` or `mkdir` up to a `~/.` path, across lines.
   * AS1 Agent Config Directory Access ×2—a read-only `grep` of the project's rules home for CoalMine's freshness stamps.
   * AR1 Anti-Refusal Statement ×1—"Always answer **in the user's language**", a localization rule.
-  * TM3 Unsafe Defaults ×3—comments naming the world-writable temp residual; the code answers it with `0o700` folders, `0o600` files and a symlink refusal.
+  * TM3 Unsafe Defaults ×3—comments naming the world-writable temp residual; the code answers it with `0o700` folders, `0o600` files, a symlink refusal and, where user ids exist, a refusal of a folder owned by another user or open to group or other writes.
   * AS3 Skill Enumeration ×1—the README disclosure that `gold-standard` reads project memory only to verify it.
   * BH1 Bundled hooks can execute when matching lifecycle events occur ×1—the scanner's standing note that a plugin registering hooks should have its reach reviewed.
 * **Coverage:** partial, 52 of 58 files fully inspected. The three hook files are among the partial ones, so each change to the hooks is read by hand at review.
