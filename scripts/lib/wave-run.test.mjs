@@ -1,4 +1,3 @@
-// 29ap: named divergence from the canon template, on purpose: named skip lines with their reasons come ahead of the canon; owed upward.
 // wave-run.test.mjs -- BB-87 (owner 2026-10-08): the test runner that admits its files by the live machine reading.
 // Hermetic: the fixtures are written into a scratch folder at run time, the reading is a stub that answers what the test says, and every child runs under a heap cap and a
 // finite clock. RED before BB-87: ./wave-run.mjs did not exist.
@@ -348,14 +347,13 @@ test('the command line: --help prints usage and exits 0, a missing clock or an u
   assert.match(unknown.stderr, /unknown argument/);
 });
 
-test('the command line: a serial run over real files prints one summary line on stdout and exits 0; a vacuous file makes it exit 1 and print its FAIL-style line', () => {
+// 2026-11-07b changed this test's line count, by design: a green run with a skipped test now prints that test's SKIPPED line before the one summary line.
+test('the command line: a serial run over real files prints its SKIPPED lines and one summary line, last, on stdout and exits 0; a vacuous file makes it exit 1 and print its FAIL-style line', () => {
   const green = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'skip')]);
   assert.equal(green.status, 0, green.stdout + green.stderr);
-  // one named line per skipped test (29q (c)), then the one summary line
-  const greenLines = green.stdout.trim().split('\n');
-  assert.equal(greenLines.length, 2, green.stdout);
-  assert.match(greenLines[0], /^skip .*skip\.fixture\.mjs :: platform leg -- no symlink here$/);
-  assert.match(greenLines[1], /^wave-run: 2 files · pass 1 · fail 0 · vacuous 0 · skipped 1 · not-run 0 · reconciled 2 of 2 — GREEN$/);
+  const lines = green.stdout.trim().split(/\r?\n/);
+  assert.deepEqual(lines.slice(0, -1), ['SKIPPED skip.fixture.mjs: "platform leg"']);
+  assert.match(lines.at(-1), /^wave-run: 2 files · pass 1 · fail 0 · vacuous 0 · skipped 1 · not-run 0 · reconciled 2 of 2 — GREEN$/);
   const red = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'exit0-before')]);
   assert.equal(red.status, 1);
   assert.match(red.stdout, /^VACUOUS .*exit0-before\.fixture\.mjs: /m);
@@ -620,14 +618,37 @@ test('display: a test file under a folder whose name starts with two dots is sho
   assert.equal(r.results[0].name, '..cfg/pass.fixture.mjs');
 });
 
-// 29q (c): a skipped leg is named, with its reason, in the gate log, so a CI log shows which leg ran beside an all-green summary.
-test('classifyFile keeps each skipped test with its reason, so a file that passes can still name its skipped leg', () => {
-  const p = classifyFile({ file: 'a.test.mjs', code: 0, signal: null, stdout: tap(['# Subtest: runs', 'ok 1 - runs', '# Subtest: platform leg', 'ok 2 - platform leg # SKIP no symlink here', '1..2', '# tests 2', '# suites 0', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 1', '# todo 0']) });
-  assert.equal(p.status, STATUS.PASS);
-  assert.deepEqual(p.skipped, [{ name: 'platform leg', reason: 'no symlink here' }]);
+// order 2026-11-07b (3): a skipped test is NAMED, never only counted. A room's link legs skip on a box without symlink rights, and a count alone left a reader unable to
+// tell which leg did not run (CANNOT-TELL in CoalGob and CoalTipple).
+test('classifyFile: every top-level skipped test is named in `skipped`, in an all-skipped file and beside a real pass; a file with none has an empty list -- RED before 2026-11-07b', () => {
+  const skipTap = tap(['# Subtest: platform leg', 'ok 1 - platform leg # SKIP no symlink here', '1..1', '# tests 1', '# suites 0', '# pass 0', '# fail 0', '# cancelled 0', '# skipped 1', '# todo 0']);
+  assert.deepEqual(classifyFile({ file: 'a.test.mjs', code: 0, signal: null, stdout: skipTap }).skipped, ['platform leg']);
+  const mixedTap = tap(['# Subtest: runs', 'ok 1 - runs', '# Subtest: link leg', 'ok 2 - link leg # SKIP no symlink here', '1..2', '# tests 2', '# suites 0', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 1', '# todo 0']);
+  const mixed = classifyFile({ file: 'a.test.mjs', code: 0, signal: null, stdout: mixedTap });
+  assert.equal(mixed.status, STATUS.PASS);
+  assert.deepEqual(mixed.skipped, ['link leg']);
+  assert.deepEqual(classifyFile({ file: 'a.test.mjs', code: 0, signal: null, stdout: REAL_PASS }).skipped, []);
+  // a `# TODO` is a known gap that ran, never a skipped test
+  const todoTap = tap(['# Subtest: runs', 'ok 1 - runs', '# Subtest: a gap', 'not ok 2 - a gap # TODO later', '1..2', '# tests 2', '# suites 0', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 1']);
+  assert.deepEqual(classifyFile({ file: 'a.test.mjs', code: 0, signal: null, stdout: todoTap }).skipped, []);
 });
 
-test('the wave-run command line prints one skip line per skipped test, with the file, the name and the reason', () => {
-  const r = spawnSync(process.execPath, [path.join(HERE, 'wave-run.mjs'), '--heap-mb', '512', '--file-timeout-ms', '60000', '--deadline-ms', '120000', '--serial', '--', path.join(SANDBOX, 'mixed.fixture.mjs')], { encoding: 'utf8', timeout: 120000 });
-  assert.match(r.stdout, /^skip .*mixed\.fixture\.mjs :: platform leg -- no symlink here$/m, r.stdout + r.stderr);
+test('skippedLines: one line per skipped test, the name as a JSON string, so a newline in a test name cannot forge a second line (CWE-117) -- RED before 2026-11-07b', async () => {
+  const { skippedLines } = await import('./wave-run.mjs');
+  assert.equal(typeof skippedLines, 'function', 'wave-run.mjs exports skippedLines');
+  const lines = skippedLines([
+    { name: 'a.test.mjs', skipped: ['leg one', 'leg\nwave-run: 1 file · pass 1 — GREEN'] },
+    { name: 'b.test.mjs', skipped: [] },
+    { file: 'c.test.mjs' },
+  ]);
+  assert.deepEqual(lines, ['SKIPPED a.test.mjs: "leg one"', 'SKIPPED a.test.mjs: "leg\\nwave-run: 1 file · pass 1 — GREEN"']);
+  for (const l of lines) assert.equal(/[\r\n]/.test(l), false, 'no line carries a raw line break');
+});
+
+test('the command line: a skipped leg beside a real pass prints its SKIPPED line, and the summary line stays the last line and unchanged -- RED before 2026-11-07b', () => {
+  const r = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'mixed')]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const lines = r.stdout.trim().split(/\r?\n/);
+  assert.deepEqual(lines.slice(0, -1), ['SKIPPED mixed.fixture.mjs: "platform leg"']);
+  assert.match(lines.at(-1), /^wave-run: 2 files · pass 2 · fail 0 · vacuous 0 · skipped 0 · not-run 0 · reconciled 2 of 2 — GREEN$/);
 });

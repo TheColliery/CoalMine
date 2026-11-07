@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// 29ap: named divergence from the canon template, on purpose: named skip lines with their reasons come ahead of the canon; owed upward.
 // wave-run.mjs -- run a room's enumerated test files in waves admitted by the LIVE machine reading (BB-87, owner 2026-10-08).
 //
 //   node scripts/lib/wave-run.mjs --heap-mb N --file-timeout-ms N --deadline-ms N [--file-clock-ms N] [--cpu-max N] [--mem-min N] [--serial] -- <test files...>
@@ -55,8 +54,8 @@ export function parseTap(text) {
   const found = {};
   let plan = null;
   for (const line of String(text).split(/\r?\n/)) {
-    let m = /^(not )?ok \d+(?: - (.*?))?(?:\s+# (SKIP|TODO)\b\s*(.*))?$/.exec(line);
-    if (m) { results.push({ ok: !m[1], name: unescapeTap(m[2] ?? '').trim(), directive: m[3] ?? null, reason: unescapeTap(m[4] ?? '').trim() }); continue; }
+    let m = /^(not )?ok \d+(?: - (.*?))?(?:\s+# (SKIP|TODO)\b.*)?$/.exec(line);
+    if (m) { results.push({ ok: !m[1], name: unescapeTap(m[2] ?? '').trim(), directive: m[3] ?? null }); continue; }
     m = /^1\.\.(\d+)$/.exec(line);
     if (m) { plan = Number(m[1]); continue; }
     m = /^# (tests|suites|pass|fail|cancelled|skipped|todo) (\d+)$/.exec(line);
@@ -76,9 +75,8 @@ function namesFile(name, file) {
 
 // One finished child to one status. `killedBy` is a reason the runner itself ended the child.
 export function classifyFile({ file, code, signal, stdout, killedBy = null }) {
-  // The named skips of this file: a skipped leg is reported by name and reason, so a CI log shows which leg ran (29q (c)).
-  const skipped = (parsed) => (parsed ? parsed.results.filter((r) => r.directive === 'SKIP').map((r) => ({ name: r.name, reason: r.reason })) : []);
-  const out = (status, reason, parsed, failing = []) => ({ file, status, reason, counts: parsed ? parsed.counts : null, failing, skipped: skipped(parsed) });
+  // `skipped` names every top-level test the file skipped, so a skipped leg is named, never only counted (order 2026-11-07b: a room's link legs read CANNOT-TELL).
+  const out = (status, reason, parsed, failing = []) => ({ file, status, reason, counts: parsed ? parsed.counts : null, failing, skipped: parsed ? parsed.results.filter((r) => r.directive === 'SKIP').map((r) => r.name) : [] });
   if (killedBy) return out(STATUS.FAIL, killedBy, null);
   if (signal) return out(STATUS.FAIL, `died by signal ${signal}`, null);
   const p = parseTap(stdout);
@@ -98,6 +96,10 @@ export function classifyFile({ file, code, signal, stdout, killedBy = null }) {
   if (p.counts.pass === 0 && p.counts.skipped > 0) return out(STATUS.SKIP, `all ${p.counts.skipped} test(s) skipped`, p);
   return out(STATUS.PASS, '', p);
 }
+
+// One `SKIPPED <file>: <test name>` line per skipped test, in roster order. The test name is the file's own text, so it goes out through JSON.stringify (CWE-117): a
+// newline in it cannot forge a line a reader of this output would parse. A room that calls runWaves itself prints these lines before its summary, as main() does.
+export const skippedLines = (results) => results.flatMap((r) => (r.skipped ?? []).map((t) => `SKIPPED ${r.name ?? r.file}: ${JSON.stringify(t)}`));
 
 // ---- the summary: one line, five counts, reconciled against the roster ---------------------------------------------------------------------
 export function summarize(results, roster) {
@@ -280,7 +282,7 @@ const USAGE = `usage: wave-run.mjs --heap-mb N --file-timeout-ms N --deadline-ms
   --cpu-max N          WAIT when CPU busy is at or above N percent (passed to the core only when given)
   --mem-min N          WAIT when free memory is below N percent (passed to the core only when given)
   --serial             one file at a time, no reading
-  Prints FAIL/VACUOUS/NOT-RUN lines and ONE summary line on stdout; the diagnostics of a red file go to stderr. Exit 0 green, 1 red, 64 usage.
+  Prints FAIL/VACUOUS/NOT-RUN lines, one SKIPPED line per skipped test (its name as a JSON string) and ONE summary line, last, on stdout; the diagnostics of a red file go to stderr. Exit 0 green, 1 red, 64 usage.
   Example: node scripts/lib/wave-run.mjs --heap-mb 2048 --file-timeout-ms 240000 --deadline-ms 600000 -- scripts/a.test.mjs scripts/b.test.mjs
 `;
 
@@ -316,12 +318,12 @@ async function main() {
     process.exitCode = e instanceof UsageError ? EXIT_USAGE : 2;
     return;
   }
-  for (const r of run.results) for (const s of r.skipped ?? []) process.stdout.write(`skip ${r.file} :: ${s.name} -- ${s.reason || 'no reason given'}\n`);
   for (const r of run.results) {
     if (r.status === STATUS.PASS || r.status === STATUS.SKIP) continue;
     process.stdout.write(`${r.status} ${r.name}: ${r.reason}\n`);
     if (r.stdout || r.stderr) process.stderr.write(`--- ${r.name} (${r.status}) ---\n${r.stdout ?? ''}${r.stderr ?? ''}\n`);
   }
+  for (const line of skippedLines(run.results)) process.stdout.write(`${line}\n`);
   process.stdout.write(`${run.summary.line}\n`);
   process.exitCode = run.exitCode;
 }

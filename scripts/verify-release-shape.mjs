@@ -66,16 +66,12 @@ function main() {
     }
   }
 
-  // Trim BOTH sides the same way, never only the intended one -- release-title.txt/
-  // release-body.md are written by release-notes.mjs with no guaranteed trailing newline
-  // convention on one side and GitHub's own on the other; whether the API preserves or
-  // strips a trailing newline on `body` is not something this file assumes either way.
-  // Trimming both sides identically removes that ambiguity as a source of a FALSE
-  // mismatch (which would block every future release under this mechanism) while still
-  // catching a real corruption -- a substituted character mid-body, the exact same-length
-  // em-dash-to-hyphen shape this rail exists for, trims away to nothing and still differs.
-  // Only ONE trailing newline, the one GitHub appends, is tolerated on either side (16j, then 17b: trimEnd() also forgave trailing spaces and tabs, CoalLedger
-  // t142, CoalMine t148, CoalWash E1; trim() forgave a leading byte, CoalWash PR #18, CoalBoard T5). Any other byte that differs is the corruption this rail is for.
+  // Both sides, the intended and the published, lose the same thing before they are hashed: ONE trailing newline (LF or CRLF), and nothing else. Whether
+  // release-title.txt/release-body.md end in a newline and whether the API keeps or strips one on `body` is not assumed either way, so one trailing newline
+  // on either side is never a mismatch, which would block every release under this rail. No other byte is removed: a leading space or newline, a trailing
+  // space or tab, a second trailing newline and a same-length substitution mid-body (the em-dash-to-hyphen shape this rail exists for) all still differ.
+  // History: trim() forgave a leading byte (CoalWash PR #18, CoalBoard T5) and trimEnd() trailing spaces and tabs (CoalLedger t142, CoalMine t148, CoalWash E1),
+  // so 16j and then 17b narrowed both to this one newline.
   const oneNewline = (s) => s.replace(/\r?\n$/, '');
   const titleMatch = sha256(oneNewline(published.name)) === sha256(oneNewline(intendedTitle));
   const bodyMatch = sha256(oneNewline(published.body)) === sha256(oneNewline(intendedBody));
@@ -88,7 +84,8 @@ function main() {
     console.log('verify-release-shape: published title + body match the derived CHANGELOG-sourced text, byte for byte');
     return;
   }
-  if (!titleMatch) console.error(`verify-release-shape: TITLE MISMATCH -- intended "${intendedTitle.trim()}", published "${published.name}"`);
+  // Both titles go out through JSON.stringify (CWE-117): the published name is the API's text, and a newline in it must not forge a line of this log.
+  if (!titleMatch) console.error(`verify-release-shape: TITLE MISMATCH -- intended ${JSON.stringify(intendedTitle.trim())}, published ${JSON.stringify(published.name)}`);
   if (!bodyMatch) console.error('verify-release-shape: BODY MISMATCH -- the published body does not hash to the same bytes as the derived body (see RELEASE-PATTERN.md\'s PS 5.1 / Invoke-RestMethod trap class for how this happens even on a 200)');
   process.exitCode = 1;
 }
