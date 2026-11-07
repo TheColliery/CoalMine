@@ -2,10 +2,17 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
-## [Unreleased]
+## [3.26.2] - 2026-11-07
+
+The Stop hook's temp-sweep age comes from your global config
+
+The Stop hook and its PowerShell twin in `plugin/` and `alt/powershell/` changed, so this is a PATCH release.
 
 ### Security
-- The Stop hook sets its temp-sweep age from the global config, and a project file can only raise it (stub: the doc-writer fills this entry).
+- **A cloned repository can no longer shorten how long CoalMine keeps your session temp files.** The Stop hook sweeps old session markers from the OS temp folder at the age `tempSweepStaleDays` sets (7 days by default). It read that key from the project config as well, so a repository shipping a config with `1` made the next session stop delete your markers older than a day, from every project. The age now comes from your global config (else 7), and a project value is used only if it is higher. The minimum on either level is 1. — test: scripts/lib/temp-sweep-days.test.mjs
+
+### Changed
+- **Docs.** The Antigravity row of the platform table says to clone the repo and run the installer from your project's root; the Node.js line no longer says the Claude Code plugin needs no Node (its hooks run `node`; the PowerShell fallback serves without it); the Configure section states the rule for `tempSweepStaleDays`. — test: none (prose)
 
 ## [3.26.1] - 2026-11-07
 
