@@ -863,23 +863,27 @@ function cleanupSession(base) {
     try { fs.unlinkSync(f); } catch {}
   }
 }
+// The days come from the GLOBAL config, and a project file may only RAISE them (hooks-safety.md §9, a removal edge):
+// a cloned repo ships its own .coalmine.json, and a lower project value would widen what this sweep deletes across
+// every project on the machine. Floor 1 on both layers: a raw 0 pushes the cutoff to "now", and sweepStale() runs
+// BEFORE this session's own .touched/.smells/.scanned markers are read, so 0 deletes this session's markers too.
+// A negative or fractional value skews the cutoff the same way; NaN/non-finite is ignored. Factory 7 otherwise.
+function tempSweepDaysOf(cfg) {
+  const v = cfg && cfg.tempSweepStaleDays;
+  return typeof v === 'number' && Number.isFinite(v) ? Math.max(1, Math.floor(v)) : null;
+}
 function getTempSweepStaleDays() {
+  let base = 7;
   try {
-    const cfg = loadCfg(AG_BASE);
-    // Clamp at read time to a positive integer (floor 1, not 0) — the schema bound
-    // (min:1) is enforced only by verify.mjs over the factory config, never at hook
-    // read time. A raw 0 pushes the cutoff to "now": sweepStale() runs BEFORE this
-    // session's own .touched/.smells/.scanned markers are read below, so a marker
-    // written earlier THIS session already has an mtime < "now" and 0 deletes it too
-    // — silently suppressing this session's own end-of-scan nudge, on top of
-    // deleting every concurrent session's fresh temp. A negative value pushes the
-    // cutoff further into the future (same bug, worse); a fractional value skews
-    // the cutoff. NaN/non-finite → the factory default (7), matching the schema.
-    if (cfg && typeof cfg.tempSweepStaleDays === 'number' && Number.isFinite(cfg.tempSweepStaleDays)) {
-      return Math.max(1, Math.floor(cfg.tempSweepStaleDays));
-    }
+    const globalDays = tempSweepDaysOf(readCfgFile(path.join(os.homedir(), '.claude', '.coalmine.json'), null));
+    if (globalDays !== null) base = globalDays;
   } catch {}
-  return 7;
+  try {
+    const projRoot = findGitRoot(projBase());
+    const projectDays = tempSweepDaysOf(readCfgFile(projectConfigPath(projRoot), projRoot));
+    if (projectDays !== null && projectDays > base) return projectDays;
+  } catch {}
+  return base;
 }
 function sweepStale(canaryActive) {
   sweepHatch();

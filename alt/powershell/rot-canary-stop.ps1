@@ -288,9 +288,28 @@ function Test-ValidSessionId {
 }
 # </coalmine-shared: ps-config>
 
+# 3.26.2 (c69, hooks-safety.md section 9, removal edge): the sweep age comes from the GLOBAL config, and a project file may only RAISE it.
+# Node twin: getTempSweepStaleDays in hooks/rot-canary-stop.js. Floor 1; a non-number (string, bool, null) is ignored; factory 7.
+function Get-TempSweepDays {
+  param($Cfg)
+  if ($null -eq $Cfg) { return $null }
+  $v = $Cfg.tempSweepStaleDays
+  if ($v -is [int] -or $v -is [long] -or $v -is [double]) { return [Math]::Max(1, [int][Math]::Floor([double]$v)) }
+  return $null
+}
+function Get-TempSweepStaleDays {
+  $base = 7
+  $g = Get-TempSweepDays (Read-CoalmineConfigFile (Join-Path (Join-Path $env:USERPROFILE '.claude') '.coalmine.json'))
+  if ($null -ne $g) { $base = $g }
+  $projRoot = Find-GitRoot
+  $p = Get-TempSweepDays (Read-CoalmineConfigFile (Join-Path $projRoot '.coalmine.json') $projRoot)
+  if ($null -ne $p -and $p -gt $base) { return $p }
+  return $base
+}
+
 try {
   $cfg = Load-CoalmineConfig
-  $staleDays = 7
+  $staleDays = Get-TempSweepStaleDays
   if ($cfg) {
     $disabled = if ($null -ne $cfg.disabledCanaries) { $cfg.disabledCanaries } else { $cfg.disable } # legacy key honored
     # Node parity: force to an array. ConvertFrom-Json PRESERVES a single-element array,
@@ -301,16 +320,6 @@ try {
     if ($disabledArr -contains 'rot-canary' -or $disabledArr -contains 'all') { exit 0 }
     $rcCfgMode = if ($null -ne $cfg.rotCanaryMode) { $cfg.rotCanaryMode } else { $cfg.mode } # legacy key honored
     if ($rcCfgMode -eq 'off' -or $rcCfgMode -eq 'manual') { exit 0 }
-    # Clamp at read time to a positive integer (floor 1, not 0; Node≡PS parity) — the
-    # schema bound (min:1) is enforced only by verify.mjs, never at hook read time. A
-    # raw 0 pushes the cutoff to "now": the sweep below runs BEFORE this session's own
-    # .touched/.smells/.scanned markers are read, so a marker written earlier THIS
-    # session already has a write-time < "now" and 0 deletes it too — silently
-    # suppressing this session's own end-of-scan nudge, on top of deleting every
-    # concurrent session's fresh temp. A negative value pushes the cutoff further into
-    # the future (same bug, worse); a non-numeric value → the default 7.
-    $tsd = $cfg.tempSweepStaleDays -as [double]
-    if ($null -ne $tsd) { $staleDays = [Math]::Max(1, [int][Math]::Floor($tsd)) }
   }
   if ((Get-RcMode) -ne 'auto') { exit 0 }
 

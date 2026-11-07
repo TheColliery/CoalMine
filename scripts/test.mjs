@@ -96,6 +96,8 @@ const TESTS = [
   'scripts/lib/debug-hatch.test.mjs',
   // 3.26.1 (c67): the Antigravity conductor checks its marker folder the way the Stop hook does (owner and mode), spawned from the built copy.
   'scripts/lib/ag-marker-dir.test.mjs',
+  // 3.26.2 (c69): the Stop hook's temp-sweep age is set by the global config; a project may only raise it (spawned from the built copy).
+  'scripts/lib/temp-sweep-days.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',
