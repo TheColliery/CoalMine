@@ -2,6 +2,11 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Security
+- The Stop hook sets its temp-sweep age from the global config, and a project file can only raise it (stub: the doc-writer fills this entry).
+
 ## [3.26.1] - 2026-11-07
 
 The Antigravity conductor checks its marker folder before it writes
