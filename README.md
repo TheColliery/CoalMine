@@ -95,7 +95,7 @@
 
 ## 🚀 Install
 
-**Node.js 22 or 24 is needed** for Option B and for the `node scripts/install.mjs` routes below (the versions CI tests; 18 and 20 are end of life). The claude.ai ZIP route needs no Node. The Claude Code plugin's hooks run `node`; without Node on your PATH, the PowerShell fallback in `alt/powershell/` serves.
+**Node.js 22 or 24 is needed** for Option B and for the `node scripts/install.mjs` routes below (the versions CI tests; 18 and 20 are end of life). The claude.ai ZIP route needs no Node. The Claude Code plugin's hooks run `node`; on Windows without Node on your PATH, install the PowerShell fallback in `alt/powershell/` by hand (its two rot-canary hooks; the conductor needs Node).
 
 **Per-platform, at a glance** — every canary is a read/analyze skill, so it runs wherever a `SKILL.md` loads; only the `rot-canary` auto-cadence hook is host-dependent (Claude Code auto-wires it; a manual snippet covers other hook-capable hosts).
 
