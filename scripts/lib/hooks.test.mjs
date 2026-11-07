@@ -952,7 +952,7 @@ test('stop hook: a pre-planted SYMLINK at the marker SUBDIR is refused — nothi
   }
 });
 
-test('stop hook clamps tempSweepStaleDays:-30 → does NOT delete a future-dated concurrent temp (board round-3 LOW)', () => {
+test('stop hook floors a GLOBAL tempSweepStaleDays:-30 → does NOT delete a future-dated concurrent temp (board round-3 LOW)', () => {
   // Before the read-time clamp, {tempSweepStaleDays:-30} pushed the cutoff 30 days into the
   // FUTURE (cutoff = now - (-30)d = now + 30d), so `mtime < cutoff` held even for files NEWER
   // than now — the sweep deleted a concurrent session's live temp. Clamped to 0 → cutoff = now
@@ -964,7 +964,9 @@ test('stop hook clamps tempSweepStaleDays:-30 → does NOT delete a future-dated
     fs.writeFileSync(future, 'C:\\proj\\y.js\n');
     const ahead = Date.now() + 10 * 24 * 60 * 60 * 1000; // 10 days ahead — inside the buggy 30d future window
     fs.utimesSync(future, new Date(ahead), new Date(ahead));
-    fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ tempSweepStaleDays: -30 }), 'utf8');
+    // The sweep age is read from the GLOBAL config (HOME = tmp, so <tmp>/.claude/.coalmine.json); a project value is ignored.
+    fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify({ tempSweepStaleDays: -30 }), 'utf8');
     // No .touched for THIS session → the hook sweeps, then bails (nothing to nudge).
     const r = runHook(STOP, JSON.stringify({ session_id: 'CLAMP', stop_hook_active: false }), tmp);
     assert.equal(r.status, 0);
@@ -974,7 +976,7 @@ test('stop hook clamps tempSweepStaleDays:-30 → does NOT delete a future-dated
   }
 });
 
-test("stop hook floors tempSweepStaleDays:0 to >=1 — must not delete this session's own recent marker (M1)", () => {
+test("stop hook floors a GLOBAL tempSweepStaleDays:0 to >=1 — must not delete this session's own recent marker (M1)", () => {
   // Before the >=1 floor, tempSweepStaleDays:0 pushed the sweep cutoff to "now".
   // sweepStale() runs BEFORE this session's own .touched is read below, so a
   // marker written moments earlier in the SAME session (already older than "now"
@@ -984,7 +986,9 @@ test("stop hook floors tempSweepStaleDays:0 to >=1 — must not delete this sess
   // on process-spawn timing jitter.
   const tmp = mkTmp();
   try {
-    fs.writeFileSync(path.join(tmp, '.coalmine.json'), JSON.stringify({ tempSweepStaleDays: 0 }), 'utf8');
+    // The sweep age is read from the GLOBAL config (HOME = tmp, so <tmp>/.claude/.coalmine.json); a project value is ignored.
+    fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.claude', '.coalmine.json'), JSON.stringify({ tempSweepStaleDays: 0 }), 'utf8');
     const real = path.join(tmp, 'edited-a.js');
     fs.writeFileSync(real, 'x');
     const base = path.join(tmp, 'coalmine', 'rot-canary-S7');

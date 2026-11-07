@@ -158,7 +158,9 @@ try {
 # silently suppressing this session's own end-of-scan nudge (Node parity).
 $sb = New-Sandbox
 try {
-  '{"tempSweepStaleDays":0}' | Set-Content -Path (Join-Path $sb.Root '.coalmine.json') -Encoding UTF8
+  # The sweep age is read from the GLOBAL config: USERPROFILE = $sb.Root, so <root>/.claude/.coalmine.json.
+  New-Item -ItemType Directory -Path (Join-Path $sb.Root '.claude') -Force | Out-Null
+  '{"tempSweepStaleDays":0}' | Set-Content -Path (Join-Path (Join-Path $sb.Root '.claude') '.coalmine.json') -Encoding UTF8
   $realFile = Join-Path $sb.Root 'edited-a.js'
   'x' | Set-Content -Path $realFile -Encoding UTF8
   $base = Join-Path $sb.Temp 'rot-canary-PSSWEEP'
@@ -172,7 +174,20 @@ try {
   Check 'stop: tempSweepStaleDays:0 exits 0' ($r.ExitCode -eq 0)
   $decisionBlocked = $false
   try { $decisionBlocked = (($r.StdOut | ConvertFrom-Json).decision -eq 'block') } catch {}
-  Check "stop: tempSweepStaleDays:0 must not delete this session's own recent marker" $decisionBlocked
+  Check "stop: GLOBAL tempSweepStaleDays:0 must not delete this session's own recent marker" $decisionBlocked
+} finally { Remove-Item $sb.Root -Recurse -Force -ErrorAction SilentlyContinue }
+
+# --- 3.26.2: the sweep age comes from the GLOBAL config; a project value may only RAISE it ---
+# No global file, project tempSweepStaleDays 1: the factory 7 applies, so a 2-day-old marker is KEPT.
+$sb = New-Sandbox
+try {
+  '{"tempSweepStaleDays":1}' | Set-Content -Path (Join-Path $sb.Root '.coalmine.json') -Encoding UTF8
+  $oldMarker = Join-Path $sb.Temp 'rot-canary-PSAGE.touched'
+  Set-Content -Path $oldMarker -Value 'x' -Encoding UTF8
+  [System.IO.File]::SetLastWriteTimeUtc($oldMarker, (Get-Date).ToUniversalTime().AddDays(-2))
+  $stdin = (@{ session_id = 'PSAGE'; stop_hook_active = $false } | ConvertTo-Json -Compress)
+  $r = Invoke-Hook $stop $stdin $sb
+  Check 'stop: a project tempSweepStaleDays:1 with no global keeps a 2-day-old marker (a project may only raise)' (Test-Path $oldMarker)
 } finally { Remove-Item $sb.Root -Recurse -Force -ErrorAction SilentlyContinue }
 
 Write-Host ''
