@@ -57,7 +57,7 @@ Exemplar-picking rules, scorecard mechanics, stamp/tombstone formats: read `refe
 1. **Bar** — name 3–5 world-class exemplars + why them (cite real programs, not "best practices" (P11)).
 2. **Checklist** — MUST-HAVE (table-stakes) vs EXCELLENCE (top-tier polish). Each tied to an exemplar.
 3. **Score** — every criterion. 🟡 = half credit. N-A must be justified; unjustified N-A = ❌ (D2).
-4. **Gaps** — prioritized: MUST-HAVEs first. Each: criterion · exemplar · effort · impact.
+4. **Gaps** — prioritized: MUST-HAVEs first. Each: criterion · exemplar · move (the one rule or change that closes the gap) · effort · impact.
 
 ## Dimensions (pick relevant)
 Correctness · Security · Performance · UX/DX · Docs/onboarding · Testing/CI · Distribution/integrity · Observability · Governance/licensing · Maintainability · Compatibility · Error handling
@@ -125,7 +125,7 @@ a step that dies says so in the output, never as a false "done"/"skipped"/"clean
 1. Bar — category + named exemplars
 2. Scorecard — `| dimension | criterion | tier (must/excellence) | exemplar | status | evidence |`
 3. Per-dimension % + overall % (list N-A exclusions)
-4. Gaps — criterion · exemplar · effort · impact
+4. Gaps — criterion · exemplar · move · effort · impact
 5. Verdict — 1 line + top 3 moves
 
 ## Escalation — Scope & Model Quality

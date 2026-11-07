@@ -10,7 +10,7 @@
 - Criteria split MUST-HAVE (table stakes — absence blocks "done") vs EXCELLENCE (top-tier polish).
 - Scoring: ✅ = 1 · 🟡 = 0.5 · ❌ = 0 · N-A excluded but MUST carry a written justification (unjustified N-A counts as ❌).
 - Overall % = points / scored criteria. Report per-dimension % too. Never inflate — 85% says 85%.
-- Output order: Bar → Scorecard table → per-dimension % + overall (list N-A exclusions) → prioritized gaps (criterion · exemplar · effort · impact) → one-line verdict + top 3 moves.
+- Output order: Bar → Scorecard table → per-dimension % + overall (list N-A exclusions) → prioritized gaps (criterion · exemplar · move · effort · impact) → one-line verdict + top 3 moves.
 
 ## Rule lifecycle artifacts
 - **Stamp** (FILL writes, RE-VALIDATE refreshes): `<!-- coalmine: verified 2026-06-12 · exemplar npm-provenance-docs · revalidate 90d -->` placed on the line above the rule heading.
