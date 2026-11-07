@@ -190,6 +190,20 @@ try {
   Check 'stop: a project tempSweepStaleDays:1 with no global keeps a 2-day-old marker (a project may only raise)' (Test-Path $oldMarker)
 } finally { Remove-Item $sb.Root -Recurse -Force -ErrorAction SilentlyContinue }
 
+# Positive twin: a GLOBAL tempSweepStaleDays:1 with no project config does sweep the same 2-day-old marker, so the
+# leg above cannot pass merely because the sweep never ran.
+$sb = New-Sandbox
+try {
+  New-Item -ItemType Directory -Path (Join-Path $sb.Root '.claude') -Force | Out-Null
+  '{"tempSweepStaleDays":1}' | Set-Content -Path (Join-Path (Join-Path $sb.Root '.claude') '.coalmine.json') -Encoding UTF8
+  $oldMarker = Join-Path $sb.Temp 'rot-canary-PSAGEG.touched'
+  Set-Content -Path $oldMarker -Value 'x' -Encoding UTF8
+  [System.IO.File]::SetLastWriteTimeUtc($oldMarker, (Get-Date).ToUniversalTime().AddDays(-2))
+  $stdin = (@{ session_id = 'PSAGEG'; stop_hook_active = $false } | ConvertTo-Json -Compress)
+  $r = Invoke-Hook $stop $stdin $sb
+  Check 'stop: a GLOBAL tempSweepStaleDays:1 sweeps a 2-day-old marker (the global value is the one that counts)' (-not (Test-Path $oldMarker))
+} finally { Remove-Item $sb.Root -Recurse -Force -ErrorAction SilentlyContinue }
+
 Write-Host ''
 Write-Host "PS hook results: $pass passed, $fail failed"
 if ($fail -gt 0) { exit 1 } else { exit 0 }
