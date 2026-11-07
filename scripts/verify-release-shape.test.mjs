@@ -261,3 +261,14 @@ test('verify-release-shape.mjs: a published title holding a newline is printed e
   assert.equal(lines.includes(forged), false, 'the forged line never stands alone in the log');
   assert.ok(lines.some((l) => l.startsWith('verify-release-shape: TITLE MISMATCH -- intended "v1.0.0 - a fix", published "v1.0.0 - a fix\\n' + forged + '\\nx"')), res.stderr);
 });
+
+// order 2026-11-07c (2), the 07b survivor: the INTENDED title goes out through JSON.stringify too. A title can hold a double quote, and raw it would end the quoted field
+// early, so the line no longer reads back as the two titles it names.
+test('verify-release-shape.mjs: an intended title holding a double quote is printed as a JSON string on the mismatch line -- RED under 07b mutant D2', () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'release-title.txt'), 'v1.0.0 - a "quoted" fix\n');
+  fs.writeFileSync(path.join(dir, 'release-body.md'), 'A fix.\n');
+  const res = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix', body: 'A fix.' }));
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.ok(res.stderr.split(/\r?\n/).includes('verify-release-shape: TITLE MISMATCH -- intended "v1.0.0 - a \\"quoted\\" fix", published "v1.0.0 - a fix"'), res.stderr);
+});

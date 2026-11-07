@@ -398,7 +398,8 @@ const sizedFileClock = (soloMs) => Math.max(2000, soloMs * 4 + 1000);
 // sized clock cannot pass it and leave Node 22 to cancel the hang by the wrong clock; the whole-run deadline four clocks and 20 s.
 const clockedLimits = (clock) => ({ ...LIMITS, fileTimeoutMs: clock * 2, deadlineMs: clock * 4 + 20000, fileClockMs: clock });
 // A loaded runner stood in for: a preload that makes EVERY node of the tree (the runner's children included) sleep before it runs, handed on NODE_OPTIONS, which the runner carries into each child.
-const SLOW_START_MS = 2500;
+// 1,500 ms (2,500 until 2026-11-07c): every node of a slow-start run pays it, so it is the largest cost of the test that uses it; any start above the fixed clock below makes the witness.
+const SLOW_START_MS = 1500;
 fs.writeFileSync(path.join(SANDBOX, 'slow-start.preload.mjs'), 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ' + SLOW_START_MS + ');' + String.fromCharCode(10));
 const SLOW_START_ENV = { NODE_OPTIONS: '--import ' + pathToFileURL(path.join(SANDBOX, 'slow-start.preload.mjs')).href };
 // A solo command-line run of the passing file under `extra`, timed: the measurement a command-line test sizes its clock from.
@@ -535,21 +536,22 @@ test('the command line: --file-clock-ms is accepted, shown in the usage, and kil
 });
 
 // The CoalWorks chief's 25a flake, made deterministic (RED before this fix: the command-line test above hard-coded --file-clock-ms 2000, and under this slow start it read [FAIL, FAIL]). First the
-// witness that the slow start reaches the runner's children: a fixed 2,000 ms clock under a 2,500 ms node start kills the PASSING file too. Then the sized clock, measured under the same slow start,
-// kills the hang and lets the passing file through.
-test('the command line under a slow node start: a fixed 2,000 ms file clock kills the passing file too (the flake), a clock sized from a solo run under the same load does not -- RED before the fix', () => {
-  const fixed = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '40000', '--file-clock-ms', '2000', '--serial', '--', ...fx('hang-top', 'pass')], SLOW_START_ENV);
+// witness that the slow start reaches the runner's children: a fixed clock below the node start (1,000 ms under 1,500 ms since 2026-11-07c; the flake's own figures were 2,000 under a loaded runner's
+// start) kills the hang AND the PASSING file. Then the sized clock, measured under the same
+// slow start, lets the passing file through.
+// 2026-11-07c: the sized run no longer carries the hang. A hang is killed only AT the clock, so it held this run for the whole sized clock (about 30 s under the slow start, 41 s for the test, the
+// file 74 to 79 s on Node 24): past the 60 s that Node 22 gives a whole file when a room passes --test-timeout=60000, CoalGob's red after the 07b re-copy. The kill of a hang under the slow start
+// is the fixed run's witness, the kill at a sized clock is the --file-clock-ms test's above, and what only this run can show is that the sized clock spares the passing file.
+test('the command line under a slow node start: a fixed file clock below the node start kills the hang and the passing file too (the flake), a clock sized from a solo run under the same load spares the passing file -- RED before the fix', () => {
+  const fixed = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '40000', '--file-clock-ms', '1000', '--serial', '--', ...fx('hang-top', 'pass')], SLOW_START_ENV);
   assert.equal(fixed.status, 1, fixed.stdout + fixed.stderr);
-  assert.match(fixed.stdout, /^FAIL .*pass\.fixture\.mjs: killed at the file clock \(2000 ms\)/m, 'the slow start did not reach the children, so this witness proves nothing: ' + fixed.stdout);
+  assert.match(fixed.stdout, /^FAIL .*hang-top\.fixture\.mjs: killed at the file clock \(1000 ms\)/m, fixed.stdout);
+  assert.match(fixed.stdout, /^FAIL .*pass\.fixture\.mjs: killed at the file clock \(1000 ms\)/m, 'the slow start did not reach the children, so this witness proves nothing: ' + fixed.stdout);
   const clock = sizedFileClock(soloCliMs(SLOW_START_ENV));
-  // --file-timeout-ms (node's --test-timeout) sits ABOVE the sized clock here: under this slow start the clock runs past 20 s, and Node 22.23 cancels a file hung in a
-  // top-level await at --test-timeout ("not ok ...; cancelled 1", verify-landing run 40180296253 on all three runners) where Node 24.22 lets it hang until the file clock,
-  // so with the test timeout below the clock the hang's REASON depended on the node version. The clock must be the first thing that ends the hang on every version.
-  const sized = cli(['--heap-mb', '512', '--file-timeout-ms', String(clock * 2), '--deadline-ms', String(clock * 4 + 20000), '--file-clock-ms', String(clock), '--serial', '--', ...fx('hang-top', 'pass')], SLOW_START_ENV);
-  assert.equal(sized.status, 1, sized.stdout + sized.stderr);
-  assert.match(sized.stdout, /^FAIL .*hang-top\.fixture\.mjs: killed at the file clock/m);
-  assert.doesNotMatch(sized.stdout, /^FAIL .*pass\.fixture\.mjs/m, sized.stdout);
-  assert.match(sized.stdout, /pass 1 · fail 1 \(hang-top\.fixture\.mjs\) · vacuous 0 · skipped 0 · not-run 0 · reconciled 2 of 2 — RED$/m);
+  const sized = cli(['--heap-mb', '512', '--file-timeout-ms', String(clock * 2), '--deadline-ms', String(clock * 4 + 20000), '--file-clock-ms', String(clock), '--serial', '--', ...fx('pass')], SLOW_START_ENV);
+  assert.equal(sized.status, 0, sized.stdout + sized.stderr);
+  assert.doesNotMatch(sized.stdout, /^FAIL /m, sized.stdout);
+  assert.match(sized.stdout, /pass 1 · fail 0 · vacuous 0 · skipped 0 · not-run 0 · reconciled 1 of 1 — GREEN$/m);
 });
 
 // ---- item 11 of order 09f (2026-10-09): the three defects the flock's first POSIX runs found --------------------------------------------------------
