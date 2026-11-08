@@ -4,10 +4,10 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [3.27.4] - 2026-11-09
 
-Each shipped CommonJS hook opens with strict mode
+The three hooks run in strict mode
 
 ### Changed
-- Stub: the doc-writer fills this entry.
+- **The three hooks now run in JavaScript strict mode.** `'use strict'` is the first statement of `coalmine-conductor.js`, `rot-canary-stop.js` and `rot-canary-touch.js`, so a silent mistake of the kind strict mode catches fails in the tests instead of passing unnoticed. Behaviour is unchanged. — test: scripts/lib/use-strict.test.mjs
 
 ## [3.27.3] - 2026-11-08
 
