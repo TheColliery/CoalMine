@@ -92,8 +92,8 @@ one of the two so judge ≠ agent.
 
 ### Cost — estimated, not measured
 
-10 cases × 3 runs × 2 arms = **60 agent runs**, plus **60 LLM-judge calls** (one
-`llm` grader per case; the `regex` and `tool_used` graders are free).
+10 cases × 3 runs × 2 arms = **60 agent runs**, plus **66 LLM-judge calls** (one
+`llm` grader per case, two in case 08; the `regex` and `tool_used` graders are free).
 
 Order of magnitude, **⚠️ unverified — do not quote this without the marker:
 ≈ $3–5.5 for the full suite, ≈ $1.5 for the `--runs 1` pilot.** Scaled from the earlier 7-case estimate ($2–4 and $1), still never measured.
