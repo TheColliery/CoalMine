@@ -7,7 +7,7 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 telemetry-canary does not read tail_consumers as inherited into an environment
 
 ### Fixed
-- **`tail_consumers` is read per environment.** Wrangler does not inherit it into an `[env.<name>]` table, so a top-level Tail Worker no longer makes telemetry-canary rate an environment that lacks one HIGH. — test: evals/12-telemetry-env-tail-consumer (written, not run)
+- **`tail_consumers` is read per environment.** Wrangler does not inherit it into an `[env.<name>]` table, so a top-level Tail Worker no longer makes telemetry-canary rate an environment that lacks one HIGH. An environment still takes `observability` and `logpush` from the top level when it sets none. — test: evals/12-telemetry-env-tail-consumer (written, not run)
 - **A Worker with `logpush = true` is still rated HIGH, and the report now says what it cannot show.** The export happens only if the account has a Workers Logpush job, which the repository cannot show.
 
 ## [3.27.2] - 2026-11-08
