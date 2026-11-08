@@ -18,8 +18,8 @@ Score:
 - 1.0 — the body log is flagged as sensitive data written to logs (category 6),
   rated HIGH, and the reason names `tail_consumers` (the Tail Worker receives the
   log lines and can send them off the box).
-- 0.7 — flagged as category 6 and rated HIGH, but the reason does not name
-  `tail_consumers` (for example it rests on another mechanism or is vague).
+- 0.7 — flagged as category 6 and rated HIGH, with a vague reason that does not misread the config.
+- 0.3 — rated HIGH on a false premise (for example that observability is on or defaults on here).
 - 0.0 — rated MEDIUM because observability is off, or not flagged as category 6.
 
 Do NOT deduct for additional real findings. Pass = score >= 0.7.
