@@ -5,7 +5,7 @@ Measures one thing we have never measured: **does the skill actually help?**
 the plugin loaded, once without — and reports the score delta. The headline
 number is Δ, not the pass rate.
 
-Pilot scope: `rot-canary` with 7 cases, plus three telemetry-canary cases: `evals/08-telemetry-sensitive-log/` (dirty), `evals/09-neg-telemetry-lookalike/` (clean look-alike) and `evals/10-telemetry-nested-observability/` (logs shipped through the nested observability flag). Prove the shape, then the room extends
+Pilot scope: `rot-canary` with 7 cases, plus four telemetry-canary cases: `evals/08-telemetry-sensitive-log/` (dirty), `evals/09-neg-telemetry-lookalike/` (clean look-alike), `evals/10-telemetry-nested-observability/` (logs shipped through the nested observability flag) and `evals/11-telemetry-tail-consumer/` (logs shipped through `tail_consumers` with observability off). Prove the shape, then the room extends
 it toward the ~20 real cases Anthropic reports is enough to steer on.
 
 ---
@@ -92,11 +92,11 @@ one of the two so judge ≠ agent.
 
 ### Cost — estimated, not measured
 
-10 cases × 3 runs × 2 arms = **60 agent runs**, plus **66 LLM-judge calls** (one
+11 cases × 3 runs × 2 arms = **66 agent runs**, plus **72 LLM-judge calls** (one
 `llm` grader per case, two in case 08; the `regex` and `tool_used` graders are free).
 
 Order of magnitude, **⚠️ unverified — do not quote this without the marker:
-≈ $3–5.5 for the full suite, ≈ $1.5 for the `--runs 1` pilot.** Scaled from the earlier 7-case estimate ($2–4 and $1), still never measured.
+≈ $3–6.5 for the full suite, ≈ $1.5 for the `--runs 1` pilot.** Scaled from the earlier 7-case estimate ($2–4 and $1), still never measured.
 That is arithmetic over assumed per-token prices, and prices and model IDs rot —
 check current Anthropic pricing before relying on it. The only
 trustworthy figure is the pilot's own top-level `cost_usd` in

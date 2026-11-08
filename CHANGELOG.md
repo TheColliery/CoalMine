@@ -7,7 +7,9 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 telemetry-canary reads tail_consumers as a log route
 
 ### Fixed
-- Stub: the doc-writer fills this entry.
+- **A redaction counts only when it covers every occurrence of the logged value in the call.** A logger that redacts `prompt` in the logged object but also receives the same value as the message text still writes it out, so telemetry-canary now reports it.
+- **A Worker whose logs leave through `tail_consumers` or `logpush = true` rates HIGH whatever its observability setting.** A Tail Worker receives `console.log` data and can forward it, and a Logpush job picks up `logpush = true` Workers; neither depends on the observability flags. — test: evals/11-telemetry-tail-consumer (written, not run)
+- **Correction to the 3.27.1 notes.** They said a finding drops to MEDIUM only when both observability keys are false. The canary rates it MEDIUM when every observability key that is set is false and no other log destination is configured.
 
 ## [3.27.1] - 2026-11-08
 
