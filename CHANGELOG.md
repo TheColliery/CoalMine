@@ -2,6 +2,13 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.27.4] - 2026-11-09
+
+Each shipped CommonJS hook opens with strict mode
+
+### Changed
+- Stub: the doc-writer fills this entry.
+
 ## [3.27.3] - 2026-11-08
 
 telemetry-canary does not read tail_consumers as inherited into an environment
