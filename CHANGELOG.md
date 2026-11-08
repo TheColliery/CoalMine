@@ -7,7 +7,9 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 telemetry-canary also flags the nested observability flag
 
 ### Fixed
-- Stub: the doc-writer fills this entry.
+- **telemetry-canary reads the nested observability setting.** Cloudflare's Wrangler configuration treats `observability.enabled` as a shorthand for `observability.logs.enabled` and turns logs on by default for new Workers. The canary now counts logs as shipped when either key is true, and when a Worker sets neither; only an explicit `false` at both keys rates the finding MEDIUM. — test: evals/10-telemetry-nested-observability (written, not run)
+- **A redaction counts only when it covers the logged field.** A logger that redacts other paths, or a mask that leaves most of a token readable, no longer clears a log call of a body, prompt or secret.
+- **The eval suite's cost note counts all cases.** It said 7 cases and 42 runs; the suite holds 10 cases, so 60 runs and 60 judge calls, with the dollar estimate scaled from the earlier one and still never measured.
 
 ## [3.27.0] - 2026-11-08
 

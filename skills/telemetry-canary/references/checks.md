@@ -40,7 +40,7 @@ The canary reads; a grep only finds candidates.
 | Sink | `console.log/info/warn/error/debug` · `logger.*` · `log.*` |
 | Argument | a request body (`await request.text()`, `request.json()`, `request.body`, or a variable assigned from them) · the whole `request.headers`, or `headers.get('authorization')`, `headers.get('cookie')` or `headers.get('set-cookie')` · an identifier named like model text (`prompt`, `messages`, `completion`, `output`, `responseText`, `generated`) |
 | Where | a file the runtime loads: a `wrangler.toml`, `wrangler.jsonc` or `wrangler.json` in the package root, or an `export default { fetch` / `addEventListener('fetch'` shape; other server code by the server-only rule in section 2 |
-| Worker row | `[observability] enabled = true` (TOML) or `"observability": { "enabled": true }` (JSON) ships logs to Cloudflare: HIGH. Without it only `wrangler tail` shows them: MEDIUM |
+| Worker row | logs ship to Cloudflare when `observability.enabled` or its long form `observability.logs.enabled` is true, in TOML (`[observability]` or `[observability.logs]`) or JSON (`"observability": { "enabled": true }` or `"observability": { "logs": { "enabled": true } }`): HIGH. With no observability setting, new Workers have logs on by default: HIGH. Only an explicit `false` at both keys leaves just `wrangler tail`: MEDIUM |
 | Other runtimes | a log shipper or drain the repo configures: HIGH; none shown: MEDIUM |
 | Secret value | a confirmed token or key value in the logged argument is CRITICAL whatever the config says |
 
@@ -48,7 +48,7 @@ The class is any log shipped off the box (Workers Logs, CloudWatch, Datadog, a l
 
 False-positive classes, confirm each by reading before reporting:
 1. Lengths and presence, not content: `body.length`, `headers.has('Authorization')`, a status code.
-2. Redacted output: a `redact(...)` or `mask(...)` wrapper, or a logger configured with redaction paths.
+2. Redacted output, only where the redaction covers the logged field: a `redact(...)` or `mask(...)` wrapper around the value itself, or a logger whose redaction paths name that field. A logger that redacts other paths (for example `password`) still logs `prompt` or the body: report it. A partial mask that leaves the secret readable (most of a token kept) is not redacted.
 3. Look-alike names: `promptId`, `promptCount`, `outputPath`, `messagesSent`.
 4. Not a runtime file: tests, fixtures, local scripts, a CLI's stdout (the server-only rule).
 5. Metadata only: `request.method`, `request.url` path. A full URL with query parameters is NOT clean (tokens ride there): report SUSPECTED.
