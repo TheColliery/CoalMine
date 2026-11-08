@@ -2,6 +2,15 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+telemetry-canary flags sensitive data written to logs
+
+The `telemetry-canary` skill text in `plugin/` changed and its scope widened, so this is a MINOR release.
+
+### Added
+- **telemetry-canary has a sixth category: sensitive data in logs.** Until now it asked how things are logged; it now also asks what is logged. It flags a log call whose argument is a request body, an `Authorization`, `Cookie` or `Set-Cookie` header (or the whole headers object), or a prompt or output value, in code a runtime loads. Severity is HIGH where a Worker config ships logs off the machine (observability enabled), MEDIUM where they are only seen live, CRITICAL for a confirmed secret value. The README row and the skill description state the wider scope; rot-canary's input-security category points to it so a logged secret is reported once. — test: evals/08-telemetry-sensitive-log, evals/09-neg-telemetry-lookalike (written, not run)
+
 ## [3.26.3] - 2026-11-07
 
 Each gold-standard gap row names the move that closes it

@@ -5,7 +5,7 @@ Measures one thing we have never measured: **does the skill actually help?**
 the plugin loaded, once without — and reports the score delta. The headline
 number is Δ, not the pass rate.
 
-Pilot scope: `rot-canary` only, 7 cases. Prove the shape, then the room extends
+Pilot scope: `rot-canary` with 7 cases, plus a telemetry-canary pair: `evals/08-telemetry-sensitive-log/` (dirty) and `evals/09-neg-telemetry-lookalike/` (clean look-alike). Prove the shape, then the room extends
 it toward the ~20 real cases Anthropic reports is enough to steer on.
 
 ---

@@ -1,7 +1,7 @@
 ---
 name: telemetry-canary
 description: >-
-  Observability and structured logging canary — checks for structured logs (JSON), OpenTelemetry metrics/traces, proper error stack traces, and flags empty catches or silent log swallowing. Triggers on keywords: "/telemetry-canary", "telemetry-canary", "observability audit", "structured logging". Use when adding or changing logging, metrics, tracing, or error-handling code.
+  Observability and structured logging canary — checks for structured logs (JSON), OpenTelemetry metrics/traces, proper error stack traces, flags empty catches or silent log swallowing, and flags sensitive data written to logs. Triggers on keywords: "/telemetry-canary", "telemetry-canary", "observability audit", "structured logging". Use when adding or changing logging, metrics, tracing, or error-handling code.
 ---
 
 # Telemetry Canary (Observability & Logging Audit)
@@ -10,7 +10,7 @@ description: >-
 
 **Config reads — every config key, always the CASCADE, never the bare project file:** `~/.claude/.coalmine.json` first, then the project config (own agent dir → other known agent dirs → legacy `<gitroot>/.claude/.coalmine.json`, then `<gitroot>/.coalmine.json`); project wins per key **EXCEPT** the conductor's own safety clamps — `scanEverything`/`updateMode`/`enableConductor`/`rotCanaryMode` are clamped safer-value-wins (a project can only quieten, never escalate, among the clamp's own known values; an absent global reads as the schema default and is clamped the same way — an unrecognized project value is not validated here), and `scanExcludePaths`/`disabledCanaries` union-merge (a project adds, never drops). A bare project read is ABSENT on a machine configured only globally, so it silently yields defaults.
 
-Audit code for proper telemetry instrumentation — ensure the app is not a black box in production.
+Audit code for proper telemetry instrumentation — ensure the app is not a black box in production, and that what it logs does not leak.
 
 ## Auditing Categories
 1. **Empty / Silent Catch** — catch blocks that swallow exceptions without logging a stack trace or forwarding the error.
@@ -18,6 +18,7 @@ Audit code for proper telemetry instrumentation — ensure the app is not a blac
 3. **No Correlation ID** — operations crossing boundaries (HTTP/gRPC/threads) without propagating a trace/correlation ID.
 4. **Missing Metrics** — critical transactions (checkout, auth, errors) lacking counter/histogram instrumentation.
 5. **No Stack Traces** — errors logged without stack context (`logger.error(e.message)` instead of `logger.error(e)`).
+6. **Sensitive data in logs** — a log call in code a runtime loads whose argument is a request body, an `Authorization`/`Cookie`/`Set-Cookie` header (or the whole headers object), or a prompt or output value; logs that leave the machine keep it.
 
 Per-stack grep patterns and right/wrong shapes per category: read `references/checks.md` before scanning.
 
@@ -49,7 +50,7 @@ a step that dies says so in the output, never as a false "done"/"skipped"/"clean
 ## Output
 `| file:line | category | severity | finding | recommendation |`
 
-Severity: CRITICAL (swallowed error with state mutation) · HIGH (missing stack trace in error logs) · MEDIUM (unstructured log in API boundary) · LOW (minor trace gaps)
+Severity: CRITICAL (swallowed error with state mutation; a confirmed secret value written to a log) · HIGH (missing stack trace in error logs; sensitive data logged where the Worker config ships logs off the machine) · MEDIUM (unstructured log in API boundary; sensitive data logged where logs are only seen live) · LOW (minor trace gaps)
 
 **Reporting:** call `ReportFindings` when callable — `file`/`line` MUST be the defect site, never the enclosing function; an unresolvable line reports your best guess, named imprecise in the wrap-up — **never dropped, never faked.** Severity prefixed in `summary` (e.g. `[HIGH] …`), ranked most-severe first, SUSPECTED as `verdict: PLAUSIBLE`; chat then carries only the wrap-up line (counts · coverage gaps · overflow past 32 · any imprecise-line findings) + the fix menu, never a restatement of findings. Not callable → the table above, unchanged. An Apply-fixes click = consent to the safe-fix class only — gated the same as this skill's own fix-mode (Hook Context needs an interactive session, per the Hook Context rule below) — composing with (never bypassing) the fix-mode discipline. **After any fix round, re-report the same findings with `outcome: fixed`/`skipped`/`no_change_needed` — skipping this leaves the round UNFINISHED.**
 

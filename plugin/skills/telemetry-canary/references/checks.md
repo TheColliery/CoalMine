@@ -31,3 +31,23 @@ Confirm: a catch is only SILENT if nothing inside logs with stack, rethrows, or 
 | Python | `logger.error(str(e))` | `logger.exception(...)` or `exc_info=True` |
 | C# | `_logger.LogError(ex.Message)` | `_logger.LogError(ex, "msg")` |
 | Go | `log.Error(err.Error())` only | wrap with `%w`, log with stack lib |
+
+## 6. Sensitive data in logs — grep for candidates, then confirm by reading
+The canary reads; a grep only finds candidates.
+
+| Item | What to look for |
+|---|---|
+| Sink | `console.log/info/warn/error/debug` · `logger.*` · `log.*` |
+| Argument | a request body (`await request.text()`, `request.json()`, `request.body`, or a variable assigned from them) · the whole `request.headers`, or `headers.get('authorization'|'cookie'|'set-cookie')` · an identifier named like model text (`prompt`, `messages`, `completion`, `output`, `responseText`, `generated`) |
+| Where | a file the runtime loads: a `wrangler.toml`, `wrangler.jsonc` or `wrangler.json` in the package root, or an `export default { fetch` / `addEventListener('fetch'` shape; other server code by the server-only rule in section 2 |
+| Worker row | `[observability] enabled = true` (TOML) or `"observability": { "enabled": true }` (JSON) ships logs to Cloudflare: HIGH. Without it only `wrangler tail` shows them: MEDIUM |
+| Secret value | a confirmed token or key value in the logged argument is CRITICAL whatever the config says |
+
+The class is any log shipped off the box (Workers Logs, CloudWatch, Datadog, a log drain); the Worker row is the stack with a config signal for severity.
+
+False-positive classes, confirm each by reading before reporting:
+1. Lengths and presence, not content: `body.length`, `headers.has('Authorization')`, a status code.
+2. Redacted output: a `redact(...)` or `mask(...)` wrapper, or a logger configured with redaction paths.
+3. Look-alike names: `promptId`, `promptCount`, `outputPath`, `messagesSent`.
+4. Not a runtime file: tests, fixtures, local scripts, a CLI's stdout (the server-only rule).
+5. Metadata only: `request.method`, `request.url` path. A full URL with query parameters is NOT clean (tokens ride there): report SUSPECTED.

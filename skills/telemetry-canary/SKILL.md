@@ -1,14 +1,14 @@
 ---
 name: telemetry-canary
 description: >-
-  Observability and structured logging canary — checks for structured logs (JSON), OpenTelemetry metrics/traces, proper error stack traces, and flags empty catches or silent log swallowing. Triggers on keywords: "/telemetry-canary", "telemetry-canary", "observability audit", "structured logging". Use when adding or changing logging, metrics, tracing, or error-handling code.
+  Observability and structured logging canary — checks for structured logs (JSON), OpenTelemetry metrics/traces, proper error stack traces, flags empty catches or silent log swallowing, and flags sensitive data written to logs. Triggers on keywords: "/telemetry-canary", "telemetry-canary", "observability audit", "structured logging". Use when adding or changing logging, metrics, tracing, or error-handling code.
 ---
 
 # Telemetry Canary (Observability & Logging Audit)
 
 <!-- SHARED:LANGUAGE_HEADER -->
 
-Audit code for proper telemetry instrumentation — ensure the app is not a black box in production.
+Audit code for proper telemetry instrumentation — ensure the app is not a black box in production, and that what it logs does not leak.
 
 ## Auditing Categories
 1. **Empty / Silent Catch** — catch blocks that swallow exceptions without logging a stack trace or forwarding the error.
@@ -16,6 +16,7 @@ Audit code for proper telemetry instrumentation — ensure the app is not a blac
 3. **No Correlation ID** — operations crossing boundaries (HTTP/gRPC/threads) without propagating a trace/correlation ID.
 4. **Missing Metrics** — critical transactions (checkout, auth, errors) lacking counter/histogram instrumentation.
 5. **No Stack Traces** — errors logged without stack context (`logger.error(e.message)` instead of `logger.error(e)`).
+6. **Sensitive data in logs** — a log call in code a runtime loads whose argument is a request body, an `Authorization`/`Cookie`/`Set-Cookie` header (or the whole headers object), or a prompt or output value; logs that leave the machine keep it.
 
 Per-stack grep patterns and right/wrong shapes per category: read `references/checks.md` before scanning.
 
@@ -38,7 +39,7 @@ In Agent Context, after the report, present via `ask_question`:
 ## Output
 `| file:line | category | severity | finding | recommendation |`
 
-Severity: CRITICAL (swallowed error with state mutation) · HIGH (missing stack trace in error logs) · MEDIUM (unstructured log in API boundary) · LOW (minor trace gaps)
+Severity: CRITICAL (swallowed error with state mutation; a confirmed secret value written to a log) · HIGH (missing stack trace in error logs; sensitive data logged where the Worker config ships logs off the machine) · MEDIUM (unstructured log in API boundary; sensitive data logged where logs are only seen live) · LOW (minor trace gaps)
 
 <!-- SHARED:REPORTING_FOOTER -->
 

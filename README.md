@@ -41,7 +41,7 @@
 | **`source-grounding`** | Prevents AI hallucinations by forcing cross-source verification | **Standing rule** (always on only where your own `CLAUDE.md` or `AGENTS.md` carries it; CoalMine writes no such file) · offered at session start on version-sensitive work · `/source-grounding` on demand |
 | **`supply-chain-audit`** | Audits dependency vulnerabilities, licenses, phone-home code, and build/CI security | **On-demand** (manually run when relevant) |
 | **`resilience-audit`** | Audits failure path handling (FMEA), rollbacks, retry limits, and idempotency | **On-demand** (manually run when relevant) |
-| **`telemetry-canary`** | Audits observability, log structures, metrics, and telemetry quality | **On-demand** (manually run when relevant) |
+| **`telemetry-canary`** | Audits observability, log structures, metrics, and telemetry quality, and flags sensitive data written to logs | **On-demand** (manually run when relevant) |
 | **`testability-canary`** | Audits testing ease, code coupling, mockability, and Dependency Injection (DI) | **On-demand** (manually run when relevant) |
 | **`scale-canary`** | Audits performance scaling issues, $O(N^2)$ loops, and duplicate (N+1) database queries | **On-demand** (manually run when relevant) |
 | **`drift-canary`** | Prevents contract and schema drift (API/database contract inconsistencies) | **On-demand** (manually run when relevant) |

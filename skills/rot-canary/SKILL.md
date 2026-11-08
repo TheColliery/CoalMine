@@ -24,7 +24,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 5. **Resource leak** — undisposed handle/stream/COM, subscription never removed
 6. **Async** — unawaited task, `.Result`/`.Wait()` deadlock, blocking on UI thread
 7. **Silent failure** — empty catch, success on partial completion, ignored return code
-8. **Input security** — unvalidated input, injection, path traversal, secret in code/log
+8. **Input security** — unvalidated input, injection, path traversal, secret in code/log (the deep audit of what is logged is telemetry-canary category 6; report a logged secret once)
 9. **Performance** — O(n²) in hot path, N+1, unbounded growth, work on UI thread
 10. **Doc rot** — comment contradicts code, stale TODO, wrong param in docstring
 
