@@ -4,4 +4,4 @@ target: last_message
 match: contains
 weight: 0.5
 ---
-[Ii]nherit
+(?:[Nn]ot|[Nn]on)[- ](?:be )?inherit|n't (?:be )?inherit
