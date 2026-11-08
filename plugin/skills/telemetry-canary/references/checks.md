@@ -38,9 +38,10 @@ The canary reads; a grep only finds candidates.
 | Item | What to look for |
 |---|---|
 | Sink | `console.log/info/warn/error/debug` · `logger.*` · `log.*` |
-| Argument | a request body (`await request.text()`, `request.json()`, `request.body`, or a variable assigned from them) · the whole `request.headers`, or `headers.get('authorization'|'cookie'|'set-cookie')` · an identifier named like model text (`prompt`, `messages`, `completion`, `output`, `responseText`, `generated`) |
+| Argument | a request body (`await request.text()`, `request.json()`, `request.body`, or a variable assigned from them) · the whole `request.headers`, or `headers.get('authorization')`, `headers.get('cookie')` or `headers.get('set-cookie')` · an identifier named like model text (`prompt`, `messages`, `completion`, `output`, `responseText`, `generated`) |
 | Where | a file the runtime loads: a `wrangler.toml`, `wrangler.jsonc` or `wrangler.json` in the package root, or an `export default { fetch` / `addEventListener('fetch'` shape; other server code by the server-only rule in section 2 |
 | Worker row | `[observability] enabled = true` (TOML) or `"observability": { "enabled": true }` (JSON) ships logs to Cloudflare: HIGH. Without it only `wrangler tail` shows them: MEDIUM |
+| Other runtimes | a log shipper or drain the repo configures: HIGH; none shown: MEDIUM |
 | Secret value | a confirmed token or key value in the logged argument is CRITICAL whatever the config says |
 
 The class is any log shipped off the box (Workers Logs, CloudWatch, Datadog, a log drain); the Worker row is the stack with a config signal for severity.
