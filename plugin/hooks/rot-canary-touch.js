@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Code-Health Tier 1 (PostToolUse: Write|Edit|MultiEdit) — cross-platform (Node).
 // Records touched code files for the session + flags unambiguous tripwires. Always non-blocking (exit 0).
+'use strict';
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

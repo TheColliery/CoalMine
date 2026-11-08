@@ -9,6 +9,8 @@
 // runtime require of a sibling, which breaks the copy-one-file install, or a bundler, which
 // Phoenix #2 forbids). The over-run is the cost of that shipping model — the file is one
 // hook's SessionStart path across its three platform adapters. N is HISTORY; `wc -l` is live.
+'use strict';
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

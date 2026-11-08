@@ -98,6 +98,8 @@ const TESTS = [
   'scripts/lib/ag-marker-dir.test.mjs',
   // 3.26.2 (c69): the Stop hook's temp-sweep age is set by the global config; a project may only raise it (spawned from the built copy).
   'scripts/lib/temp-sweep-days.test.mjs',
+  // CM-T1 (3.27.4): every shipped CommonJS hook opens with 'use strict' (hooks/ and plugin/hooks/, derived by readdir).
+  'scripts/lib/use-strict.test.mjs',
   'scripts/lib/read-census.test.mjs',
   'scripts/lib/manifest-alias.test.mjs',
   'scripts/lib/render-bound.test.mjs',

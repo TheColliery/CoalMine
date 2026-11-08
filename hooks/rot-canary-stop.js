@@ -11,6 +11,8 @@
 // paths rely on — or a bundler, which Phoenix #2 (zero-dep) forbids. The over-run is the
 // cost of that shipping model, not of low cohesion: the file is one hook's single Stop path.
 // N is HISTORY (dates this judgement); `wc -l` is the live count.
+'use strict';
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
