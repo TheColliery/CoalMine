@@ -16,8 +16,7 @@ logs ship at all.
 Score:
 
 - 1.0 — the body log is flagged as sensitive data written to logs (category 6),
-  rated HIGH, and the reason names the enabled logs (the nested flag ships them off
-  the box, or an equivalent consequence).
+  rated HIGH, and the reason names the nested observability.logs.enabled flag; a reason that rests only on the new-Worker default scores 0.7
 - 0.7 — flagged as category 6, but the reason for HIGH is missing or vague.
 - 0.4 — flagged as a logging-hygiene note with no category 6 and no severity.
 - 0.0 — not flagged, or the answer says the config is safe because no top-level
