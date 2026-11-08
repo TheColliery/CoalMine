@@ -2,6 +2,13 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.27.2] - 2026-11-08
+
+telemetry-canary reads tail_consumers as a log route
+
+### Fixed
+- Stub: the doc-writer fills this entry.
+
 ## [3.27.1] - 2026-11-08
 
 telemetry-canary also flags the nested observability flag
