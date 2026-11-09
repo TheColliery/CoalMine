@@ -419,8 +419,11 @@ try {
   }
   # Acknowledgement marker — stores the .touched ticks captured at nudge time.
   [System.IO.File]::WriteAllText($scanned, [string]$touchedTicks)
+  # study q21: only the exact "1" is attended. Any other value means no user can answer, so report only.
+  # This surface reads no autoFixMode yet, so it carries no mode sentences (a named gap, not this change).
+  $fixClause = if ($env:CLAUDE_CODE_SESSION_ATTENDED -eq '1') { 'If findings exist and a user is present, end by offering the fix menu via your question tool - never fix without a chosen option.' } else { 'No user can answer this session, so report only, with no fixes and no offers.' }
   $list = ($files | ForEach-Object { "  - $_" }) -join "`n"
-  $reason = "Code-health auto-check (session end): code files were edited this session. Before stopping, invoke the rot-canary skill at DEPTH=QUICK with SCOPE = these touched files + their direct callers:`n$list$smellText$capNotice`n`nReport CONFIRMED findings only (severity table; one line if none). If findings exist and a user is present, end by offering the fix menu via your question tool - never fix without a chosen option. (Disable: create ~/.claude/.rot-canary-off)"
+  $reason = "Code-health auto-check (session end): code files were edited this session. Before stopping, invoke the rot-canary skill at DEPTH=QUICK with SCOPE = these touched files + their direct callers:`n$list$smellText$capNotice`n`nReport CONFIRMED findings only (severity table; one line if none). $fixClause (Disable: create ~/.claude/.rot-canary-off)"
   $out = @{ decision = 'block'; reason = $reason } | ConvertTo-Json -Compress
   Write-Output $out
   exit 0

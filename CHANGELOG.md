@@ -2,6 +2,13 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.1] - 2026-11-10
+
+The Stop hook decides who can answer; headless runs report only
+
+### Fixed
+- **A headless child no longer applies `safe` fixes.** 3.28.0 asked the agent, in prose, to apply `safe` fixes only when a user was present, and a headless child applied one anyway. The Stop hook now reads Claude Code's `CLAUDE_CODE_SESSION_ATTENDED` and, unless it is `1`, tells the agent report only for every mode; a manual `/rot-canary` run is still the agent's call. — tests: scripts/lib/stop-attended.test.mjs
+
 ## [3.28.0] - 2026-11-10
 
 rot-canary sorts findings into throwaway and instrument

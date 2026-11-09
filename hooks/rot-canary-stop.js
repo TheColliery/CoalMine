@@ -1218,35 +1218,41 @@ const FIX_SORT = {
 const FIX_MODE = {
   en: {
     off: ' autoFixMode is off: report only, with no fixes and no offers.',
-    interactive: ' autoFixMode is interactive: if a user is present, end by offering the fix menu for instruments and a cleanup choice for each throwaway through your question tool; never fix without a chosen option.',
-    safe: ' autoFixMode is safe: with a user present, apply safe instrument fixes without a menu; offer unsafe ones and each throwaway cleanup via your question tool; else report only.',
+    interactive: ' autoFixMode is interactive: end by offering the fix menu for instruments and a cleanup choice for each throwaway through your question tool; never fix without a chosen option.',
+    safe: ' autoFixMode is safe: apply safe instrument fixes without a menu; offer unsafe ones and each throwaway cleanup via your question tool.',
+    unattended: ' No user can answer this session, so report only, with no fixes and no offers, whatever autoFixMode says.',
   },
   th: {
     off: ' autoFixMode เป็น off: รายงานอย่างเดียว ไม่แก้และไม่เสนอตัวเลือก',
-    interactive: ' autoFixMode เป็น interactive: หากผู้ใช้อยู่ในเซสชัน ให้จบด้วยการเสนอเมนูแก้ไขสำหรับ INSTRUMENT และตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม ห้ามแก้โดยไม่มีตัวเลือกที่ถูกเลือก',
-    safe: ' autoFixMode เป็น safe: หากผู้ใช้อยู่ในเซสชัน ให้แก้จุดที่แก้ได้อย่างปลอดภัยใน INSTRUMENT ได้เลยโดยไม่ต้องแสดงเมนู แล้วเสนอจุดที่ไม่ปลอดภัยและตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม หากไม่มีผู้ใช้ ให้รายงานอย่างเดียว',
+    interactive: ' autoFixMode เป็น interactive: ให้จบด้วยการเสนอเมนูแก้ไขสำหรับ INSTRUMENT และตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม ห้ามแก้โดยไม่มีตัวเลือกที่ถูกเลือก',
+    safe: ' autoFixMode เป็น safe: แก้จุดที่แก้ได้อย่างปลอดภัยใน INSTRUMENT ได้เลยโดยไม่ต้องแสดงเมนู แล้วเสนอจุดที่ไม่ปลอดภัยและตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม',
+    unattended: ' เซสชันนี้ไม่มีผู้ใช้ตอบคำถามได้ จึงรายงานอย่างเดียว ไม่แก้และไม่เสนอตัวเลือก ไม่ว่า autoFixMode จะเป็นค่าใด',
   },
   ja: {
     off: 'autoFixMode は off: 報告のみで、修正も提案もしません。',
-    interactive: 'autoFixMode は interactive: ユーザーが在席なら、INSTRUMENT の修正メニューと各 THROWAWAY の後片付けの選択肢を質問ツールで提示して終了 — 選択なしの修正は禁止。',
-    safe: 'autoFixMode は safe: ユーザーが在席なら、INSTRUMENT の安全な修正はメニューなしで適用し、安全でない修正と各 THROWAWAY の後片付けの選択肢を質問ツールで提示してください。ユーザーがいなければ報告のみ。',
+    interactive: 'autoFixMode は interactive: INSTRUMENT の修正メニューと各 THROWAWAY の後片付けの選択肢を質問ツールで提示して終了 — 選択なしの修正は禁止。',
+    safe: 'autoFixMode は safe: INSTRUMENT の安全な修正はメニューなしで適用し、安全でない修正と各 THROWAWAY の後片付けの選択肢を質問ツールで提示してください。',
+    unattended: 'このセッションには回答できるユーザーがいないため、autoFixMode の値にかかわらず報告のみで、修正も提案もしません。',
   },
   zh: {
     off: 'autoFixMode 为 off：只报告，不修复，也不提供选项。',
-    interactive: 'autoFixMode 为 interactive：若用户在场，最后用问题工具为 INSTRUMENT 提供修复菜单，并为每个 THROWAWAY 提供清理选项 — 未经选择不得修改。',
-    safe: 'autoFixMode 为 safe：若用户在场，对 INSTRUMENT 直接应用安全修复，无需菜单；用问题工具提供不安全的修复和每个 THROWAWAY 的清理选项。用户不在场时只报告。',
+    interactive: 'autoFixMode 为 interactive：最后用问题工具为 INSTRUMENT 提供修复菜单，并为每个 THROWAWAY 提供清理选项 — 未经选择不得修改。',
+    safe: 'autoFixMode 为 safe：对 INSTRUMENT 直接应用安全修复，无需菜单；用问题工具提供不安全的修复和每个 THROWAWAY 的清理选项。',
+    unattended: '本会话没有能回答的用户，因此无论 autoFixMode 为何值，都只报告，不修复，也不提供选项。',
   },
   es: {
     off: ' autoFixMode es off: solo informe, sin correcciones ni ofertas.',
-    interactive: ' autoFixMode es interactive: si el usuario está presente, termine ofreciendo con su herramienta de preguntas el menú de correcciones para los INSTRUMENT y una opción de limpieza para cada THROWAWAY; nunca corrija sin una opción elegida.',
-    safe: ' autoFixMode es safe: si el usuario está presente, aplique sin menú las correcciones seguras a los INSTRUMENT y ofrezca con su herramienta de preguntas las correcciones no seguras y una opción de limpieza para cada THROWAWAY; si no, solo informe.',
+    interactive: ' autoFixMode es interactive: termine ofreciendo con su herramienta de preguntas el menú de correcciones para los INSTRUMENT y una opción de limpieza para cada THROWAWAY; nunca corrija sin una opción elegida.',
+    safe: ' autoFixMode es safe: aplique sin menú las correcciones seguras a los INSTRUMENT y ofrezca con su herramienta de preguntas las correcciones no seguras y una opción de limpieza para cada THROWAWAY.',
+    unattended: ' Ningún usuario puede responder en esta sesión, así que solo informe, sin correcciones ni ofertas, sea cual sea autoFixMode.',
   },
 };
-// SORT, then the mode's sentence. An unknown language reads as English, and an unknown mode as the factory default (SAFER_ENUM.autoFixMode.default).
-function fixClause(lang, mode) {
+// SORT, then the mode's sentence. A user who can answer (attended) gets the mode's own text; anyone else gets the unattended text, except off, which keeps its own. An unknown language reads as English, an unknown mode as the factory default (SAFER_ENUM.autoFixMode.default).
+function fixClause(lang, mode, attended) {
   const l = Object.hasOwn(FIX_MODE, lang) ? lang : 'en';
   const modes = FIX_MODE[l];
-  return FIX_SORT[l] + (Object.hasOwn(modes, mode) ? modes[mode] : modes[SAFER_ENUM.autoFixMode.default]);
+  const m = SAFER_ENUM.autoFixMode.order.includes(mode) ? mode : SAFER_ENUM.autoFixMode.default;
+  return FIX_SORT[l] + (m === 'off' || attended ? modes[m] : modes.unattended);
 }
 
 const TRANSLATIONS = {
@@ -1257,11 +1263,11 @@ const TRANSLATIONS = {
     scanExcludeNotice: '\n\n({N} file(s) skipped per scanExcludePaths — lab/throwaway tooling only, never shipped code; autopilot is still running)',
     allExcludedNotice: 'Scan scope: all {N} touched file(s) were skipped per scanExcludePaths — no code-health scan ran this session. A suppressed scan is not a clean one; scan them by narrowing scanExcludePaths, or invoke rot-canary manually. (Set scanEverything to true to bypass every scope cut at once.)',
     scanEverythingNotice: 'Scan scope: scanEverything is ON — every SCAN-scope cut was bypassed for this run (scanExcludePaths ignored, autoScanFileCap not applied). Still narrower than "everything": files the touch hook never recorded are not here (non-code extensions, anything under the temp dir), and a file over tripwireMaxFileSizeKb was recorded but not pre-flagged at edit time. Set scanEverything to false to restore your normal scan scope.',
-    reason: (list, smellText, mode) =>
+    reason: (list, smellText, mode, attended) =>
       'Code-health auto-check (session end): code files were edited this session. Before stopping, ' +
       'invoke the rot-canary skill at DEPTH=QUICK with SCOPE = these touched files + their direct callers:\n' +
       list + smellText +
-      '\n\nReport CONFIRMED findings only (severity table; one line if none).' + fixClause('en', mode) + ' (Disable: create ~/.claude/.rot-canary-off)',
+      '\n\nReport CONFIRMED findings only (severity table; one line if none).' + fixClause('en', mode, attended) + ' (Disable: create ~/.claude/.rot-canary-off)',
   },
   th: {
     smellPrefix: '\n\nสัญญาณเตือนความเสี่ยงที่พบขณะแก้ไข:\n',
@@ -1270,11 +1276,11 @@ const TRANSLATIONS = {
     scanExcludeNotice: '\n\n(ข้าม {N} ไฟล์ตาม scanExcludePaths — เฉพาะเครื่องมือแล็ป/ของชั่วคราว ไม่ใช่โค้ดที่ ship จริง ระบบยังทำงานปกติ)',
     allExcludedNotice: 'ขอบเขตสแกน: ไฟล์ที่แก้ทั้ง {N} ไฟล์ถูกข้ามตาม scanExcludePaths — เซสชันนี้ไม่ได้สแกน code-health เลย การสแกนที่ถูกระงับไม่เท่ากับสแกนแล้วสะอาด ถ้าต้องการสแกน ให้ลดขอบเขต scanExcludePaths หรือเรียก rot-canary เอง (ตั้ง scanEverything เป็น true เพื่อข้ามตัวจำกัดขอบเขตทั้งหมด)',
     scanEverythingNotice: 'ขอบเขตสแกน: scanEverything เปิดอยู่ — รอบนี้ข้ามตัวจำกัดขอบเขตของการสแกนทั้งหมด (ไม่สนใจ scanExcludePaths และไม่ใช้ autoScanFileCap) แต่ยังแคบกว่า "ทั้งหมด": ไฟล์ที่ touch hook ไม่เคยบันทึกจะไม่อยู่ในนี้ (นามสกุลที่ไม่ใช่โค้ด และไฟล์ใต้โฟลเดอร์ temp) ส่วนไฟล์ที่ใหญ่เกิน tripwireMaxFileSizeKb ถูกบันทึกแต่ไม่ได้ตรวจตอนแก้ไข ตั้ง scanEverything เป็น false เพื่อกลับไปขอบเขตเดิม',
-    reason: (list, smellText, mode) =>
+    reason: (list, smellText, mode, attended) =>
       'ระบบตรวจสอบสุขภาพโค้ดอัตโนมัติ (สิ้นสุดเซสชัน): มีการแก้ไขไฟล์โค้ดในเซสชันนี้ ก่อนที่คุณจะหยุดทำงาน ' +
       'โปรดเรียกใช้สกิล rot-canary ที่ DEPTH=QUICK โดยระบุ SCOPE = ไฟล์ที่แก้ไขเหล่านี้ + ไฟล์ที่เรียกใช้งานโดยตรง:\n' +
       list + smellText +
-      '\n\nรายงานเฉพาะปัญหาที่ยืนยันแล้ว (ตารางความรุนแรง; ไม่มีก็สรุปบรรทัดเดียว)' + fixClause('th', mode) + ' (ปิดระบบนี้: สร้าง ~/.claude/.rot-canary-off)',
+      '\n\nรายงานเฉพาะปัญหาที่ยืนยันแล้ว (ตารางความรุนแรง; ไม่มีก็สรุปบรรทัดเดียว)' + fixClause('th', mode, attended) + ' (ปิดระบบนี้: สร้าง ~/.claude/.rot-canary-off)',
   },
   ja: {
     smellPrefix: '\n\n編集時に検出されたリスク警告:\n',
@@ -1283,11 +1289,11 @@ const TRANSLATIONS = {
     scanExcludeNotice: '\n\n(scanExcludePaths により{N}ファイルをスキップ — ラボ/使い捨てツールのみが対象、出荷コードは対象外。自動チェックは正常に動作中)',
     allExcludedNotice: 'スキャン範囲: 編集された {N} ファイルすべてが scanExcludePaths によりスキップされ、このセッションでは code-health スキャンが一度も実行されていません。抑制されたスキャンは「問題なし」ではありません。scanExcludePaths を狭めるか、rot-canary を手動で実行してください。（scanEverything を true にすれば、すべての範囲除外を一括でバイパスできます。）',
     scanEverythingNotice: 'スキャン範囲: scanEverything が有効です — 今回の実行ではスキャン範囲の除外をすべてバイパスしました（scanExcludePaths を無視し、autoScanFileCap を適用せず）。ただし「すべて」よりは狭い範囲です。touch フックが記録しなかったファイルは含まれません（コード以外の拡張子、一時ディレクトリ配下）。また tripwireMaxFileSizeKb を超えるファイルは記録されますが、編集時の事前チェックは行われません。通常のスキャン範囲に戻すには scanEverything を false にしてください。',
-    reason: (list, smellText, mode) =>
+    reason: (list, smellText, mode, attended) =>
       'コードヘルス自動チェック（セッション終了）: このセッションでコードファイルが編集されました。終了する前に、' +
       'DEPTH=QUICKでrot-canaryスキルを実行し、SCOPE = これらの編集されたファイル + 直接的呼び出し元を指定してください:\n' +
       list + smellText +
-      '\n\n確認済みの問題のみ報告（重要度テーブル; なければ1行で）。' + fixClause('ja', mode) + '（無効化: ~/.claude/.rot-canary-off を作成）',
+      '\n\n確認済みの問題のみ報告（重要度テーブル; なければ1行で）。' + fixClause('ja', mode, attended) + '（無効化: ~/.claude/.rot-canary-off を作成）',
   },
   zh: {
     smellPrefix: '\n\n编辑时标记的风险警告：\n',
@@ -1296,11 +1302,11 @@ const TRANSLATIONS = {
     scanExcludeNotice: '\n\n(根据 scanExcludePaths 跳过了 {N} 个文件 — 仅限实验室/一次性工具，绝不包括已发布代码；自动检查仍在正常运行)',
     allExcludedNotice: '扫描范围：本次触及的 {N} 个文件全部因 scanExcludePaths 被跳过，本会话未运行任何 code-health 扫描。被抑制的扫描不等于扫描通过；请收窄 scanExcludePaths，或手动调用 rot-canary。（将 scanEverything 设为 true 即可一次性绕过所有范围限制。）',
     scanEverythingNotice: '扫描范围：scanEverything 已开启 — 本次运行绕过了所有扫描范围限制（忽略 scanExcludePaths，不应用 autoScanFileCap）。但仍窄于“全部”：touch 钩子从未记录的文件不在其中（非代码扩展名、临时目录下的文件），超过 tripwireMaxFileSizeKb 的文件会被记录但不会在编辑时预检。将 scanEverything 设为 false 即可恢复正常扫描范围。',
-    reason: (list, smellText, mode) =>
+    reason: (list, smellText, mode, attended) =>
       '代码健康自动检查（会话结束）：此会话中编辑了代码文件。在停止之前，请运行 DEPTH=QUICK 的 rot-canary 技能，' +
       '并将 SCOPE 设置为这些被编辑的文件及其直接调用者：\n' +
       list + smellText +
-      '\n\n仅报告已确认的问题（严重性表格；没有则一行说明）。' + fixClause('zh', mode) + '（停用: 创建 ~/.claude/.rot-canary-off）',
+      '\n\n仅报告已确认的问题（严重性表格；没有则一行说明）。' + fixClause('zh', mode, attended) + '（停用: 创建 ~/.claude/.rot-canary-off）',
   },
   es: {
     smellPrefix: '\n\nAlertas de riesgo marcadas al editar:\n',
@@ -1309,11 +1315,11 @@ const TRANSLATIONS = {
     scanExcludeNotice: '\n\n({N} archivo(s) omitido(s) según scanExcludePaths — solo herramientas de laboratorio/desechables, nunca código publicado; el autopiloto sigue funcionando)',
     allExcludedNotice: 'Alcance del análisis: los {N} archivo(s) tocados fueron omitidos según scanExcludePaths — no se ejecutó ningún análisis de code-health en esta sesión. Un análisis suprimido no equivale a uno limpio; redúzca scanExcludePaths o invoque rot-canary manualmente. (Ponga scanEverything en true para omitir todos los recortes de alcance a la vez.)',
     scanEverythingNotice: 'Alcance del análisis: scanEverything está ACTIVADO — se omitieron todos los recortes del alcance de ANÁLISIS en esta ejecución (scanExcludePaths ignorado, autoScanFileCap no aplicado). Aún así es más estrecho que "todo": los archivos que el hook de registro nunca anotó no están aquí (extensiones que no son código, cualquier cosa bajo el directorio temporal), y un archivo mayor que tripwireMaxFileSizeKb se registra pero no se pre-marca al editar. Ponga scanEverything en false para restaurar su alcance habitual.',
-    reason: (list, smellText, mode) =>
+    reason: (list, smellText, mode, attended) =>
       'Autocomprobación de salud del código (fin de sesión): se editaron archivos de código en esta sesión. Antes de detenerse, ' +
       'invoque la habilidad rot-canary con DEPTH=QUICK y SCOPE = estos archivos modificados + sus llamadores directos:\n' +
       list + smellText +
-      '\n\nInforme solo hallazgos CONFIRMADOS (tabla de gravedad; una línea si no hay nada).' + fixClause('es', mode) + ' (Desactivar: cree ~/.claude/.rot-canary-off)',
+      '\n\nInforme solo hallazgos CONFIRMADOS (tabla de gravedad; una línea si no hay nada).' + fixClause('es', mode, attended) + ' (Desactivar: cree ~/.claude/.rot-canary-off)',
   },
 };
 
@@ -1590,7 +1596,9 @@ function main() {
     // UMB3-195: the fix clause follows the same effective mode the line above reports (the Antigravity Stop branch shares this one reason).
     let fixMode = SAFER_ENUM.autoFixMode.default;
     try { fixMode = effectiveAutoFixMode(loadCfg(AG_BASE)); } catch {}
-    reason = t.reason(list, smellText, fixMode) + capNoticeText + skipNoticeText + autoFixText;
+    // study q21: whether a user can answer is the machine's to decide. Only the exact "1" is attended; the Antigravity branch (an event-name argv) never is.
+    const attendedSession = process.env.CLAUDE_CODE_SESSION_ATTENDED === '1' && !process.argv[2];
+    reason = t.reason(list, smellText, fixMode, attendedSession) + capNoticeText + skipNoticeText + autoFixText;
   }
 
   // Acknowledgement marker — store the mtime of .touched when we started the check

@@ -125,6 +125,8 @@ const TESTS = [
   'scripts/lib/autofix-note.test.mjs',
   // UMB3-195: the Stop report's fix clause follows the effective autoFixMode and sorts throwaway from instrument (source and built copy, five languages).
   'scripts/lib/stop-reason-modes.test.mjs',
+  // study q21: the Stop hook and the conductor decide the fix line from CLAUDE_CODE_SESSION_ATTENDED ("1" attended, anything else report only).
+  'scripts/lib/stop-attended.test.mjs',
   // 28c round 2 (fix 2): link extraction stays linear on a run of unclosed brackets.
   'scripts/lib/link-check-linear.test.mjs',
   // 28c round 2 (fix 3): the runner's notices quote each file name.

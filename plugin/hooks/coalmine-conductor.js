@@ -17,9 +17,11 @@ const path = require('path');
 
 // Onboarding offer is a separate line so .coalmine.json skipOnboarding can drop it.
 const ONBOARDING = '- gold-standard (important): no "coalmine: verified" stamp in .claude/rules/, .agents/rules/, AGENTS.md, or STANDARDS.md → offer /gold-standard ONCE this session (Run now / Queue / Skip; respect Skip). Re-offer when a stamp is past its revalidate date.';
+// study q21: whether a user can answer is the machine's to decide, the same rule as the Stop hook. Only the exact "1" is attended.
+const ROT_CANARY_FIX_TAIL = process.env.CLAUDE_CODE_SESSION_ATTENDED === '1' ? 'offer the fix menu if a user is present).' : 'report only: no user can answer this session).';
 const CONDUCTOR_HEAD = [
   '[CoalMine] 9 quality canaries installed. Conduct them (answer in the USER\'S language; offer via your question tool; never auto-run costly work without a chosen option):',
-  '- rot-canary: hooks auto-scan touched files at session end (QUICK, capped via autoScanFileCap; offer the fix menu if a user is present). DEEP whole-repo scan only on request.',
+  '- rot-canary: hooks auto-scan touched files at session end (QUICK, capped via autoScanFileCap; ' + ROT_CANARY_FIX_TAIL + ' DEEP whole-repo scan only on request.',
 ];
 const CONDUCTOR_TAIL = [
   '- Specialists — offer on domain entry (never auto-run): deps/packages → supply-chain-audit · schema/contract/serialization → drift-canary · async/retry/failure paths → resilience-audit · hot loops/queries/caches → scale-canary · tests/coupling/DI → testability-canary · logging/metrics/tracing → telemetry-canary · version-sensitive facts → source-grounding.',

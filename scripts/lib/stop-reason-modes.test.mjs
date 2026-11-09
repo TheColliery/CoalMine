@@ -26,32 +26,41 @@ const SORT = {
   zh: `将每个问题所在的文件归类为 THROWAWAY（为一次性任务而写：探针、临时脚本、一次性测试工具）或 INSTRUMENT（仍在使用或会发布）；不确定时按 INSTRUMENT 处理。不要修复 THROWAWAY，也不要自行删除它。`,
   es: ` Clasifique el archivo de cada hallazgo como THROWAWAY (hecho para una sola tarea: una sonda, un script temporal, un arnés de un solo uso) o INSTRUMENT (aún en uso o publicado); si hay duda, es INSTRUMENT. Nunca corrija un THROWAWAY ni lo borre por su cuenta.`,
 };
+// The attended texts: a user can answer, so the mode text may ask for the menu or the gate.
 const MODE = {
   en: {
     off: ` autoFixMode is off: report only, with no fixes and no offers.`,
-    interactive: ` autoFixMode is interactive: if a user is present, end by offering the fix menu for instruments and a cleanup choice for each throwaway through your question tool; never fix without a chosen option.`,
-    safe: ` autoFixMode is safe: with a user present, apply safe instrument fixes without a menu; offer unsafe ones and each throwaway cleanup via your question tool; else report only.`,
+    interactive: ` autoFixMode is interactive: end by offering the fix menu for instruments and a cleanup choice for each throwaway through your question tool; never fix without a chosen option.`,
+    safe: ` autoFixMode is safe: apply safe instrument fixes without a menu; offer unsafe ones and each throwaway cleanup via your question tool.`,
   },
   th: {
     off: ` autoFixMode เป็น off: รายงานอย่างเดียว ไม่แก้และไม่เสนอตัวเลือก`,
-    interactive: ` autoFixMode เป็น interactive: หากผู้ใช้อยู่ในเซสชัน ให้จบด้วยการเสนอเมนูแก้ไขสำหรับ INSTRUMENT และตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม ห้ามแก้โดยไม่มีตัวเลือกที่ถูกเลือก`,
-    safe: ` autoFixMode เป็น safe: หากผู้ใช้อยู่ในเซสชัน ให้แก้จุดที่แก้ได้อย่างปลอดภัยใน INSTRUMENT ได้เลยโดยไม่ต้องแสดงเมนู แล้วเสนอจุดที่ไม่ปลอดภัยและตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม หากไม่มีผู้ใช้ ให้รายงานอย่างเดียว`,
+    interactive: ` autoFixMode เป็น interactive: ให้จบด้วยการเสนอเมนูแก้ไขสำหรับ INSTRUMENT และตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม ห้ามแก้โดยไม่มีตัวเลือกที่ถูกเลือก`,
+    safe: ` autoFixMode เป็น safe: แก้จุดที่แก้ได้อย่างปลอดภัยใน INSTRUMENT ได้เลยโดยไม่ต้องแสดงเมนู แล้วเสนอจุดที่ไม่ปลอดภัยและตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม`,
   },
   ja: {
     off: `autoFixMode は off: 報告のみで、修正も提案もしません。`,
-    interactive: `autoFixMode は interactive: ユーザーが在席なら、INSTRUMENT の修正メニューと各 THROWAWAY の後片付けの選択肢を質問ツールで提示して終了 — 選択なしの修正は禁止。`,
-    safe: `autoFixMode は safe: ユーザーが在席なら、INSTRUMENT の安全な修正はメニューなしで適用し、安全でない修正と各 THROWAWAY の後片付けの選択肢を質問ツールで提示してください。ユーザーがいなければ報告のみ。`,
+    interactive: `autoFixMode は interactive: INSTRUMENT の修正メニューと各 THROWAWAY の後片付けの選択肢を質問ツールで提示して終了 — 選択なしの修正は禁止。`,
+    safe: `autoFixMode は safe: INSTRUMENT の安全な修正はメニューなしで適用し、安全でない修正と各 THROWAWAY の後片付けの選択肢を質問ツールで提示してください。`,
   },
   zh: {
     off: `autoFixMode 为 off：只报告，不修复，也不提供选项。`,
-    interactive: `autoFixMode 为 interactive：若用户在场，最后用问题工具为 INSTRUMENT 提供修复菜单，并为每个 THROWAWAY 提供清理选项 — 未经选择不得修改。`,
-    safe: `autoFixMode 为 safe：若用户在场，对 INSTRUMENT 直接应用安全修复，无需菜单；用问题工具提供不安全的修复和每个 THROWAWAY 的清理选项。用户不在场时只报告。`,
+    interactive: `autoFixMode 为 interactive：最后用问题工具为 INSTRUMENT 提供修复菜单，并为每个 THROWAWAY 提供清理选项 — 未经选择不得修改。`,
+    safe: `autoFixMode 为 safe：对 INSTRUMENT 直接应用安全修复，无需菜单；用问题工具提供不安全的修复和每个 THROWAWAY 的清理选项。`,
   },
   es: {
     off: ` autoFixMode es off: solo informe, sin correcciones ni ofertas.`,
-    interactive: ` autoFixMode es interactive: si el usuario está presente, termine ofreciendo con su herramienta de preguntas el menú de correcciones para los INSTRUMENT y una opción de limpieza para cada THROWAWAY; nunca corrija sin una opción elegida.`,
-    safe: ` autoFixMode es safe: si el usuario está presente, aplique sin menú las correcciones seguras a los INSTRUMENT y ofrezca con su herramienta de preguntas las correcciones no seguras y una opción de limpieza para cada THROWAWAY; si no, solo informe.`,
+    interactive: ` autoFixMode es interactive: termine ofreciendo con su herramienta de preguntas el menú de correcciones para los INSTRUMENT y una opción de limpieza para cada THROWAWAY; nunca corrija sin una opción elegida.`,
+    safe: ` autoFixMode es safe: aplique sin menú las correcciones seguras a los INSTRUMENT y ofrezca con su herramienta de preguntas las correcciones no seguras y una opción de limpieza para cada THROWAWAY.`,
   },
+};
+// The unattended text: no user can answer, so report only, whatever the mode says.
+const UNA = {
+  en: ` No user can answer this session, so report only, with no fixes and no offers, whatever autoFixMode says.`,
+  th: ` เซสชันนี้ไม่มีผู้ใช้ตอบคำถามได้ จึงรายงานอย่างเดียว ไม่แก้และไม่เสนอตัวเลือก ไม่ว่า autoFixMode จะเป็นค่าใด`,
+  ja: `このセッションには回答できるユーザーがいないため、autoFixMode の値にかかわらず報告のみで、修正も提案もしません。`,
+  zh: `本会话没有能回答的用户，因此无论 autoFixMode 为何值，都只报告，不修复，也不提供选项。`,
+  es: ` Ningún usuario puede responder en esta sesión, así que solo informe, sin correcciones ni ofertas, sea cual sea autoFixMode.`,
 };
 // The clause the old hook wrote at the end of each language's reason. None of it may survive.
 const OLD = {
@@ -82,12 +91,13 @@ function fixture(t, { global, project }) {
 }
 
 // Runs the real Stop hook on one touched file and returns the block reason it emits.
-function stopReason(surface, cfgs, t) {
+// CLAUDE_CODE_SESSION_ATTENDED is set explicitly in every leg ("1" by default, the attended texts). The env is built from scratch, so a seat's own value never reaches the hook.
+function stopReason(surface, cfgs, t, attended = '1') {
   const f = fixture(t, cfgs);
   const edited = path.join(f.proj, 'edited.js');
   fs.writeFileSync(edited, 'x\n');
   fs.writeFileSync(path.join(f.home, 'coalmine', 'rot-canary-SM1.touched'), `${edited}\n`);
-  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: f.home, TMP: f.home, TMPDIR: f.home, USERPROFILE: f.home, HOME: f.home };
+  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: f.home, TMP: f.home, TMPDIR: f.home, USERPROFILE: f.home, HOME: f.home, CLAUDE_CODE_SESSION_ATTENDED: attended };
   const input = JSON.stringify({ session_id: 'SM1', cwd: f.proj, stop_hook_active: false });
   const script = path.join(repo, surface, 'rot-canary-stop.js');
   const r = spawnSync(process.execPath, ['--max-old-space-size=512', script], { cwd: f.proj, input, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env });
@@ -129,23 +139,6 @@ for (const surface of SURFACES) {
   });
 }
 
-// The safe mode is the only one that acts without a menu, so its text must name the user gate in every language (29dt bounce F1). A headless run (no user) reports only.
-const SAFE_GATE = {
-  en: ['with a user present', 'else report only'],
-  th: ['หากไม่มีผู้ใช้ ให้รายงานอย่างเดียว'],
-  ja: ['ユーザーがいなければ報告のみ'],
-  zh: ['用户不在场时只报告'],
-  es: ['si no, solo informe'],
-};
-for (const surface of SURFACES) {
-  for (const lang of LANGS) {
-    test(`${surface} stop: ${lang} under safe names its user gate`, (t) => {
-      const { reason } = stopReason(surface, { global: { autoFixMode: 'safe' }, project: { language: lang } }, t);
-      for (const gate of SAFE_GATE[lang]) assert.ok(reason.includes(gate), `${lang} safe names "${gate}"`);
-    });
-  }
-}
-
 // fixClause is not exported: a hook is a script, and hooks-safety section 7 forbids extracting its logic into an importable function. So these legs evaluate the
 // shipped text of FIX_SORT, FIX_MODE and fixClause in a bare context. SAFER_ENUM is stubbed to its default, and the stub is pinned to the hook's own line.
 function loadFixClause() {
@@ -155,14 +148,14 @@ function loadFixClause() {
   assert.ok(start >= 0 && fnAt > start, 'the hook still defines FIX_SORT and fixClause');
   const end = src.indexOf('\n}\n', fnAt) + 3;
   assert.ok(src.includes("autoFixMode: { order: ['off', 'interactive', 'safe'], default: 'interactive' }"), 'SAFER_ENUM.autoFixMode default is interactive');
-  const ctx = vm.createContext({ SAFER_ENUM: { autoFixMode: { default: 'interactive' } } });
+  const ctx = vm.createContext({ SAFER_ENUM: { autoFixMode: { order: ['off', 'interactive', 'safe'], default: 'interactive' } } });
   return vm.runInContext(`${src.slice(start, end)}\nfixClause;`, ctx);
 }
 
 test('fixClause: the loaded text is the shipped one (a known language, every mode)', () => {
   const fixClause = loadFixClause();
   for (const mode of MODES) {
-    assert.equal(fixClause('th', mode), SORT.th + MODE.th[mode], `th ${mode}`);
+    assert.equal(fixClause('th', mode, true), SORT.th + MODE.th[mode], `th ${mode} attended`);
   }
 });
 
@@ -170,7 +163,7 @@ test('fixClause: an unknown language falls back to the English sort and mode tex
   const fixClause = loadFixClause();
   for (const lang of ['xx', 'constructor']) {
     let text;
-    assert.doesNotThrow(() => { text = fixClause(lang, 'interactive'); }, `lang "${lang}" does not throw`);
+    assert.doesNotThrow(() => { text = fixClause(lang, 'interactive', true); }, `lang "${lang}" does not throw`);
     assert.equal(text, SORT.en + MODE.en.interactive, `lang "${lang}" reads as English`);
   }
 });
@@ -180,7 +173,7 @@ const norm = (s) => s.replace(/\s+/g, ' ').trim();
 for (const skill of ['skills/rot-canary/SKILL.md', 'plugin/skills/rot-canary/SKILL.md']) {
   test(`${skill} carries the English sort and the three English mode sentences word for word`, () => {
     const text = norm(fs.readFileSync(path.join(repo, skill), 'utf8'));
-    for (const sentence of [SORT.en, MODE.en.off, MODE.en.interactive, MODE.en.safe]) {
+    for (const sentence of [SORT.en, MODE.en.off, MODE.en.interactive, MODE.en.safe, UNA.en]) {
       assert.ok(text.includes(norm(sentence)), `${skill} carries: ${norm(sentence).slice(0, 60)}...`);
     }
   });
