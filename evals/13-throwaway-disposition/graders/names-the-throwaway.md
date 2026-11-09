@@ -2,7 +2,6 @@
 type: regex
 target: last_message
 match: contains
-flags: i
 weight: 0.5
 ---
-throwaway
+probe-once\.mjs[^\n]{0,80}THROWAWAY|THROWAWAY[^\n]{0,80}probe-once\.mjs
