@@ -347,8 +347,9 @@ export function classifyCheckIgnoreResult(ci) {
   // matched, but a non-string or empty-of-content stdout here would still answer
   // ok with zero recovered roots: git said something matched, this classifier would
   // conclude nothing did. UNREACHABLE today, on both halves -- `encoding: 'utf8'`
-  // makes `ci.stdout` a string whenever the spawn itself did not error (caught by the
-  // branch above), and verify.mjs never passes `-q` (the one flag that pairs a
+  // makes `ci.stdout` a string whenever the spawn itself did not error (an absent
+  // status is caught by the first branch, an error beside a 0 or 1 by the
+  // partial-answer branch), and verify.mjs never passes `-q` (the one flag that pairs a
   // silent, empty stdout with exit 0). A stated bound, not a guard: adding a branch
   // for a case nothing can reach is the over-hardening this room's own rules ban,
   // the same register as the two NAMED BOUNDs already carrying that exact phrase --

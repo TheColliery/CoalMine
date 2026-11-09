@@ -620,10 +620,8 @@ test('applyCheckIgnoreProbe: probeSuffix DEFAULTS to the exported PROBE_SUFFIX (
 // pointer-check.mjs's own `classifyCheckIgnoreResult` -- this is a TEST unit, not
 // a code unit. The classifier tests above already cover three of these shapes with
 // REAL git subprocesses, plus the spawn-error shape synthetically; the table below
-// adds the six CoalFace found we lacked, synthetic because a real `error`-carrying
-// spawn result never also carries a real
-// `status: 0` -- Node's own child_process contract does not produce that pairing,
-// so the only way to test the ORDERING is to construct the shape by hand.
+// adds the six CoalFace found we lacked,
+// synthetic because the real pairing (EPIPE, CW-018) needs a racing git child.
 const TEN_SHAPES = [
   { name: 'status 0, clean stdout', ci: { status: 0, stdout: 'dist/probe\n', stderr: '' }, ok: true },
   { name: 'status 1 (nothing ignored)', ci: { status: 1, stdout: '', stderr: '' }, ok: true },
@@ -634,7 +632,7 @@ const TEN_SHAPES = [
   { name: 'status undefined', ci: { status: undefined, stdout: undefined, stderr: undefined }, ok: false },
   { name: 'ci.error ENOENT (git absent)', ci: { error: new Error('spawn git ENOENT'), status: null, stdout: null, stderr: null }, ok: false },
   // THE ROW THAT PROVES ORDER MATTERS -- error carried ALONGSIDE status: 0.
-  { name: 'ci.error WITH status: 0 set -- error checked FIRST', ci: { error: new Error('spawn git EACCES'), status: 0, stdout: '', stderr: '' }, ok: false },
+  { name: 'ci.error WITH status: 0 set -- refused as a partial answer',ci: { error: new Error('spawn git EACCES'), status: 0, stdout: '', stderr: '' }, ok: false },
   { name: 'status 0, stdout not a string', ci: { status: 0, stdout: null, stderr: '' }, ok: true },
 ];
 
@@ -664,9 +662,9 @@ function statusFirstClassify(ci) {
   return { ok: false, message: `git check-ignore --stdin exited ${ci.status}${stderrLine ? ` -- ${stderrLine}` : ''}` };
 }
 
-test('classifyCheckIgnoreResult: the error+status:0 row -- a status-first predicate reads it as SUCCESS; ours does not', () => {
+test('classifyCheckIgnoreResult: the error+status:0 row -- a status-first predicate reads it as SUCCESS; ours refuses it as a partial answer', () => {
   const row = TEN_SHAPES.find((s) => s.name.startsWith('ci.error WITH status: 0'));
-  assert.equal(classifyCheckIgnoreResult(row.ci).ok, false, 'the real, error-first classifier must reject this shape');
+  assert.equal(classifyCheckIgnoreResult(row.ci).ok, false, 'the real classifier must reject this shape');
   assert.equal(statusFirstClassify(row.ci).ok, true,
     'a status-first predicate reads the identical shape as ok -- this is the class the ordering guards against, not a hypothetical');
 });
