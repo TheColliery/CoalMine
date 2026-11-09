@@ -5,7 +5,7 @@ Measures one thing we have never measured: **does the skill actually help?**
 the plugin loaded, once without — and reports the score delta. The headline
 number is Δ, not the pass rate.
 
-Pilot scope: `rot-canary` with 7 cases, plus five telemetry-canary cases: `evals/08-telemetry-sensitive-log/` (dirty), `evals/09-neg-telemetry-lookalike/` (clean look-alike), `evals/10-telemetry-nested-observability/` (logs shipped through the nested observability flag), `evals/11-telemetry-tail-consumer/` (logs shipped through `tail_consumers` with observability off) and `evals/12-telemetry-env-tail-consumer/` (a top-level `tail_consumers` that does not reach the `[env.production]` deploy). Prove the shape, then the room extends
+Pilot scope: `rot-canary` with 8 cases (case 13: a finding in a throwaway probe beside the same finding in an instrument), plus five telemetry-canary cases: `evals/08-telemetry-sensitive-log/` (dirty), `evals/09-neg-telemetry-lookalike/` (clean look-alike), `evals/10-telemetry-nested-observability/` (logs shipped through the nested observability flag), `evals/11-telemetry-tail-consumer/` (logs shipped through `tail_consumers` with observability off) and `evals/12-telemetry-env-tail-consumer/` (a top-level `tail_consumers` that does not reach the `[env.production]` deploy). Prove the shape, then the room extends
 it toward the ~20 real cases Anthropic reports is enough to steer on.
 
 ---
@@ -92,11 +92,11 @@ one of the two so judge ≠ agent.
 
 ### Cost — estimated, not measured
 
-12 cases × 3 runs × 2 arms = **72 agent runs**, plus **78 LLM-judge calls** (one
+13 cases × 3 runs × 2 arms = **78 agent runs**, plus **84 LLM-judge calls** (one
 `llm` grader per case, two in case 08; the `regex` and `tool_used` graders are free).
 
 Order of magnitude, **⚠️ unverified — do not quote this without the marker:
-≈ $3.5–7 for the full suite, ≈ $1.7 for the `--runs 1` pilot.** Scaled from the earlier 7-case estimate ($2–4 and $1), still never measured.
+≈ $3.7–7.4 for the full suite, ≈ $1.9 for the `--runs 1` pilot.** Scaled from the earlier 7-case estimate ($2–4 and $1), still never measured.
 That is arithmetic over assumed per-token prices, and prices and model IDs rot —
 check current Anthropic pricing before relying on it. The only
 trustworthy figure is the pilot's own top-level `cost_usd` in
