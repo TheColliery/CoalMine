@@ -2,6 +2,19 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.0] - 2026-11-10
+
+rot-canary sorts findings into throwaway and instrument
+
+### Added
+- **rot-canary sorts each finding's file as a throwaway or an instrument after a report.** It fixes only instruments, and offers a cleanup choice for a throwaway instead of fixing or deleting it; an unsure file counts as an instrument. It follows the effective `autoFixMode`, so a project config can only lower it. — tests: scripts/lib/stop-reason-modes.test.mjs, evals/13-throwaway-disposition/ (written, not run)
+
+### Fixed
+- **The Stop hook's request follows the effective `autoFixMode` in all five languages.** Under `safe` it no longer asks for the fix menu, and under `off` it asks for a report only. — test: scripts/lib/stop-reason-modes.test.mjs
+
+### Changed
+- **The README shows the OpenSSF Best Practices badge** (project 16501, passing).
+
 ## [3.27.4] - 2026-11-09
 
 The three hooks run in strict mode

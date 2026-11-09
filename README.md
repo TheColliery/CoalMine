@@ -12,6 +12,7 @@
 ![SKILL.md](https://img.shields.io/badge/SKILL.md-open_standard_·_major_agents-success)
 ![skills](https://img.shields.io/badge/skills-9-success)
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/TheColliery/CoalMine?utm_source=oss&utm_medium=github&utm_campaign=TheColliery%2FCoalMine&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16501/badge)](https://www.bestpractices.dev/projects/16501)
 
 ![Claude Code](https://img.shields.io/badge/Claude_Code-validated-brightgreen)
 ![Antigravity](https://img.shields.io/badge/Antigravity-validated_canaries_·_primed_auto--cadence-brightgreen)
@@ -209,6 +210,8 @@ Zero-config to start — and two config levels when you want them: a global `~/.
 
 <!-- flock-canonical sentence (UMB-174), DIVERGED in CoalMine: CoalMine clamps autoFixMode since CWK2-044 (a project may only lower it); the siblings' copies still say "not clamped" and are the chief's to route -->
 **`autoFixMode` is clamped by the hooks: a project may only lower it.** The order is `off` < `interactive` < `safe`, and `safe` counts only when it comes from your global config (`~/.claude/.coalmine.json`). A project value can keep the mode or lower it, never raise it; with no global `safe`, a project `"safe"` reads as `interactive`, so a cloned repository's `.coalmine.json` cannot turn on automatic edits. The hooks apply this on every run and say what is in effect (`[CoalMine] autoFixMode in effect: ...` on the session-start context and on the session-end scan report). A manual `/rot-canary` run has no hook in front of it: the skill text applies the same rule there, which is a mitigation an agent follows, not a clamp a machine enforces. The other keys: `updateMode`, `enableConductor`, `rotCanaryMode` and `scanEverything` are clamped the same way, and `disabledCanaries` and `scanExcludePaths` by union (a project adds to those two and never removes). Still read every project config the read order above lists (all five paths) in a clone you did not write before you open it there.
+
+After a report, rot-canary sorts each finding's file as a throwaway (made for one job) or an instrument (still used or shipped): it fixes only instruments, under `autoFixMode`, and offers a cleanup choice for each throwaway instead of deleting it.
 
 **`tempSweepStaleDays` (the age at which the Stop hook sweeps old session temp files) comes from your global config, else 7, and a project may only raise it.** A project value below the global one (or below 7 when you set none) is ignored, because a cloned repository ships its own config and a low value there would delete your session markers from every project on the machine. The minimum on either level is 1.
 
