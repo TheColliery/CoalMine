@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { removeTree } from './test-sandbox.mjs';
 
@@ -66,6 +67,9 @@ function fixture(t, { global, project }) {
   t.after(() => removeTree(root));
   const home = path.join(root, 'home');
   const proj = path.join(root, 'proj');
+  // LOAD-BEARING: the env below points TEMP, TMP and TMPDIR at `home`, so the hook's marker folder (os.tmpdir() + 'coalmine') is `home/coalmine`, and
+  // the `rot-canary-<sid>.touched` fixture file must sit there. ensureMarkerDir refuses that folder unless this user owns it and it carries no group or
+  // other write bit (mode & 0o022), so it is created here with 0o700 before the hook runs.
   fs.mkdirSync(path.join(home, 'coalmine'), { recursive: true, mode: 0o700 });
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.mkdirSync(path.join(proj, '.git'), { recursive: true });
@@ -124,6 +128,35 @@ for (const surface of SURFACES) {
     assert.ok(line && line[1] === 'interactive' && /lowered/.test(line[2]), `the emitted line names the lowered mode (${line && line[0]})`);
   });
 }
+
+// fixClause is not exported: a hook is a script, and hooks-safety section 7 forbids extracting its logic into an importable function. So these legs evaluate the
+// shipped text of FIX_SORT, FIX_MODE and fixClause in a bare context. SAFER_ENUM is stubbed to its default, and the stub is pinned to the hook's own line.
+function loadFixClause() {
+  const src = fs.readFileSync(path.join(repo, 'hooks', 'rot-canary-stop.js'), 'utf8');
+  const start = src.indexOf('const FIX_SORT = {');
+  const fnAt = src.indexOf('function fixClause(');
+  assert.ok(start >= 0 && fnAt > start, 'the hook still defines FIX_SORT and fixClause');
+  const end = src.indexOf('\n}\n', fnAt) + 3;
+  assert.ok(src.includes("autoFixMode: { order: ['off', 'interactive', 'safe'], default: 'interactive' }"), 'SAFER_ENUM.autoFixMode default is interactive');
+  const ctx = vm.createContext({ SAFER_ENUM: { autoFixMode: { default: 'interactive' } } });
+  return vm.runInContext(`${src.slice(start, end)}\nfixClause;`, ctx);
+}
+
+test('fixClause: the loaded text is the shipped one (a known language, every mode)', () => {
+  const fixClause = loadFixClause();
+  for (const mode of MODES) {
+    assert.equal(fixClause('th', mode), SORT.th + MODE.th[mode], `th ${mode}`);
+  }
+});
+
+test('fixClause: an unknown language falls back to the English sort and mode text, and never throws', () => {
+  const fixClause = loadFixClause();
+  for (const lang of ['xx', 'constructor']) {
+    let text;
+    assert.doesNotThrow(() => { text = fixClause(lang, 'interactive'); }, `lang "${lang}" does not throw`);
+    assert.equal(text, SORT.en + MODE.en.interactive, `lang "${lang}" reads as English`);
+  }
+});
 
 // The English sentences are the house's wording, and the skill carries the same wording: whitespace collapsed, a match is a word-for-word match.
 const norm = (s) => s.replace(/\s+/g, ' ').trim();

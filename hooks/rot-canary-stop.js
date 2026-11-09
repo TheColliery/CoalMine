@@ -1242,10 +1242,11 @@ const FIX_MODE = {
     safe: ' autoFixMode es safe: aplique sin menú las correcciones seguras a los INSTRUMENT; ofrezca con su herramienta de preguntas las correcciones no seguras y una opción de limpieza para cada THROWAWAY.',
   },
 };
-// SORT, then the mode's sentence. An unknown mode reads as the factory default (SAFER_ENUM.autoFixMode.default).
+// SORT, then the mode's sentence. An unknown language reads as English, and an unknown mode as the factory default (SAFER_ENUM.autoFixMode.default).
 function fixClause(lang, mode) {
-  const modes = FIX_MODE[lang];
-  return FIX_SORT[lang] + (Object.hasOwn(modes, mode) ? modes[mode] : modes[SAFER_ENUM.autoFixMode.default]);
+  const l = Object.hasOwn(FIX_MODE, lang) ? lang : 'en';
+  const modes = FIX_MODE[l];
+  return FIX_SORT[l] + (Object.hasOwn(modes, mode) ? modes[mode] : modes[SAFER_ENUM.autoFixMode.default]);
 }
 
 const TRANSLATIONS = {
