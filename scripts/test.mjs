@@ -123,6 +123,8 @@ const TESTS = [
   'scripts/lib/verify-config-bound.test.mjs',
   // 28c round 2 (fix 1): the autoFixMode line comes from the merged value, never a config field.
   'scripts/lib/autofix-note.test.mjs',
+  // UMB3-195: the Stop report's fix clause follows the effective autoFixMode and sorts throwaway from instrument (source and built copy, five languages).
+  'scripts/lib/stop-reason-modes.test.mjs',
   // 28c round 2 (fix 2): link extraction stays linear on a run of unclosed brackets.
   'scripts/lib/link-check-linear.test.mjs',
   // 28c round 2 (fix 3): the runner's notices quote each file name.
