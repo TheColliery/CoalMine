@@ -106,7 +106,7 @@ trustworthy figure is the pilot's own top-level `cost_usd` in
 
 ## The cases
 
-Five where the skill should fire, two where it should not.
+The table covers the original seven rot-canary cases: five where the skill should fire and two where it should not. It excludes case 13 and the five telemetry-canary cases listed above.
 
 **Where the answer key comes from.** Every planted defect belongs to a class in
 rot-canary's own benchmark corpus — `silent-failure`, `resource-leak`,

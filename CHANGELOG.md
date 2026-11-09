@@ -7,7 +7,7 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 rot-canary sorts findings into throwaway and instrument
 
 ### Added
-- **rot-canary sorts each finding's file as a throwaway or an instrument after a report.** It fixes only instruments, and offers a cleanup choice for a throwaway instead of fixing or deleting it; an unsure file counts as an instrument. It follows the effective `autoFixMode`, so a project config can only lower it. — tests: scripts/lib/stop-reason-modes.test.mjs, evals/13-throwaway-disposition/ (written, not run)
+- rot-canary now tells the agent, after a report, to sort each finding's file as a throwaway (made for one job) or an instrument (still used or shipped), to fix only instruments as the effective `autoFixMode` allows, and to offer a cleanup choice for a throwaway instead of fixing or deleting it; an unsure file counts as an instrument, and a project config can only lower the mode. The agent applies this; no hook enforces it. — tests: `scripts/lib/stop-reason-modes.test.mjs`, `evals/13-throwaway-disposition/` (written, not run).
 
 ### Fixed
 - **The Stop hook's request follows the effective `autoFixMode` in all five languages.** Under `safe` it no longer asks for the fix menu, and under `off` it asks for a report only. — test: scripts/lib/stop-reason-modes.test.mjs
