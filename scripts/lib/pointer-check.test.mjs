@@ -671,6 +671,45 @@ test('classifyCheckIgnoreResult: the error+status:0 row -- a status-first predic
     'a status-first predicate reads the identical shape as ok -- this is the class the ordering guards against, not a hypothetical');
 });
 
+// CW-018 (CoalWorks flow-back): the STATUS a run produced is read before its error. A spawnSync result can carry a
+// real status AND an error (EPIPE, when a stdin write loses the race to git's early exit). Pure: plain objects only,
+// no git child, no repository made bare.
+test('classifyCheckIgnoreResult: a 0 or 1 status beside a stdin error is never ok (the answer may be partial)', () => {
+  for (const status of [0, 1]) {
+    const v = classifyCheckIgnoreResult({ status, stdout: 'x\n', stderr: '', error: Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }) });
+    assert.equal(v.ok, false, `status ${status} beside a stdin error must not be ok`);
+    assert.match(v.message, /partial/, `status ${status} message must say the answer may be partial`);
+  }
+});
+
+test("classifyCheckIgnoreResult: a 128 beside EPIPE reports git's own exit and stderr, never 'failed to spawn'", () => {
+  const v = classifyCheckIgnoreResult({
+    status: 128,
+    stdout: '',
+    stderr: 'fatal: this operation must be run in a work tree\n',
+    error: Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.message, /exited 128/);
+  assert.match(v.message, /this operation must be run in a work tree/);
+  assert.doesNotMatch(v.message, /failed to spawn/);
+});
+
+test('classifyCheckIgnoreResult: a null status names the signal, and a spawn error names its message', () => {
+  const killed = classifyCheckIgnoreResult({ status: null, signal: 'SIGKILL', stdout: null, stderr: null });
+  assert.equal(killed.ok, false);
+  assert.match(killed.message, /SIGKILL/);
+  const enoent = classifyCheckIgnoreResult({ status: null, error: new Error('spawn git ENOENT'), stdout: null, stderr: null });
+  assert.equal(enoent.ok, false);
+  assert.match(enoent.message, /failed to spawn/);
+  assert.match(enoent.message, /spawn git ENOENT/);
+});
+
+test('classifyCheckIgnoreResult: a clean 0 or 1 without a stdin error stays ok', () => {
+  assert.equal(classifyCheckIgnoreResult({ status: 0, stdout: 'x\n', stderr: '' }).ok, true);
+  assert.equal(classifyCheckIgnoreResult({ status: 1, stdout: '', stderr: '' }).ok, true);
+});
+
 test('applyCheckIgnoreProbe: on every FAILING shape of the ten, fail() fires exactly once and the returned Set is empty', () => {
   for (const { name, ci, ok } of TEN_SHAPES) {
     if (ok) continue;

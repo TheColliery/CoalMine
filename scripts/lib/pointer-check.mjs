@@ -318,15 +318,29 @@ export const PENDING_POINTERS = [
 // hardcoded args. The one REAL non-0/1 exit reproduced on this box (129, an unknown
 // option) needed a flag verify.mjs never passes -- proving the branch is possible
 // for git to take, not that verify.mjs's own call can be driven there today.
+// STATUS FIRST (CW-018): the status a run PRODUCED is read before its error. A spawnSync result can carry a real
+// status AND an error -- EPIPE, when a stdin write loses the race to git's early exit (a core.bare repository exits
+// 128 before it reads stdin). Reading error first called a git that RAN and ANSWERED "failed to spawn", and read a
+// 0 or 1 that arrived with an error as clean, when the write had broken and the answer may cover only part of the
+// fed paths. So: no status = the spawn itself failed; another status = git's own answer; a 0 or 1 beside an error =
+// a partial answer, which fails closed.
 export function classifyCheckIgnoreResult(ci) {
-  if (ci.error) {
-    return { ok: false, message: `git check-ignore --stdin failed to spawn: ${ci.error.message}` };
+  if (ci.status === null || ci.status === undefined) {
+    const signal = ci.signal ? ` (killed by ${ci.signal})` : '';
+    const detail = ci.error ? `: ${ci.error.message}` : '';
+    return { ok: false, message: `git check-ignore --stdin failed to spawn${signal}${detail}` };
   }
   if (ci.status !== 0 && ci.status !== 1) {
     const stderrLine = typeof ci.stderr === 'string' ? ci.stderr.split('\n')[0].trim() : '';
     return {
       ok: false,
       message: `git check-ignore --stdin exited ${ci.status}${stderrLine ? ` -- ${stderrLine}` : ''} -- cannot tell which cited roots are gitignored`,
+    };
+  }
+  if (ci.error) {
+    return {
+      ok: false,
+      message: `git check-ignore --stdin exited ${ci.status}, but its stdin write failed (${ci.error.message}): the answer may be partial, so no path is trusted`,
     };
   }
   // NAMED BOUND (CWK-090 findings-back LOW-1) -- exit 0 means AT LEAST ONE fed path
