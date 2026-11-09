@@ -869,10 +869,11 @@ const gitEnv = () => ({
 });
 // The environment of a child this file starts beside git: the names it needs to start, and HOME, USERPROFILE and XDG_CONFIG_HOME pointed at
 // the sandbox. Without the three home keys a child's os.homedir() falls back to the OS profile path, outside the sandbox (the 1102c witness below).
+// TEMP, TMP and TMPDIR point at the sandbox too, so a child's temporary files stay in it, never loose in the box's temp folder.
 // Extra keys are named by the caller.
 const childEnv = (extra = {}) => ({
   PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, windir: process.env.windir,
-  HOME: SANDBOX, USERPROFILE: SANDBOX, XDG_CONFIG_HOME: SANDBOX,
+  HOME: SANDBOX, USERPROFILE: SANDBOX, XDG_CONFIG_HOME: SANDBOX, TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX,
   ...extra,
 });
 // The same sandbox environment for a call whose exit status is the answer (execFileSync throws on a non-zero exit, so gitAt cannot give it).
@@ -1080,8 +1081,7 @@ test('a named environment key whose value is undefined is left out of a child\'s
 // The witness for the child environment (1102c). A child started with the environment the call sites build must resolve its home inside the
 // sandbox. Without HOME, USERPROFILE and XDG_CONFIG_HOME a child's os.homedir() falls back to the OS profile path, outside the sandbox.
 test('a child started with the call sites\' environment resolves its home inside the sandbox, never the OS profile (1102c)', () => {
-  const env = childEnv();
-  const r = spawnSync(process.execPath, ['--max-old-space-size=64', '-p', "require('os').homedir()"], { encoding: 'utf8', timeout: 15000, env });
+  const r = spawnSync(process.execPath, ['--max-old-space-size=64', '-p', "require('os').homedir()"], { encoding: 'utf8', timeout: 15000, env: childEnv() });
   assert.strictEqual(r.status, 0, r.stderr);
   const home = r.stdout.trim();
   assert.ok(path.resolve(home) === path.resolve(SANDBOX) || path.resolve(home).startsWith(path.resolve(SANDBOX) + path.sep), `the child's home is ${home}, outside the sandbox ${SANDBOX}`);
