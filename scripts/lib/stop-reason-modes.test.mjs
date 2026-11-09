@@ -30,27 +30,27 @@ const MODE = {
   en: {
     off: ` autoFixMode is off: report only, with no fixes and no offers.`,
     interactive: ` autoFixMode is interactive: if a user is present, end by offering the fix menu for instruments and a cleanup choice for each throwaway through your question tool; never fix without a chosen option.`,
-    safe: ` autoFixMode is safe: apply the safe fixes to instruments without a menu; offer the unsafe fixes and a cleanup choice for each throwaway through your question tool.`,
+    safe: ` autoFixMode is safe: with a user present, apply safe instrument fixes without a menu; offer unsafe ones and each throwaway cleanup via your question tool; else report only.`,
   },
   th: {
     off: ` autoFixMode เป็น off: รายงานอย่างเดียว ไม่แก้และไม่เสนอตัวเลือก`,
     interactive: ` autoFixMode เป็น interactive: หากผู้ใช้อยู่ในเซสชัน ให้จบด้วยการเสนอเมนูแก้ไขสำหรับ INSTRUMENT และตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม ห้ามแก้โดยไม่มีตัวเลือกที่ถูกเลือก`,
-    safe: ` autoFixMode เป็น safe: แก้จุดที่แก้ได้อย่างปลอดภัยใน INSTRUMENT ได้เลยโดยไม่ต้องแสดงเมนู แล้วเสนอจุดที่ไม่ปลอดภัยและตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม`,
+    safe: ` autoFixMode เป็น safe: หากผู้ใช้อยู่ในเซสชัน ให้แก้จุดที่แก้ได้อย่างปลอดภัยใน INSTRUMENT ได้เลยโดยไม่ต้องแสดงเมนู แล้วเสนอจุดที่ไม่ปลอดภัยและตัวเลือกการเก็บกวาดสำหรับแต่ละ THROWAWAY ผ่านเครื่องมือคำถาม หากไม่มีผู้ใช้ ให้รายงานอย่างเดียว`,
   },
   ja: {
     off: `autoFixMode は off: 報告のみで、修正も提案もしません。`,
     interactive: `autoFixMode は interactive: ユーザーが在席なら、INSTRUMENT の修正メニューと各 THROWAWAY の後片付けの選択肢を質問ツールで提示して終了 — 選択なしの修正は禁止。`,
-    safe: `autoFixMode は safe: INSTRUMENT の安全な修正はメニューなしで適用し、安全でない修正と各 THROWAWAY の後片付けの選択肢を質問ツールで提示してください。`,
+    safe: `autoFixMode は safe: ユーザーが在席なら、INSTRUMENT の安全な修正はメニューなしで適用し、安全でない修正と各 THROWAWAY の後片付けの選択肢を質問ツールで提示してください。ユーザーがいなければ報告のみ。`,
   },
   zh: {
     off: `autoFixMode 为 off：只报告，不修复，也不提供选项。`,
     interactive: `autoFixMode 为 interactive：若用户在场，最后用问题工具为 INSTRUMENT 提供修复菜单，并为每个 THROWAWAY 提供清理选项 — 未经选择不得修改。`,
-    safe: `autoFixMode 为 safe：对 INSTRUMENT 直接应用安全修复，无需菜单；用问题工具提供不安全的修复和每个 THROWAWAY 的清理选项。`,
+    safe: `autoFixMode 为 safe：若用户在场，对 INSTRUMENT 直接应用安全修复，无需菜单；用问题工具提供不安全的修复和每个 THROWAWAY 的清理选项。用户不在场时只报告。`,
   },
   es: {
     off: ` autoFixMode es off: solo informe, sin correcciones ni ofertas.`,
     interactive: ` autoFixMode es interactive: si el usuario está presente, termine ofreciendo con su herramienta de preguntas el menú de correcciones para los INSTRUMENT y una opción de limpieza para cada THROWAWAY; nunca corrija sin una opción elegida.`,
-    safe: ` autoFixMode es safe: aplique sin menú las correcciones seguras a los INSTRUMENT; ofrezca con su herramienta de preguntas las correcciones no seguras y una opción de limpieza para cada THROWAWAY.`,
+    safe: ` autoFixMode es safe: si el usuario está presente, aplique sin menú las correcciones seguras a los INSTRUMENT y ofrezca con su herramienta de preguntas las correcciones no seguras y una opción de limpieza para cada THROWAWAY; si no, solo informe.`,
   },
 };
 // The clause the old hook wrote at the end of each language's reason. None of it may survive.
@@ -127,6 +127,23 @@ for (const surface of SURFACES) {
     assert.ok(!reason.includes(MODE.en.safe), 'the project "safe" is not the mode the agent is told');
     assert.ok(line && line[1] === 'interactive' && /lowered/.test(line[2]), `the emitted line names the lowered mode (${line && line[0]})`);
   });
+}
+
+// The safe mode is the only one that acts without a menu, so its text must name the user gate in every language (29dt bounce F1). A headless run (no user) reports only.
+const SAFE_GATE = {
+  en: ['with a user present', 'else report only'],
+  th: ['หากไม่มีผู้ใช้ ให้รายงานอย่างเดียว'],
+  ja: ['ユーザーがいなければ報告のみ'],
+  zh: ['用户不在场时只报告'],
+  es: ['si no, solo informe'],
+};
+for (const surface of SURFACES) {
+  for (const lang of LANGS) {
+    test(`${surface} stop: ${lang} under safe names its user gate`, (t) => {
+      const { reason } = stopReason(surface, { global: { autoFixMode: 'safe' }, project: { language: lang } }, t);
+      for (const gate of SAFE_GATE[lang]) assert.ok(reason.includes(gate), `${lang} safe names "${gate}"`);
+    });
+  }
 }
 
 // fixClause is not exported: a hook is a script, and hooks-safety section 7 forbids extracting its logic into an importable function. So these legs evaluate the
