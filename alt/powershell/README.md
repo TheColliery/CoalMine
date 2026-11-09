@@ -9,7 +9,7 @@ These PowerShell versions are a **fallback** for Windows setups that don't have 
 | Hook | Event | Behavior |
 |---|---|---|
 | `rot-canary-touch.ps1` | `PostToolUse` (Write/Edit/MultiEdit) | Records the code files touched this session to a per-session temp marker; flags unambiguous tripwires (merge-conflict markers, >800-line files). Always exits 0 (non-blocking). |
-| `rot-canary-stop.ps1` | `Stop` | At a natural stop, if code was edited this session, asks the agent to run the code-health scan at `DEPTH=QUICK` on the touched files. **Loop-guarded** (`stop_hook_active`), **one-shot per edit-batch** (a `.scanned` marker), and **kill-switchable**. |
+| `rot-canary-stop.ps1` | `Stop` | At a natural stop, if code was edited this session, asks the agent to run the code-health scan at `DEPTH=QUICK` on the touched files. **Loop-guarded** (`stop_hook_active`), **one-shot per edit-batch** (a `.scanned` marker), and **kill-switchable**. It reads no autoFixMode: with CLAUDE_CODE_SESSION_ATTENDED=1 it asks for the fix menu, otherwise report only. |
 
 ## Manual install (Windows, no Node)
 

@@ -7,7 +7,7 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 The Stop hook decides who can answer; headless runs report only
 
 ### Fixed
-- **A headless child no longer applies `safe` fixes.** 3.28.0 asked the agent, in prose, to apply `safe` fixes only when a user was present, and a headless child applied one anyway. The Stop hook now reads Claude Code's `CLAUDE_CODE_SESSION_ATTENDED` and, unless it is `1`, tells the agent report only for every mode; a manual `/rot-canary` run is still the agent's call. — tests: scripts/lib/stop-attended.test.mjs
+- **A headless child no longer applies `safe` fixes.** 3.28.0 asked the agent, in prose, to apply `safe` fixes only when a user was present, and a headless child applied one anyway. The Stop hook now reads Claude Code's `CLAUDE_CODE_SESSION_ATTENDED` and, unless it is `1`, tells the agent report only for every mode; a manual `/rot-canary` run is still the agent's call. Other agents (Antigravity, Codex, Cursor and the rest) set no such variable, so the Stop hook and the session-start line always say report only there; run /rot-canary by hand for fix mode. — tests: scripts/lib/stop-attended.test.mjs
 
 ## [3.28.0] - 2026-11-10
 
