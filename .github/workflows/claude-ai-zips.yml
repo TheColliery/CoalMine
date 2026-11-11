@@ -28,10 +28,11 @@ on:
   push:
     tags:
       - 'v*'
+      - '*-v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: "An EXISTING tag (vX.Y.Z) to post the Release for, from that tag's own CHANGELOG entry. Run this workflow from the default branch."
+        description: "An EXISTING tag (vX.Y.Z, or <pkg>-vX.Y.Z in a multi-package repository) to post the Release for, from that tag's own CHANGELOG entry. Run this workflow from the default branch."
         required: true
         type: string
       launch_form:
@@ -75,26 +76,36 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_LAUNCH: ${{ inputs.launch_form }}
+          REQUIRE_SIGNED: ${{ vars.RELEASE_REQUIRE_SIGNED_TAG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
           out() { echo "$1" >> "$GITHUB_OUTPUT"; }
           launch=false
           repoint=''
+          ver_re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'
+          pkg_tag_re='^[a-z][a-z0-9]*-v'
+          # UMB3-193: a multi-package repository tags each package line `<pkg>-vX.Y.Z` (RELEASE-PATTERN.md, "The multi-package form"). `pkg` is the
+          # package ('' for a bare tag) and `ver` the vX.Y.Z part: stable against pre-release is read off `ver`, never off the whole tag.
+          pkg=''
           if [[ "${EVENT}" == "push" ]]; then
-            tag="${REF_NAME}"
+            tag="${REF_NAME}"; ver="${tag}"
+            if [[ "${tag}" =~ ^([a-z][a-z0-9]*)-(v.+)$ ]]; then pkg="${BASH_REMATCH[1]}"; ver="${BASH_REMATCH[2]}"; fi
             if [[ "${REF_TYPE}" != "tag" ]]; then
               out "post=false"; echo "::notice::ref_type is '${REF_TYPE}', not a tag -- no Release to post"; exit 0
-            elif [[ "${tag}" == *-* ]]; then
+            elif [[ -n "${pkg}" ]] && ! [[ "${ver}" =~ ${ver_re} ]]; then
+              out "post=false"; echo "::notice::${tag} is not a <pkg>-vX.Y.Z tag -- no Release to post"; exit 0
+            elif [[ "${ver}" == *-* ]]; then
               out "post=false"; echo "::notice::${tag} is a pre-release tag -- Releases are stable-only; the repository's one launch-form Release is posted by a workflow_dispatch run with launch_form"; exit 0
             fi
           else
-            tag="${INPUT_TAG}"; launch="${INPUT_LAUNCH}"
+            tag="${INPUT_TAG}"; launch="${INPUT_LAUNCH}"; ver="${tag}"
+            if [[ "${tag}" =~ ^([a-z][a-z0-9]*)-(v.+)$ ]]; then pkg="${BASH_REMATCH[1]}"; ver="${BASH_REMATCH[2]}"; fi
             if [[ "${REF_TYPE}" != "branch" || "${REF_NAME}" != "${DEFAULT_BRANCH}" ]]; then
               echo "::error::run this workflow from the default branch (${DEFAULT_BRANCH}), not from '${REF_NAME}': the tag to post is the input, never the ref"; exit 1
             fi
-            if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-              echo "::error::the tag input is not a vX.Y.Z or vX.Y.Z-label tag"; exit 1
+            if ! [[ "${ver}" =~ ${ver_re} ]]; then
+              echo "::error::the tag input is not a vX.Y.Z or vX.Y.Z-label tag${pkg:+ after its package prefix ${pkg}-} (a package name is lower-case letters and digits, opening with a letter)"; exit 1
             fi
             # GitHub's "get a reference" call for a tag name answers 200 with a LIST when no ref is exactly <name> but some
             # START with it (v1.2.3 against v1.2.30), so this lists by prefix and compares the ref name exactly.
@@ -104,7 +115,7 @@ jobs:
             if ! grep -Fxq -- "refs/tags/${tag}" <<< "${refs}"; then
               echo "::error::${tag} is not a tag of this repository -- this path posts a Release for a tag that already exists, it never creates a tag"; exit 1
             fi
-            if [[ "${tag}" == *-* ]]; then
+            if [[ "${ver}" == *-* ]]; then
               if [[ "${launch}" != "true" ]]; then
                 echo "::error::${tag} is a pre-release tag -- Releases are stable-only, except the ONE launch form: run again with launch_form"; exit 1
               fi
@@ -114,18 +125,23 @@ jobs:
               if ! rels=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name' 2>/dev/null); then
                 echo "::error::could not list the repository's Releases"; exit 1
               fi
-              others=0; stable=0; old=''
+              others=0; stable=0; old=''; oldv=''
               while IFS= read -r rel; do
                 [[ -z "${rel}" || "${rel}" == "${tag}" ]] && continue
-                others=$((others + 1)); old="${rel}"
-                [[ "${rel}" != *-* ]] && stable=$((stable + 1))
+                # UMB3-193: the launch form is judged per package line; a Release of another line is neither a stable close nor a re-point candidate. A bare tag skips every
+                # package-prefixed Release the same way (2026-11-12a, CoalLedger t330 #4): counted, it refused a first bare launch or re-pointed the wrong Release.
+                relv="${rel}"
+                if [[ -n "${pkg}" ]]; then [[ "${rel}" == "${pkg}-v"* ]] || continue; relv="${rel#"${pkg}-"}"
+                elif [[ "${rel}" =~ ${pkg_tag_re} ]]; then continue; fi
+                others=$((others + 1)); old="${rel}"; oldv="${relv}"
+                [[ "${relv}" != *-* ]] && stable=$((stable + 1))
               done <<< "${rels}"
               if [[ "${stable}" != "0" ]]; then
                 echo "::error::a stable Release exists, so the launch form is closed: ${tag} stays tag-only"; exit 1
               elif [[ "${others}" != "0" && "${others}" != "1" ]]; then
                 echo "::error::the launch form is the repository's ONE pre-release Release; found ${others} Releases of other tags"; exit 1
               elif [[ "${others}" == "1" ]]; then
-                if ! [[ "${old}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*$ ]]; then
+                if ! [[ "${oldv}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*$ ]]; then
                   echo "::error::the launch-form Release carries a tag that is not a vX.Y.Z-label pre-release tag; nothing was changed"; exit 1
                 fi
                 status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${old}...${tag}" --jq .status 2>/dev/null) || status=''
@@ -138,7 +154,36 @@ jobs:
               echo "::error::launch_form is for a pre-release tag; ${tag} is stable"; exit 1
             fi
           fi
-          out "post=true"; out "tag=${tag}"; out "launch=${launch}"; out "repoint=${repoint}"
+          # UMB3-193 round 4: a Release is posted only for an ANNOTATED tag, on a push and on a dispatch alike. A lightweight tag is a bare pointer to a commit (no tagger,
+          # no message, no signature of its own), and a registry that publishes only from a signed annotated tag could be outrun by a Release for one. The kind is
+          # read from the API by the tag's EXACT ref name (a longer tag that only starts with the name is not it), and only for a name in the vX.Y.Z form, so the name is
+          # safe in the URL; a pushed tag outside the form is left to the derive step, which refuses it by name. A kind that cannot be read stops the run.
+          # The switch (RELEASE_REQUIRE_SIGNED_TAG, a repository variable a room sets in its settings, default off; only the value `true` turns it on) also asks GitHub
+          # whether the tag object's signature is verified. Off, no signature is read.
+          if [[ "${ver}" =~ ${ver_re} ]]; then
+            if ! kinds=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" --jq '.[] | "\(.ref) \(.object.type) \(.object.sha)"' 2>/dev/null); then
+              echo "::error::could not read whether ${tag} is an annotated or a lightweight tag from the GitHub API; nothing was posted -- run it again"; exit 1
+            fi
+            kind=''; objsha=''
+            while read -r ref type sha; do
+              if [[ "${ref}" == "refs/tags/${tag}" ]]; then kind="${type}"; objsha="${sha}"; fi
+            done <<< "${kinds}"
+            if [[ "${kind}" == "commit" ]]; then
+              echo "::error::${tag} is a lightweight tag (a pointer to a commit, with no tagger, message or signature of its own); a Release is posted only for an annotated tag, so cut the tag with git tag -a (git tag -s where the repository requires a signature) and run again"; exit 1
+            elif [[ "${kind}" != "tag" ]]; then
+              echo "::error::could not tell whether ${tag} is an annotated or a lightweight tag (the API answered '${kind:-nothing}'); nothing was posted -- run it again"; exit 1
+            fi
+            if [[ "${REQUIRE_SIGNED:-}" == "true" ]]; then
+              sha_re='^[0-9a-f]{40,64}$'
+              if ! [[ "${objsha}" =~ ${sha_re} ]] || ! verdict=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${objsha}" --jq '"\(.verification.verified) \(.verification.reason)"' 2>/dev/null); then
+                echo "::error::could not read the signature verification of ${tag} from the GitHub API; nothing was posted -- run it again"; exit 1
+              fi
+              if [[ "${verdict%% *}" != "true" ]]; then
+                echo "::error::${tag} is not signed: GitHub reports its signature as '${verdict#* }'; the repository variable RELEASE_REQUIRE_SIGNED_TAG is true, so a Release is posted only for a tag whose signature GitHub verifies"; exit 1
+              fi
+            fi
+          fi
+          out "post=true"; out "tag=${tag}"; out "launch=${launch}"; out "repoint=${repoint}"; out "pkg=${pkg}"
           echo "posting the Release for ${tag} (launch form: ${launch}${repoint:+, taking over the Release of ${repoint}})"
 
       # `canon` = the workflow's own commit: the default branch on a dispatch, the tag on a push. Its scripts
@@ -159,7 +204,7 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ steps.gate.outputs.tag }}
           path: tag-src
-          fetch-depth: 0 # the heading-continuity check needs the previous stable tag (git describe)
+          fetch-depth: 0 # the heading-continuity check needs the previous stable tag (a walk over the reachable tags)
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.gate.outputs.post == 'true'
@@ -185,11 +230,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           POST_TAG: ${{ steps.gate.outputs.tag }}
           POST_LAUNCH: ${{ steps.gate.outputs.launch }}
+          POST_PKG: ${{ steps.gate.outputs.pkg }}
         run: |
           set -uo pipefail
           prev=''
           if [[ "${POST_LAUNCH}" != "true" ]]; then
-            prev=$(git describe --tags --abbrev=0 --exclude='*-*' "${POST_TAG}^" 2>/dev/null || true)
+            # The previous stable tag is the nearest tag reachable from this tag's parent that matches the STRICT stable grammar of its line
+            # (`<pkg>-vX.Y.Z` in a multi-package repository, else bare `vX.Y.Z`; nothing after the patch), whatever other tags sit between: a pre-release,
+            # a `.dev1`, a lightweight test tag (UMB3-193 round 2). One topological walk, the tags of each commit, first match wins; no tag is ever retagged for it.
+            stable_re="^${POST_PKG:+${POST_PKG}-}v[0-9]+\.[0-9]+\.[0-9]+$"
+            while IFS= read -r decorations; do
+              [[ -z "${decorations}" ]] && continue # a commit with no tag prints an empty line
+              IFS=',' read -ra names <<< "${decorations}"
+              # ${names[@]+"${names[@]}"}, never a bare "${names[@]}": an empty array is "unbound" under set -u in bash 3.2 (macOS /bin/bash) and before 4.4
+              for name in ${names[@]+"${names[@]}"}; do
+                name="${name# }"; name="${name#tag: }"
+                if [[ "${name}" =~ ${stable_re} ]]; then prev="${name}"; break 2; fi
+              done
+            done < <(git log --topo-order --decorate-refs='refs/tags/*' --format=%D "${POST_TAG}^" 2>/dev/null || true)
           fi
           if latest=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>latest-err.txt); then :
           elif grep -q 'HTTP 404' latest-err.txt; then latest=''
@@ -200,9 +258,14 @@ jobs:
           echo "LATEST_TAG=${latest}" >> "$GITHUB_ENV"
           echo "previous stable tag: ${prev:-none} · current Latest: ${latest:-none}"
 
+      # UMB3-193 round 3: the tag's own CHANGELOG is read first. A tag cut BEFORE its entry existed has no heading for its version, and on a DISPATCH only the script
+      # then reads that version's entry from the default branch's CHANGELOG (`canon` is the dispatch's own commit) and says so in the log; a push has no fallback.
+      # Assets and the tree are the tag's own either way.
       - name: Derive the canon Release title + body from CHANGELOG.md
         if: steps.gate.outputs.post == 'true'
         working-directory: tag-src
+        env:
+          CHANGELOG_FALLBACK: ${{ github.event_name == 'workflow_dispatch' && '../canon/CHANGELOG.md' || '' }}
         run: node ../canon/scripts/release-notes.mjs
 
       # A room that adopted this workflow without the script it runs, or kept an older copy of that script, reaches the Release step

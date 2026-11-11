@@ -33,7 +33,7 @@ const childEnv = (dir, extra = {}, allow = []) => {
   return Object.assign(sandboxEnv(dir), extra);
 };
 // The one place every spawn of these tests goes through, so the sandbox is applied by construction.
-const spawnIn = (cwd, script, args = [], { env, allow, input } = {}) => spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', timeout: 30000, input, env: childEnv(cwd, env, allow) });
+const spawnIn = (cwd, script, args = [], { env, allow, input } = {}) => spawnSync(process.execPath, ['--max-old-space-size=2048', script, ...args], { cwd, encoding: 'utf8', timeout: 30000, input, env: childEnv(cwd, env, allow) });
 const made = [];
 test.after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
 
@@ -271,4 +271,14 @@ test('verify-release-shape.mjs: an intended title holding a double quote is prin
   const res = run(dir, JSON.stringify({ name: 'v1.0.0 - a fix', body: 'A fix.' }));
   assert.equal(res.status, 1, res.stdout + res.stderr);
   assert.ok(res.stderr.split(/\r?\n/).includes('verify-release-shape: TITLE MISMATCH -- intended "v1.0.0 - a \\"quoted\\" fix", published "v1.0.0 - a fix"'), res.stderr);
+});
+
+// UMB3-193 round 3, item 3: the harness rail -- a spawned child carries a heap cap. The probe prints the flags the child was started with.
+test('verify-release-shape.test.mjs spawnIn: the child is started with --max-old-space-size=2048 -- RED before UMB3-193 round 3', () => {
+  const dir = scratch();
+  const probe = path.join(dir, 'exec-argv-probe.mjs');
+  fs.writeFileSync(probe, 'console.log(JSON.stringify(process.execArgv));\n');
+  const res = spawnIn(dir, probe);
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(JSON.parse(res.stdout).includes('--max-old-space-size=2048'), res.stdout);
 });

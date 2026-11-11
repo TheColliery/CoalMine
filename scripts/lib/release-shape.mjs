@@ -1,5 +1,5 @@
 // UMB-162 (a) — "WRITE ONCE, DERIVE EVERYTHING" (owner-proposed, main-confirmed 2026-09-21).
-// Parses a CHANGELOG.md's TOP version entry into the pieces a GitHub Release's title and body
+// Parses a CHANGELOG.md's version entry (the top one; with a package, that package's first; with `exact`, the heading of one named version) into the pieces a GitHub Release's title and body
 // are DERIVED from, per RELEASE-PATTERN.md "The title" / "The body": the entry's own ONE-LINE
 // SUMMARY -- the line immediately below the version heading, before any Keep-a-Changelog
 // `### ` subsection -- becomes both the title's `<summary>` segment and the body's Part 1
@@ -22,14 +22,36 @@ export class ReleaseRefError extends Error {}
 
 const BARE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 
+// UMB3-193 (2026-11-09): the multi-package form (RELEASE-PATTERN.md, "The multi-package form"). A repository that ships more than one package on
+// independent version lines tags each line `<pkg>-vX.Y.Z` and heads each entry `## [<pkg> X.Y.Z] - YYYY-MM-DD`. The package name is lower-case letters
+// and digits opening with a letter: a hyphen inside it would read as the pre-release marker (the gate's `*-*`, the previous-stable walk's strict grammar), a capital,
+// a dot or an underscore would let one package be spelled two ways between its tag and its heading. A single-package repository's tags are bare, pkg ''.
+const TAG_FORM = /^(?:([a-z][a-z0-9]*)-)?v(\d+\.\d+\.\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+// { pkg, version, pre } for a tag of the form (pre '' on a stable tag), null for anything else: the one grammar every caller reads a tag by.
+export function parseReleaseTag(tag) {
+  const m = typeof tag === 'string' ? tag.match(TAG_FORM) : null;
+  return m ? { pkg: m[1] ?? '', version: m[2], pre: m[3] ?? '' } : null;
+}
+// The tag of a version on a package line, and the label its CHANGELOG heading carries.
+export const tagOf = (pkg, version) => `${pkg ? pkg + '-' : ''}v${version}`;
+const labelOf = (pkg, version) => (pkg ? `${pkg} ${version}` : version);
+
 // UMB-182 default-Latest. GitHub marks a new Release "Latest" unless the create call says otherwise
 // (measured on CoalFace's rehearsal: a throw-away v0.0.2 took Latest from v0.11.0). A Release for a
 // version OLDER than the current Latest -- a patch on an older line, or a back-fill (UMB-189) -- must be created with
 // make_latest "false". Returns the string the workflow hands to `gh release create/edit --latest=`.
-// `latestTag` is '' when the repo has no Latest yet.
-export function makeLatestFlag(tagVersion, latestTag) {
+// `latestTag` is '' when the repo has no Latest yet. With a package (UMB3-193), Latest moves only within the package line: a Latest on another
+// line (another package's, or a bare tag) is left standing with "false", never compared, so a back-fill on one line never displaces another line's badge.
+export function makeLatestFlag(tagVersion, latestTag, pkg = '') {
   if (!latestTag) return 'true';
-  const l = latestTag.match(BARE_TAG);
+  let latestVersion = latestTag;
+  if (pkg) {
+    const p = parseReleaseTag(latestTag);
+    if (!p || p.pre) throw new ReleaseRefError(`the current Latest release is tagged "${latestTag}", not a bare vX.Y.Z or <pkg>-vX.Y.Z -- refusing to guess whether ${pkg}-v${tagVersion} should take Latest`);
+    if (p.pkg !== pkg) return 'false';
+    latestVersion = `v${p.version}`;
+  }
+  const l = latestVersion.match(BARE_TAG);
   if (!l) throw new ReleaseRefError(`the current Latest release is tagged "${latestTag}", not a bare vX.Y.Z -- refusing to guess whether v${tagVersion} should take Latest`);
   const t = `v${tagVersion}`.match(BARE_TAG);
   if (!t) throw new ReleaseRefError(`v${tagVersion} is not a bare vX.Y.Z`);
@@ -46,47 +68,67 @@ export function makeLatestFlag(tagVersion, latestTag) {
 // must stop the release, not ship a Release titled from a fallback.
 //
 // UMB-182 / courier C-2: `previousStable` ('X.Y.Z', or '' for a first stable release) is the version
-// of the previous stable tag (`git describe --exclude='*-*'`). When given, the first STABLE
+// of the previous stable tag (the nearest reachable tag in the strict stable grammar of the line, found by the workflow's walk). When given, the first STABLE
 // `## [X.Y.Z]` heading after the released entry must be that version -- pre-release headings in
 // between are skipped. This catches the class the byte re-read cannot see: a heading REPLACED instead
 // of inserted above, which silently publishes the older entry's sections as the new release's notes.
-export function extractChangelogEntry(changelogText, tagVersion, { previousStable = '' } = {}) {
+//
+// UMB3-193: with `pkg` (the multi-package form) the entry is the FIRST heading of THAT package (`## [<pkg> ...]`), other packages' entries above it are
+// skipped, the label compared is `<pkg> X.Y.Z`, and the continuity check reads the next stable heading of the same package only.
+// UMB3-193 round 3: with `exact` the entry is found by its own label wherever it sits (the back-fill of a tag cut before its entry reads the default
+// branch's CHANGELOG, which has newer entries above that version); without it the top (or the package's first) entry must be the one.
+const headingLabel = (line) => line.match(/^##\s*\[([^\]]+)\]/)?.[1];
+
+// true when the file has a heading for exactly this version (and package): the test that decides whether the tag's own tree can be read.
+export function hasEntryHeading(changelogText, tagVersion, pkg = '') {
+  const label = labelOf(pkg, tagVersion);
+  return String(changelogText).split(/\r?\n/).some((l) => headingLabel(l) === label);
+}
+
+export function extractChangelogEntry(changelogText, tagVersion, { previousStable = '', pkg = '', exact = false } = {}) {
   const lines = changelogText.split(/\r?\n/);
-  const headingIdx = lines.findIndex((l) => /^##\s*\[/.test(l));
-  if (headingIdx === -1) throw new ChangelogShapeError('CHANGELOG.md has no version heading ("## [X.Y.Z] - YYYY-MM-DD")');
+  const label = labelOf(pkg, tagVersion);
+  const headingRe = pkg ? new RegExp(`^##\\s*\\[${pkg} `) : /^##\s*\[/;
+  const headingIdx = exact ? lines.findIndex((l) => headingLabel(l) === label) : lines.findIndex((l) => headingRe.test(l));
+  if (headingIdx === -1) {
+    if (exact) throw new ChangelogShapeError(`CHANGELOG.md has no [${label}] heading ("## [${label}] - YYYY-MM-DD")`);
+    throw new ChangelogShapeError(pkg ? `CHANGELOG.md has no [${pkg} X.Y.Z] heading ("## [${pkg} X.Y.Z] - YYYY-MM-DD")` : 'CHANGELOG.md has no version heading ("## [X.Y.Z] - YYYY-MM-DD")');
+  }
 
   // the unfinished entry is named before the date is read: the standard `## [Unreleased]` carries no date, so reaching the date check first reported it as a malformed heading (14h, CoalLedger #8)
-  if (/^##\s*\[\s*unreleased\s*\]/i.test(lines[headingIdx])) {
+  if ((pkg ? new RegExp(`^##\\s*\\[${pkg}\\s+unreleased\\s*\\]`, 'i') : /^##\s*\[\s*unreleased\s*\]/i).test(lines[headingIdx])) {
     throw new ChangelogShapeError('top entry is still [Unreleased] -- the CHANGELOG entry is written and finalized BEFORE the tag (RELEASE-PATTERN.md "The chain around the press", step 1)');
   }
   const m = lines[headingIdx].match(/^##\s*\[([^\]]+)\]\s*-\s*(\d{4}-\d{2}-\d{2})\s*$/);
   if (!m) throw new ChangelogShapeError(`top heading "${lines[headingIdx].trim()}" is not "## [X.Y.Z] - YYYY-MM-DD"`);
-  const [, version, date] = m;
-  if (version !== tagVersion) {
-    throw new ChangelogShapeError(`top entry is [${version}] but the pushed tag is v${tagVersion} -- the CHANGELOG entry must match the tag it is cut for`);
+  const [, found, date] = m;
+  if (found !== label) {
+    throw new ChangelogShapeError(`${pkg ? `first [${pkg}] entry` : 'top entry'} is [${found}] but the pushed tag is ${tagOf(pkg, tagVersion)} -- the CHANGELOG entry must match the tag it is cut for`);
   }
+  const version = tagVersion;
 
   const rest = lines.slice(headingIdx + 1);
   if (previousStable) {
-    const nextStable = rest.map((l) => l.match(/^##\s*\[(\d+\.\d+\.\d+)\]/)).find(Boolean)?.[1];
+    const stableRe = pkg ? new RegExp(`^##\\s*\\[${pkg} (\\d+\\.\\d+\\.\\d+)\\]`) : /^##\s*\[(\d+\.\d+\.\d+)\]/;
+    const nextStable = rest.map((l) => l.match(stableRe)).find(Boolean)?.[1];
     if (nextStable !== previousStable) {
-      throw new ChangelogShapeError(`the [${version}] entry is followed by ${nextStable ? `[${nextStable}]` : 'no stable heading'}, but the previous stable tag is v${previousStable} -- an entry heading was replaced instead of inserted above, or the previous release's entry is missing`);
+      throw new ChangelogShapeError(`the [${label}] entry is followed by ${nextStable ? `[${labelOf(pkg, nextStable)}]` : 'no stable heading'}, but the previous stable tag is ${tagOf(pkg, previousStable)} -- an entry heading was replaced instead of inserted above, or the previous release's entry is missing`);
     }
   }
   const nextHeadingIdx = rest.findIndex((l) => /^##\s/.test(l));
   const body = nextHeadingIdx === -1 ? rest : rest.slice(0, nextHeadingIdx);
 
   const firstContentIdx = body.findIndex((l) => l.trim() !== '');
-  if (firstContentIdx === -1) throw new ChangelogShapeError(`the [${version}] entry is empty`);
+  if (firstContentIdx === -1) throw new ChangelogShapeError(`the [${label}] entry is empty`);
   if (/^###\s/.test(body[firstContentIdx])) {
-    throw new ChangelogShapeError(`the [${version}] entry has no one-line summary before its first "### " section -- add one sentence stating what changed and why it matters (this becomes the Release's title and Lead)`);
+    throw new ChangelogShapeError(`the [${label}] entry has no one-line summary before its first "### " section -- add one sentence stating what changed and why it matters (this becomes the Release's title and Lead)`);
   }
   const summary = body[firstContentIdx].trim();
   // The summary becomes the Release title, the announcement and every log line that prints them, so a control character in it (C0, DEL or C1:
   // an escape sequence, a lone carriage return) refuses the entry by name, and only its code point is echoed, never the character (CWE-117).
   for (const ch of summary) {
     const c = ch.codePointAt(0);
-    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) throw new ChangelogShapeError(`the [${version}] summary line carries a control character (code point ${c}) -- remove it; the summary becomes the Release title`);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) throw new ChangelogShapeError(`the [${label}] summary line carries a control character (code point ${c}) -- remove it; the summary becomes the Release title`);
   }
 
   const afterSummary = body.slice(firstContentIdx + 1);
@@ -121,8 +163,10 @@ export const MIRROR_TITLE_CAP = 200;
 
 export function mirroredTitle(repo, tag, releaseName) {
   const name = String(releaseName || '').trim();
-  // The tag is the name's own prefix only at a boundary: "v2.7.0" is not the prefix of "v2.7.01" or "v2.7.0-rc1" (UMB-456 (1) iv).
-  const named = name.startsWith(tag) && /^(\s|$)/.test(name.slice(tag.length));
+  // The tag is the name's own prefix only at a boundary: "v2.7.0" is not the prefix of "v2.7.01" or "v2.7.0-rc1" (UMB-456 (1) iv). A multi-package
+  // tag `py-v0.0.1` opens its title as `py v0.0.1` (UMB3-193), so that spelling is the one looked for.
+  const opening = tag.replace(/^([a-z][a-z0-9]*)-v/, '$1 v');
+  const named = name.startsWith(opening) && /^(\s|$)/.test(name.slice(opening.length));
   return name ? (named ? `${repo} ${name}` : `${repo} ${tag} - ${name}`) : `${repo} ${tag}`;
 }
 
@@ -137,8 +181,8 @@ export function mirroredTitleOverflow(repo, tag, releaseName) {
 // lower-case sentence style, no trailing period. The summary text itself is the CHANGELOG
 // author's own words, used near-verbatim (only the leading letter is case-adjusted, and only
 // when it looks like an ordinary sentence start rather than an acronym/identifier) -- a
-// machine composes the SHAPE, never the WORDING.
-export function buildReleaseTitle(version, summary) {
+// machine composes the SHAPE, never the WORDING. With a package (UMB3-193) the title opens `<pkg> vX.Y.Z - <summary>`.
+export function buildReleaseTitle(version, summary, pkg = '') {
   let s = summary.replace(/\.\s*$/, '');
   // Lower-case the leading letter of an ordinary sentence opener ("A project..." -> "a project..."). Only an ORDINARY opener lowers:
   // ONE capital followed by lower-case letters (with an optional contraction, hyphenated lower-case compound or closing punctuation:
@@ -150,7 +194,7 @@ export function buildReleaseTitle(version, summary) {
   const firstWord = s.match(/^\S+/)?.[0] ?? '';
   const ordinaryOpener = /^[A-Z][a-z]*(?:['\u2019][a-z]+)?(?:-[a-z]+)*[.,;:!?)]*$/.test(firstWord);
   if (ordinaryOpener) s = s[0].toLowerCase() + s.slice(1);
-  return `v${version} - ${s}`;
+  return `${pkg ? pkg + ' ' : ''}v${version} - ${s}`;
 }
 
 // Part 1 (Lead) + Part 2 (What changed) per RELEASE-PATTERN.md "The body". The summary line IS

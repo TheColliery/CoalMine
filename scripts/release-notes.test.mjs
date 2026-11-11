@@ -36,8 +36,9 @@ const childEnv = (dir, extra = {}, allow = []) => {
   if (silent.length) throw new Error('childEnv: the caller overrides sandbox key(s) ' + silent.join(', ') + ' without naming them in allow');
   return Object.assign(sandboxEnv(dir), extra);
 };
-// The one place every spawn of these tests goes through, so the sandbox is applied by construction.
-const spawnIn = (cwd, script, args = [], { env, allow, input } = {}) => spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', timeout: 30000, input, env: childEnv(cwd, env, allow) });
+// The one place every spawn of these tests goes through, so the sandbox is applied by construction. The child also carries a heap cap (the zone's harness rail:
+// every child of a test has a heap cap and a kill-timeout), 2 GB, ample for the largest CHANGELOG these tests build (8 MiB).
+const spawnIn = (cwd, script, args = [], { env, allow, input } = {}) => spawnSync(process.execPath, ['--max-old-space-size=2048', script, ...args], { cwd, encoding: 'utf8', timeout: 30000, input, env: childEnv(cwd, env, allow) });
 const made = [];
 // Teardown of a tree git children just used: on Windows a git.exe that outlives its launcher by a few seconds still holds the tree, and one plain rmSync
 // answers EBUSY, EPERM or ENOTEMPTY, failing the test for a reason that is not the test's (CoalWash e63, measured: a loop of fresh calls clears it, the
@@ -559,3 +560,146 @@ test('release-notes.mjs: any other open error (EACCES) still reaches the reader 
   assert.match(res.stderr, /could not read CHANGELOG\.md: EACCES: probe/);
   assert.doesNotMatch(res.stderr, /not a regular file/);
 });
+
+// UMB3-193 (2026-11-09): the multi-package form, end to end through the CLI. The CHANGELOG is shaped as Kolwen's: two package lines interleaved.
+const TWO_LINES = '## [npm 0.0.2] - 2026-11-03\n\nThe npm package publishes its first client.\n\n### Added\n- n\n\n## [py 0.0.1] - 2026-11-02\n\nThe Python package publishes its first client.\n\n### Added\n- p\n\n## [npm 0.0.1] - 2026-11-01\n\nThe first npm shell.\n\n### Added\n- shell\n';
+
+test('release-notes.mjs: a <pkg>-vX.Y.Z tag derives from the first [<pkg> X.Y.Z] entry: the title carries the package, the body is that entry, Latest stays on another package\'s line -- RED before UMB3-193', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), TWO_LINES);
+  const res = run(dir, { RELEASE_TAG: 'py-v0.0.1', GITHUB_REF_NAME: 'main', PREVIOUS_STABLE_TAG: '', LATEST_TAG: 'npm-v0.0.2' });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'py v0.0.1 - the Python package publishes its first client');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-body.md'), 'utf8'), 'The Python package publishes its first client.\n\n### Added\n- p\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-latest.txt'), 'utf8'), 'false');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-prerelease.txt'), 'utf8'), 'false');
+  assert.match(res.stdout, /derived the Release title \+ body for py-v0\.0\.1 from CHANGELOG\.md's \[py 0\.0\.1\] entry/);
+  const npm = run(dir, { GITHUB_REF_NAME: 'npm-v0.0.2', PREVIOUS_STABLE_TAG: 'npm-v0.0.1', LATEST_TAG: 'npm-v0.0.1' });
+  assert.equal(npm.status, 0, npm.stdout + npm.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'npm v0.0.2 - the npm package publishes its first client');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-latest.txt'), 'utf8'), 'true');
+  assert.match(npm.stdout, /followed by the previous stable tag's heading \[npm 0\.0\.1\]/);
+});
+
+test('release-notes.mjs: a package with no [<pkg> X.Y.Z] heading is refused by name, exit 1, no files; a PREVIOUS_STABLE_TAG from another package line is refused -- RED before UMB3-193', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), TWO_LINES);
+  let res = run(dir, { GITHUB_REF_NAME: 'rs-v1.0.0' });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /release-notes: CHANGELOG\.md has no \[rs X\.Y\.Z\] heading/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
+  res = run(dir, { GITHUB_REF_NAME: 'npm-v0.0.2', PREVIOUS_STABLE_TAG: 'py-v0.0.1' });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /PREVIOUS_STABLE_TAG "py-v0\.0\.1" is not a bare npm-vX\.Y\.Z tag of the same package line -- refusing to guess/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
+});
+
+test('release-notes.mjs: a tag whose package name is outside the grammar, or whose version part is no vX.Y.Z, is refused as before -- RED before UMB3-193', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), TWO_LINES);
+  for (const bad of ['Py-v0.0.1', 'my_pkg-v1.0.0', 'py-v0.0.1.dev1', 'py-0.0.1']) {
+    const res = run(dir, { GITHUB_REF_NAME: bad });
+    assert.equal(res.status, 1, bad + ': ' + res.stdout + res.stderr);
+    assert.match(res.stderr, /is not a bare vX\.Y\.Z tag \(or <pkg>-vX\.Y\.Z in a multi-package repository\)/, bad);
+    assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false, bad);
+  }
+  const pre = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1-beta.1' });
+  assert.equal(pre.status, 1); assert.match(pre.stderr, /a pre-release tag is posted only as the launch form/);
+  const launch = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1-beta.1', LAUNCH_FORM: 'true' });
+  assert.equal(launch.status, 1, launch.stderr); assert.match(launch.stderr, /first \[py\] entry is \[py 0\.0\.1\] but the pushed tag is py-v0\.0\.1-beta\.1/);
+});
+
+test('release-notes.mjs --check on a multi-package CHANGELOG: the top entry\'s package rides into the tag and the announcement title ("<Repo> <pkg> vX.Y.Z - ...") -- RED before UMB3-193', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), TWO_LINES);
+  const res = run(dir, {}, ['--check', '--repo', 'Kolwen']);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.match(res.stdout, /release-notes --check: npm-v0\.0\.2, announcement title "Kolwen npm v0\.0\.2 - the npm package publishes its first client" fits GitHub's 200-character ceiling/);
+});
+
+// UMB3-193 round 3 (2026-11-09), item 1: the back-fill of a tag cut before its entry. The dispatch path (and only it) hands release-notes.mjs the default
+// branch's CHANGELOG as CHANGELOG_FALLBACK; the tag's own tree is read first and used whenever it HAS the heading. The push path never sets the variable.
+const DEFAULT_BRANCH_CHANGELOG = '## [py 0.0.3] - 2026-11-05\n\nNewer py.\n\n### Added\n- later\n\n## [npm 0.0.2] - 2026-11-03\n\nThe npm package publishes its first client.\n\n### Added\n- n\n\n## [py 0.0.1] - 2026-11-02\n\nThe Python package publishes its first client.\n\n### Added\n- from the default branch\n';
+const TAG_TREE_NO_ENTRY = '## [npm 0.0.1] - 2026-11-01\n\nThe first npm shell.\n\n### Added\n- shell\n';
+function backfillDir(tagChangelog) {
+  const dir = scratchWithLib();
+  if (tagChangelog !== null) fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), tagChangelog);
+  fs.mkdirSync(path.join(dir, 'canon'));
+  fs.writeFileSync(path.join(dir, 'canon', 'CHANGELOG.md'), DEFAULT_BRANCH_CHANGELOG);
+  return dir;
+}
+const FALLBACK = { CHANGELOG_FALLBACK: 'canon/CHANGELOG.md' };
+
+test('release-notes.mjs back-fill: a tag tree WITHOUT the heading posts from the default branch\'s entry for that exact version, and the log names the source -- RED before UMB3-193 round 3', () => {
+  const dir = backfillDir(TAG_TREE_NO_ENTRY);
+  const res = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1', ...FALLBACK });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'py v0.0.1 - the Python package publishes its first client');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-body.md'), 'utf8'), 'The Python package publishes its first client.\n\n### Added\n- from the default branch\n');
+  assert.match(res.stdout, /release-notes: source: the default branch's CHANGELOG\.md at the dispatch commit \(the tag's own CHANGELOG\.md has no \[py 0\.0\.1\] heading\)/);
+  const missing = backfillDir(null);
+  const none = run(missing, { GITHUB_REF_NAME: 'py-v0.0.1', ...FALLBACK });
+  assert.equal(none.status, 0, none.stdout + none.stderr); assert.match(none.stdout, /source: the default branch's CHANGELOG\.md/, 'a tag tree with no CHANGELOG at all has no heading either');
+});
+
+test('release-notes.mjs back-fill: a tag tree that HAS the heading uses its own entry and ignores the default branch; the log says so -- RED before UMB3-193 round 3', () => {
+  const own = '## [py 0.0.1] - 2026-11-02\n\nThe tag\'s own words.\n\n### Added\n- own\n';
+  const dir = backfillDir(own);
+  const res = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1', ...FALLBACK });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'py v0.0.1 - the tag\'s own words');
+  assert.equal(fs.readFileSync(path.join(dir, 'release-body.md'), 'utf8'), 'The tag\'s own words.\n\n### Added\n- own\n');
+  assert.match(res.stdout, /release-notes: source: the tag's own CHANGELOG\.md/);
+  assert.doesNotMatch(res.stdout, /default branch/);
+});
+
+test('release-notes.mjs back-fill: the PUSH path never falls back -- no CHANGELOG_FALLBACK, a tag tree without the heading is refused as before -- RED before UMB3-193 round 3 (only the log line)', () => {
+  const dir = backfillDir(TAG_TREE_NO_ENTRY);
+  const res = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1' });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /CHANGELOG\.md has no \[py X\.Y\.Z\] heading|first \[py\] entry/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
+  const bare = scratchWithLib();
+  fs.writeFileSync(path.join(bare, 'CHANGELOG.md'), '## [1.3.0] - 2026-10-02\n\nNewest.\n');
+  const refused = run(bare, { GITHUB_REF_NAME: 'v1.2.0' });
+  assert.equal(refused.status, 1); assert.match(refused.stderr, /top entry is \[1\.3\.0\] but the pushed tag is v1\.2\.0/);
+});
+
+test('release-notes.mjs back-fill: a heading absent from BOTH trees is refused naming both; an oversize or non-regular fallback is refused, never read -- RED before UMB3-193 round 3', () => {
+  const dir = backfillDir(TAG_TREE_NO_ENTRY);
+  const res = run(dir, { GITHUB_REF_NAME: 'rs-v1.0.0', ...FALLBACK });
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stderr, /neither the tag's own CHANGELOG\.md nor the default branch's has a \[rs 1\.0\.0\] heading/);
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false);
+  fs.writeFileSync(path.join(dir, 'canon', 'CHANGELOG.md'), 'x'.repeat(8388609));
+  const big = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1', ...FALLBACK });
+  assert.equal(big.status, 1, big.stdout + big.stderr); assert.match(big.stderr, /past the byte bound/);
+  fs.rmSync(path.join(dir, 'canon', 'CHANGELOG.md')); fs.mkdirSync(path.join(dir, 'canon', 'CHANGELOG.md'));
+  const dirLike = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1', ...FALLBACK });
+  assert.equal(dirLike.status, 1, dirLike.stdout + dirLike.stderr); assert.match(dirLike.stderr, /not a regular file|EISDIR|EPERM|EACCES/);
+});
+
+// UMB3-193 round 3, item 3: the harness rail -- a spawned child carries a heap cap. The probe prints the flags the child was started with.
+test('release-notes.test.mjs spawnIn: the child is started with --max-old-space-size=2048 -- RED before UMB3-193 round 3', () => {
+  const dir = scratchWithLib();
+  const probe = path.join(dir, 'exec-argv-probe.mjs');
+  fs.writeFileSync(probe, 'console.log(JSON.stringify(process.execArgv));\n');
+  const res = spawnIn(dir, probe);
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(JSON.parse(res.stdout).includes('--max-old-space-size=2048'), res.stdout);
+});
+
+// UMB3-193 round 3, item 4: release-notes.mjs is an entry point, so importing it (a test, a tool) runs nothing.
+test('release-notes.mjs: importing it runs nothing -- no output, no files, exit 0; run as the entry it still derives -- RED before UMB3-193 round 3', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), ENTRY_FOR_IMPORT);
+  const probe = path.join(dir, 'import-probe.mjs');
+  fs.writeFileSync(probe, `await import(${JSON.stringify(pathToFileURL(SCRIPT).href)});\nconsole.log('imported');\n`);
+  const res = spawnIn(dir, probe, [], { env: { GITHUB_REF_NAME: 'v1.2.0' } });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(res.stdout, 'imported\n'); assert.equal(res.stderr, '');
+  assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), false, 'the import wrote nothing');
+  const entry = run(dir, { GITHUB_REF_NAME: 'v1.2.0' });
+  assert.equal(entry.status, 0, entry.stdout + entry.stderr); assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), true);
+});
+const ENTRY_FOR_IMPORT = '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n';
