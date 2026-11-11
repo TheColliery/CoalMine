@@ -13,6 +13,12 @@
 // not recognized as a skill) and checks every archive's layout before upload.
 // Canonical exemplar: CoalMine (board #40).
 //
+// THE ENTRY GUARD (2026-11-12a, CoalLedger's r33/r34 INSPECT fixes, taken into the canon): the build runs only as the entry point, never on import, which would run it against the importer's
+// cwd and set the importer's own exit code (LOW-3). The compare is on REAL paths (MED-3): import.meta.url is the loader's realpath of the entry while process.argv[1] is only path.resolve'd,
+// so a lexical compare through a junction or a symlinked folder never matches and the guard fails OPEN (the script silently does nothing). Both sides go through fs.realpathSync.native
+// (never the plain call, which does not expand a Windows 8.3 short name); where either cannot be resolved the PLAIN resolved paths are compared, the house entry guard (release-notes.mjs).
+// CoalLedger's own copy failed CLOSED there (an unresolvable path read as not the entry); the canon compares plain paths instead, so a build of an entry whose real path cannot be read still runs.
+//
 // REPRODUCIBLE, AND REFUSING WHAT IT CANNOT PACKAGE (09g, CoalMine issue 42 M1-M3). A junction or symlink directly under plugin/skills is refused by name too (29e (a)). A symlink or any entry that is neither a regular file nor a folder is REFUSED, never
 // followed (copyFileSync would read the link's target into a public asset); an entry whose name starts with a dot is not staged at any depth (a nested .DS_Store); a name with a
 // control character is refused. When SOURCE_DATE_EPOCH is set (whole seconds, 1980 or later: the reproducible-builds variable, which the workflow sets to the tag commit's time) every
@@ -148,7 +154,33 @@ async function main() {
   console.log(`Done: ${skills.length - failed}/${skills.length} skill(s) staged into ${outDir}, ${failed} failed`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-});
+// dev:ino of what a path names, or null where the volume gives none (stat fails, or answers ino 0: a zero id would make any two files one)
+function fileIdentity(p) {
+  try {
+    const s = fs.statSync(p, { bigint: true });
+    return s.ino === 0n ? null : `${s.dev}:${s.ino}`;
+  } catch {
+    return null;
+  }
+}
+
+function isMainModule(url) {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(url);
+  try {
+    return fs.realpathSync.native(self) === fs.realpathSync.native(process.argv[1]);
+  } catch {
+    // the real path cannot be resolved: compare file identity (stat follows a link, so a symlinked temp folder still matches); where stat gives no identity (it fails, or a volume answers ino 0) the
+    // plain paths are the last resort
+    const a = fileIdentity(self);
+    const b = fileIdentity(process.argv[1]);
+    return a !== null && b !== null ? a === b : path.resolve(self) === path.resolve(process.argv[1]);
+  }
+}
+
+if (isMainModule(import.meta.url)) {
+  main().catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  });
+}

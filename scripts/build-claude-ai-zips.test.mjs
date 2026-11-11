@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, 'build-claude-ai-zips.mjs');
@@ -213,4 +213,96 @@ test('a block-scalar description with a blank line inside is replaced whole: no 
   assert.equal(front.filter((l) => l.startsWith('description:')).length, 1, text);
   assert.ok(!text.includes('orphaned tail'), 'the tail of the old description is gone: ' + text);
   assert.ok(front.includes('license: Apache-2.0') && front.includes('name: alpha'), 'the fields around it stay: ' + text);
+});
+
+// 2026-11-12a (CoalLedger's re-copy, its CW-054 row): the house entry guard. A script that is also a module runs only as the entry point, never on import, and the compare is on REAL paths:
+// import.meta.url is the loader's realpath of the entry, process.argv[1] only path.resolve'd, so a lexical compare through a junction or a symlinked folder never matches and the guard fails OPEN
+// (the script silently does nothing). Both sides go through fs.realpathSync.native; where either cannot be resolved the PLAIN resolved paths are compared.
+const importProbe = (root) => {
+  const probe = path.join(root, 'import-probe.mjs');
+  fs.writeFileSync(probe, `import { pathToFileURL } from 'node:url';\nawait import(pathToFileURL(${JSON.stringify(path.join(root, 'scripts', 'build-claude-ai-zips.mjs'))}).href);\nconsole.log('imported');\nconsole.log('exitCode=' + (process.exitCode ?? 'unset'));\n`);
+  return probe;
+};
+
+test('importing the staging script runs nothing: no output of its own, no dist-claude-ai, the importer\'s exit code untouched -- RED before 2026-11-12a', () => {
+  const root = repo(['alpha']);
+  const r = spawnSync(process.execPath, ['--max-old-space-size=256', importProbe(root)], { cwd: root, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.stdout, 'imported\nexitCode=unset\n');
+  assert.equal(r.stderr, '');
+  assert.equal(fs.existsSync(path.join(root, 'dist-claude-ai')), false, 'the import staged nothing');
+  assert.equal(stage(repo(['alpha'])).status, 0, 'run as the entry it still stages');
+});
+
+test('run through a junction or a symlinked folder the script is still the entry and stages (the compare is on real paths, never lexical) -- RED against a lexical import.meta.url compare', (t) => {
+  const root = repo(['alpha']);
+  const via = path.join(SANDBOX, 'via' + n++);
+  fs.mkdirSync(via);
+  try { fs.symlinkSync(path.join(root, 'scripts'), path.join(via, 'scripts'), 'junction'); } catch { t.skip('this account cannot make a junction or symlink here'); return; }
+  const r = spawnSync(process.execPath, ['--max-old-space-size=256', path.join(via, 'scripts', 'build-claude-ai-zips.mjs')], { cwd: root, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /Done: 1\/1 skill\(s\) staged/);
+  assert.ok(fs.existsSync(path.join(root, 'dist-claude-ai', 'alpha', 'SKILL.md')), 'the build ran through the link');
+});
+
+// the preload makes the real-path call fail, as it does where a path cannot be resolved: the guard then compares the plain paths
+const NO_REALPATH = "import fs from 'node:fs';\nfs.realpathSync.native = () => { throw new Error('unresolvable'); };\n";
+// neither the real path nor the file identity can be read: only the plain compare is left, so this leg runs on a path that is its own real path (a symlinked temp folder, as on macOS, spells it two ways)
+const NO_REALPATH_NO_STAT = NO_REALPATH + "fs.statSync = () => { throw new Error('unreadable'); };\n";
+test('where neither the real path nor the file identity can be read the guard compares plain paths: a direct run still stages, an import still runs nothing -- RED before 2026-11-12a', () => {
+  const root = fs.realpathSync.native(repo(['alpha']));
+  const pre = path.join(root, 'no-realpath.mjs');
+  fs.writeFileSync(pre, NO_REALPATH_NO_STAT);
+  const flags = ['--max-old-space-size=256', '--import', pathToFileURL(pre).href];
+  const direct = spawnSync(process.execPath, [...flags, path.join(root, 'scripts', 'build-claude-ai-zips.mjs')], { cwd: root, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(direct.status, 0, direct.stdout + direct.stderr);
+  assert.ok(fs.existsSync(path.join(root, 'dist-claude-ai', 'alpha', 'SKILL.md')), 'the entry ran on plain paths');
+  const other = fs.realpathSync.native(repo(['alpha']));
+  const imported = spawnSync(process.execPath, [...flags.slice(0, 1), '--import', pathToFileURL(pre).href, importProbe(other)], { cwd: other, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(imported.status, 0, imported.stdout + imported.stderr);
+  assert.equal(imported.stdout, 'imported\nexitCode=unset\n');
+  assert.equal(fs.existsSync(path.join(other, 'dist-claude-ai')), false, 'an import never runs it, resolved or not');
+});
+
+// 2026-11-12b: the macOS red of 12a. A temp folder there is a symlink (/var -> /private/var): the loader hands import.meta.url the REAL path while process.argv[1] stays as typed, so where the real-path call
+// fails, a compare of plain paths never matched and a direct run staged nothing. The fallback compares file IDENTITY (dev + ino through stat, which follows links) before it falls to plain paths.
+test('where the real path cannot be resolved a run through a symlinked or junctioned folder still stages: the fallback compares file identity, not spelling -- RED on macOS before 2026-11-12b', (t) => {
+  const root = repo(['alpha']);
+  const via = path.join(SANDBOX, 'via' + n++);
+  fs.mkdirSync(via);
+  try { fs.symlinkSync(path.join(root, 'scripts'), path.join(via, 'scripts'), 'junction'); } catch { t.skip('this account cannot make a junction or symlink here'); return; }
+  const pre = path.join(root, 'no-realpath.mjs');
+  fs.writeFileSync(pre, NO_REALPATH);
+  const r = spawnSync(process.execPath, ['--max-old-space-size=256', '--import', pathToFileURL(pre).href, path.join(via, 'scripts', 'build-claude-ai-zips.mjs')], { cwd: root, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(fs.existsSync(path.join(root, 'dist-claude-ai', 'alpha', 'SKILL.md')), 'the build ran through the link with no real path');
+  const other = repo(['alpha']);
+  const imported = spawnSync(process.execPath, ['--max-old-space-size=256', '--import', pathToFileURL(pre).href, importProbe(other)], { cwd: other, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(imported.stdout, 'imported\nexitCode=unset\n', imported.stdout + imported.stderr);
+  assert.equal(fs.existsSync(path.join(other, 'dist-claude-ai')), false, 'an import never runs it on the identity compare either');
+});
+
+// 2026-11-12c (the umbrella auditor's F1 on 571ae22): a volume that gives no file id answers stat with dev 0 and ino 0, and the identity compare then calls ANY two files one, so an import ran the build. A
+// zero ino is no identity at all: the guard falls on to the plain paths, so a direct run still stages and an import still runs nothing.
+const NO_REALPATH_ZERO_STAT = NO_REALPATH + "fs.statSync = () => ({ dev: 0n, ino: 0n });\n";
+test('where stat gives no file id (dev 0, ino 0) the identity compare is no answer: an import runs nothing and a direct run still stages -- RED before 2026-11-12c (auditor F1)', () => {
+  const root = fs.realpathSync.native(repo(['alpha']));
+  const pre = path.join(root, 'no-realpath.mjs');
+  fs.writeFileSync(pre, NO_REALPATH_ZERO_STAT);
+  const other = fs.realpathSync.native(repo(['alpha']));
+  const imported = spawnSync(process.execPath, ['--max-old-space-size=256', '--import', pathToFileURL(pre).href, importProbe(other)], { cwd: other, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(imported.stdout, 'imported\nexitCode=unset\n', imported.stdout + imported.stderr);
+  assert.equal(fs.existsSync(path.join(other, 'dist-claude-ai')), false, 'an import never runs it on a zero file id');
+  const direct = spawnSync(process.execPath, ['--max-old-space-size=256', '--import', pathToFileURL(pre).href, path.join(root, 'scripts', 'build-claude-ai-zips.mjs')], { cwd: root, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(direct.status, 0, direct.stdout + direct.stderr);
+  assert.ok(fs.existsSync(path.join(root, 'dist-claude-ai', 'alpha', 'SKILL.md')), 'the entry still ran on the plain paths');
+});
+
+test('imported from `node -e` (no argv[1] at all) the guard answers "not the entry" without throwing: nothing runs, exit 0 -- 2026-11-12a mutant Z6', () => {
+  const root = repo(['alpha']);
+  const code = `await import(${JSON.stringify(pathToFileURL(path.join(root, 'scripts', 'build-claude-ai-zips.mjs')).href)}); console.log('imported');`;
+  const r = spawnSync(process.execPath, ['--max-old-space-size=256', '--input-type=module', '-e', code], { cwd: root, encoding: 'utf8', timeout: 60000, env: childEnv() });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.stdout, 'imported\n');
+  assert.equal(fs.existsSync(path.join(root, 'dist-claude-ai')), false);
 });
