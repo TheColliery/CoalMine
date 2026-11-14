@@ -25,6 +25,7 @@
 // pre-fix per-file helpers did, made that impossible to express for exactly that test.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export function spawnSandboxed(command, args, { cwd, sandboxDir, timeout = 60_000 } = {}) {
@@ -122,7 +123,41 @@ const HELD = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY']);
 // CWK2-053: rm, now and sleep are injection points for remove-tree.test.mjs (a counted retry loop and a fake clock instead of wall-clock asserts); the defaults are today's behaviour.
 const blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); // a synchronous wait: teardowns run in finally blocks and t.after alike
 const realRm = (dir) => fs.rmSync(dir, { recursive: true, force: true });
-export function removeTree(dir, { budgetMs = TEARDOWN_BUDGET_MS, pollMs = TEARDOWN_POLL_MS, rm = realRm, now = Date.now, sleep = blockingSleep } = {}) {
+// c97 (3.28.3): containment BEFORE any delete. The target is resolved by realpath on both sides (fs.realpathSync.native, the 8.3-aware form, and
+// section 4 of node/runtime.md): an existing target by itself, a missing one by its nearest existing parent with the rest re-appended, so a target
+// that does not exist yet still lands in the right place. An unresolvable root fails closed. The default root is the OS temp folder: a caller that
+// removes anything elsewhere must name its root, and nothing widens the default.
+function resolveForContainment(target) {
+  let probe = path.resolve(target);
+  const rest = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native(probe);
+      return rest.length ? path.join(real, ...rest.reverse()) : real;
+    } catch (e) {
+      if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') throw e;
+      const parent = path.dirname(probe);
+      if (parent === probe) throw e;
+      rest.push(path.basename(probe));
+      probe = parent;
+    }
+  }
+}
+function assertInsideRoot(dir, root) {
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync.native(path.resolve(root));
+  } catch (e) {
+    throw new Error(`removeTree refused: root ${path.resolve(root)} cannot be resolved (${e.code || e.message}); nothing was deleted`);
+  }
+  const realTarget = resolveForContainment(dir);
+  const rel = path.relative(realRoot, realTarget);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new Error(`removeTree refused: target ${realTarget} is not inside its root ${realRoot}; nothing was deleted`);
+  }
+}
+export function removeTree(dir, { root = os.tmpdir(), budgetMs = TEARDOWN_BUDGET_MS, pollMs = TEARDOWN_POLL_MS, rm = realRm, now = Date.now, sleep = blockingSleep } = {}) {
+  assertInsideRoot(dir, root);
   const until = now() + budgetMs;
   for (;;) {
     try { rm(dir); return; } catch (e) {

@@ -14,6 +14,14 @@ import { removeTree } from './test-sandbox.mjs';
 
 const HOLDER = 'console.log("ready"); setTimeout(() => {}, Number(process.argv[1]))';
 
+// c97 (ruling on c96): a fake target for the injected-rm tests lives under a fresh temp root, never the cwd. The guard resolves the
+// nearest existing parent, so the target need not exist, and the injected rm is still reached.
+function freshTempRoot(t) {
+  const base = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-rmfake-'));
+  t.after(() => { try { fs.rmSync(base, { recursive: true, force: true }); } catch { /* the test's own fixture */ } });
+  return base;
+}
+
 function mkRoot(t) {
   const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-rmtree-'));
   t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* a still-held tree is the test's own concern */ } });
@@ -81,14 +89,16 @@ test('removeTree is LOUD: a tree still held when the budget is spent throws the 
 
 test('removeTree retries ONLY a held-folder code: any other error is thrown at once, never waited out', () => {
   const { c, opts } = counted();
+  // c97: a non-string target is refused by the input check before the containment guard and before rm: the TypeError's code is asserted, and rm is never called.
   assert.throws(() => removeTree(12345, { budgetMs: 5000, pollMs: 50, ...opts }), (e) => e.code === 'ERR_INVALID_ARG_TYPE');
+  assert.equal(c.rm, 0, 'a non-string target is refused before rm is ever called');
   assert.equal(c.sleeps, 0, 'a non-held error does not enter the retry loop');
-  assert.equal(c.rm, 1);
 });
 
-test('removeTree retries a held code with a stubbed rm until it clears, then returns (no held tree needed)', () => {
+test('removeTree retries a held code with a stubbed rm until it clears, then returns (no held tree needed)', (t) => {
+  const fake = path.join(freshTempRoot(t), 'x');
   let left = 3; const c = { sleeps: 0 };
-  removeTree('x', { rm: () => { if (left-- > 0) throw Object.assign(new Error('held'), { code: 'EBUSY' }); }, now: () => 0, sleep: () => { c.sleeps++; } });
+  removeTree(fake, { rm: () => { if (left-- > 0) throw Object.assign(new Error('held'), { code: 'EBUSY' }); }, now: () => 0, sleep: () => { c.sleeps++; } });
   assert.equal(c.sleeps, 3, 'three held answers, three sleeps, the fourth attempt cleared');
 });
 
@@ -102,7 +112,8 @@ test('removeTree removes an ordinary tree and tolerates a path that is not there
   removeTree(dir);
 });
 
-test('removeTree waits through its DEFAULT sleep between held-folder retries (E1 t208 #3: a spy on Atomics.wait, not the clock)', () => {
+test('removeTree waits through its DEFAULT sleep between held-folder retries (E1 t208 #3: a spy on Atomics.wait, not the clock)', (t) => {
+  const fake = path.join(freshTempRoot(t), 'x');
   // The default sleep is test-sandbox's blockingSleep, which looks Atomics.wait up at call time. Swapping it for a spy
   // records each wait without any real delay; the original is restored in finally so no other test sees the spy.
   let left = 2, calls = 0;
@@ -110,10 +121,52 @@ test('removeTree waits through its DEFAULT sleep between held-folder retries (E1
   const realWait = Atomics.wait;
   Atomics.wait = (buf, idx, expected, ms) => { waits.push(ms); return 'timed-out'; };
   try {
-    removeTree('x', { pollMs: 60, rm: () => { calls++; if (left-- > 0) throw Object.assign(new Error('held'), { code: 'EBUSY' }); } });
+    removeTree(fake, { pollMs: 60, rm: () => { calls++; if (left-- > 0) throw Object.assign(new Error('held'), { code: 'EBUSY' }); } });
   } finally {
     Atomics.wait = realWait;
   }
   assert.equal(calls, 3, 'two held answers, then it cleared');
   assert.deepEqual(waits, [60, 60], 'the default sleep waited pollMs before each retry; a no-op default records no waits and fails here');
+});
+
+// c96 (3.28.3): removeTree refuses a target outside the root it owns, BEFORE any delete. The bait is a folder this test creates with a marker file,
+// never a drive root, a home folder or a repository root.
+function mkBait(t) {
+  const base = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-rmroot-'));
+  t.after(() => { try { fs.rmSync(base, { recursive: true, force: true }); } catch { /* the test's own fixture */ } });
+  const A = path.join(base, 'a');
+  const B = path.join(base, 'b');
+  fs.mkdirSync(A); fs.mkdirSync(B);
+  fs.writeFileSync(path.join(B, 'marker.txt'), 'keep');
+  return { A, B };
+}
+
+test('removeTree refuses a sibling of its root, reached directly, and keeps it and its marker', (t) => {
+  const { A, B } = mkBait(t);
+  assert.throws(() => removeTree(B, { root: A }), (e) => e instanceof Error && e.message.includes(B) && e.message.includes(A));
+  assert.ok(fs.existsSync(B) && fs.existsSync(path.join(B, 'marker.txt')), 'the sibling and its marker must survive a refusal');
+});
+
+test('removeTree refuses a sibling reached through a .. segment, and keeps it', (t) => {
+  const { A, B } = mkBait(t);
+  const viaDotDot = path.join(A, '..', path.basename(B));
+  assert.throws(() => removeTree(viaDotDot, { root: A }), (e) => e instanceof Error);
+  assert.ok(fs.existsSync(B) && fs.existsSync(path.join(B, 'marker.txt')), 'the sibling reached by .. must survive');
+});
+
+test('removeTree refuses the root itself and keeps it', (t) => {
+  const { A } = mkBait(t);
+  fs.writeFileSync(path.join(A, 'inside.txt'), 'keep');
+  assert.throws(() => removeTree(A, { root: A }), (e) => e instanceof Error);
+  assert.ok(fs.existsSync(path.join(A, 'inside.txt')), 'the root must survive a refusal');
+});
+
+test('removeTree removes a child of its root (positive twin)', (t) => {
+  const { A } = mkBait(t);
+  const child = path.join(A, 'child');
+  fs.mkdirSync(path.join(child, 'deep'), { recursive: true });
+  fs.writeFileSync(path.join(child, 'deep', 'f.txt'), 'x');
+  removeTree(child, { root: A });
+  assert.ok(!fs.existsSync(child));
+  assert.ok(fs.existsSync(A), 'the root itself stays');
 });
