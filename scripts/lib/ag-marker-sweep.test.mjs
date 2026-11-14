@@ -79,7 +79,7 @@ const snapshot = (dir) => fs.readdirSync(dir).sort();
 
 // The AG manifest, read from the copied folder: every hook step with its file, its argv and its timeout. Asserts the wiring shape it relies on.
 function agSteps(plugin) {
-  const manifest = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks.json'), 'utf8').replace(/^﻿/, ''));
+  const raw = fs.readFileSync(path.join(plugin, 'hooks.json'), 'utf8'); const manifest = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   assert.deepEqual(Object.keys(manifest), ['coalmine'], 'the AG manifest has one named group');
   const steps = [];
   for (const event of ['PreInvocation', 'PostToolUse', 'Stop']) {
