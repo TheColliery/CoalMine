@@ -17,6 +17,7 @@ const PLUGIN = path.join(ROOM, 'plugin');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STALE_DAYS = 7; // the factory tempSweepStaleDays: rot-canary-stop.js getTempSweepStaleDays(), no global config in the sandbox
 const STALE_AGE_DAYS = 30; // well past the cutoff, so the planted staleness is not a near-miss
+assert.ok(STALE_AGE_DAYS > STALE_DAYS, 'the planted age must sit past the sweep cutoff');
 const STEP_TIMEOUT_MS = 60_000;
 const N_STALE = 4;
 const M_FRESH = 3;
