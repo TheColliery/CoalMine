@@ -1,6 +1,6 @@
 {
   "name": "coalmine",
-  "owner": { "name": "HetCreep" },
+  "owner": { "name": "TheColliery" },
   "description": "CoalMine — a quality meta-skills suite for coding agents (canary-in-the-coal-mine early warning).",
   "plugins": [
     {

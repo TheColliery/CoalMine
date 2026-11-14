@@ -2,6 +2,8 @@
 name: source-grounding
 description: >-
   Verify version-sensitive facts against live authoritative sources before asserting them in code or answers. Triggers on: "/source-grounding", "source-grounding", "sourcing". Standing rule where your CLAUDE.md or AGENTS.md carries it. Invoke for deep verification work (API signatures, CVEs, model IDs, auth flows, deprecated patterns, security advisories).
+metadata:
+  author: HetCreep <info@thecolliery.org>
 ---
 
 # Source Grounding

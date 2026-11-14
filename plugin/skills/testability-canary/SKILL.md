@@ -2,6 +2,8 @@
 name: testability-canary
 description: >-
   Testability and design decoupling canary — checks for tight coupling, lack of Dependency Injection (DI), hardcoded constructors, Single Responsibility Principle (SRP) violations, and mockability gaps. Triggers on keywords: "/testability-canary", "testability-canary", "testability audit", "decoupling". Use when refactoring coupling, introducing DI, or making code unit-testable.
+metadata:
+  author: HetCreep <info@thecolliery.org>
 ---
 
 # Testability Canary (Decoupling & Mockability Audit)

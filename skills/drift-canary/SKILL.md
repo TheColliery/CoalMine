@@ -2,6 +2,8 @@
 name: drift-canary
 description: >-
   Compatibility and schema drift canary — checks for database schema migration safety, breaking API contract changes, serializable payload mismatches, and backward compatibility drift. Triggers on keywords: "/drift-canary", "drift-canary", "contract drift", "breaking changes". Use when changing DB schemas, API contracts, serialized payloads, or required config keys.
+metadata:
+  author: HetCreep <info@thecolliery.org>
 ---
 
 # Drift Canary (Contract & Schema Drift Audit)

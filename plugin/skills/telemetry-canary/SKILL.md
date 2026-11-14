@@ -2,6 +2,8 @@
 name: telemetry-canary
 description: >-
   Observability and structured logging canary — checks for structured logs (JSON), OpenTelemetry metrics/traces, proper error stack traces, flags empty catches or silent log swallowing, and flags sensitive data written to logs. Triggers on keywords: "/telemetry-canary", "telemetry-canary", "observability audit", "structured logging". Use when adding or changing logging, metrics, tracing, or error-handling code.
+metadata:
+  author: HetCreep <info@thecolliery.org>
 ---
 
 # Telemetry Canary (Observability & Logging Audit)

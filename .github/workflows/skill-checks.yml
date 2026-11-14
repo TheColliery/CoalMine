@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# Use the release-generated copy with reviewed workflow and image pins.
+# The image uses the default OSS validation policy for public and private repos.
+# No internal/external input is needed; report visibility is configured separately.
+# NAMED DIVERGENCE from NVIDIA/SkillEvaluator v0.9.0 ci/bundles/0.9.0/skill-checks.yml (blob 7222c6c7):
+# the `push` trigger is removed; pull_request and workflow_dispatch stay. Reason: without LLM verification
+# the keyless Tier 1 security scan reports pattern matches on skill text as findings (read in this suite
+# as false positives, first at CoalFace v0.15.6), so a push to main that touches a skill would leave a
+# standing red. Ends when the upstream rule is fixed or LLM verification is adopted: then restore `push`.
+name: Skill checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+  # Hosted reports/PR comments: uncomment this, then refresh trusted-caller-blobs.
+  # id-token: write
+# One run per ref: a newer run supersedes an older one. The workflow only reads and reports, so a cancelled run
+# leaves nothing half-done (the canon: one concurrency group per workflow).
+concurrency:
+  group: skill-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  skills:
+    uses: NVIDIA/SkillEvaluator/.github/workflows/evaluate-skills.yml@ba7779ad617c6444c98b6241a75bce92067e9d56
+    with:
+      image: ghcr.io/nvidia/skillevaluator-tier1@sha256:e96e3aaad89bf78c4f3f8c621e88005d18bd7c485b29c0d7945864700e5944e6
+      paths: skills
+      min-score: 70
+      # Enable only after the reviewed baseline manifest reaches the target branch.
+      security-baselines: false
+      scan-mode: auto
+      llm: false

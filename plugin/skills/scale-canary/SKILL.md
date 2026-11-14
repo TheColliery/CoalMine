@@ -2,6 +2,8 @@
 name: scale-canary
 description: >-
   Performance complexity and resource allocation canary — checks for O(N^2) loops, database N+1 query patterns, memory leaks (unbounded collections), and blocking calls in main event loop. Triggers on keywords: "/scale-canary", "scale-canary", "performance audit", "scale audit". Use when writing loops over growing data, DB queries, caches, or async/event-loop code.
+metadata:
+  author: HetCreep <info@thecolliery.org>
 ---
 
 # Scale Canary (Performance & Resource Allocation Audit)

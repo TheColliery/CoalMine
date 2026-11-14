@@ -2,6 +2,8 @@
 name: rot-canary
 description: >-
   Code-health scan — dead code, bug-prone logic, resource leaks, concurrency bugs, silent failures, input-boundary issues, doc rot. Triggers on: "/rot-canary", "rot-canary", "code-health" (legacy aliases: "/rotcanary", "rotcanary"). Auto-runs at session end on touched files (QUICK; autoFixMode decides fixes) via platform hooks — auto-wired by the Claude Code plugin, manual elsewhere. Run manually for fix mode. Reports; fixes on request via choice-gated menu.
+metadata:
+  author: HetCreep <info@thecolliery.org>
 ---
 
 # Rot-Canary
@@ -53,7 +55,7 @@ NEVER auto-fix: live/reachable path · logic change · "API looks wrong" (ground
 | class | step it powers | grant | on denial |
 |---|---|---|---|
 | read | scan the touched/named files for the categories above | `Read`·`Grep`·`Glob`·`Bash` (read-only) | refuse that file, name it in the report — never a clean bill |
-| write | Fix mode's safe/interactive apply, incl. checkpoint → baseline → build+tests → auto-revert only on a NEW failure | `Edit`·`Bash` (checkpoint/build/revert need exec, not just file-write) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done — this skill runs unattended on the Stop hook under `autoFixMode: safe`, with no interactive user to notice a denial, so the report line is the only signal and it says so |
+| write | Fix mode's safe/interactive apply, incl. checkpoint → baseline → build+tests → auto-revert only on a NEW failure | `Edit`·`Bash` (checkpoint/build/revert need exec, not file-write) | report the fix as NOT applied AND the checkpoint/revert as NOT available, never claim done — this skill runs unattended on the Stop hook under `autoFixMode: safe`, with no interactive user to notice a denial, so the report line is the only signal and it says so |
 
 <!-- SHARED:CLASSIFY_BLOCK -->
 
