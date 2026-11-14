@@ -2,6 +2,16 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.2] - 2026-11-14
+
+Advisory skill checks on pull requests, a named skill author and the marketplace owner
+
+### Changed
+- **An advisory `skill-checks` workflow** (NVIDIA SkillEvaluator Tier 1) runs on pull requests and by hand, not on a push to `main`. It is advisory, not a required check. The reason for dropping the push trigger is written in the workflow file.
+- **`metadata.author` in the frontmatter of the nine skills:** `HetCreep <info@thecolliery.org>`.
+- **The marketplace owner** in `.claude-plugin/marketplace.json` is now `TheColliery`.
+- **rot-canary:** its skill text lost the word "just" in one table cell so the rendered skill stays under the size bound. No meaning change.
+
 ## [3.28.1] - 2026-11-10
 
 The Stop hook decides who can answer; headless runs report only
