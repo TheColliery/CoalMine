@@ -263,7 +263,7 @@ test('CLI: a named file past the byte bound, or one that is not a regular file, 
 });
 
 // order 2026-11-03b: a named file is opened before any check of its name, a link is refused rather than followed, and a pipe never holds the open.
-// The link and pipe legs need a file symlink and mkfifo; each skips visibly where the platform or the account cannot make one.
+// The link and pipe legs need a file symlink and a real FIFO; each skips visibly where the account or the volume cannot make one, decided by PROBING the capability (AGENTS.md Hard-won lessons: never by process.platform).
 test('CLI: a named file that is a symlink is refused, never followed -- RED before 2026-11-03b where a file symlink can be made', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdl-'));
   try {
@@ -277,12 +277,12 @@ test('CLI: a named file that is a symlink is refused, never followed -- RED befo
 });
 
 test('CLI: a named file that is a pipe is refused at once, never waited on -- RED before 2026-11-03b where mkfifo exists', async (t) => {
-  if (process.platform === 'win32') { t.skip('no mkfifo on Windows'); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdl-'));
   try {
     const fifo = path.join(dir, 'README.md');
     const mk = spawnSync('mkfifo', [fifo], { timeout: 10000, env: childEnv() });
-    if (mk.status !== 0) { t.skip('mkfifo is not available here'); return; }
+    // the probe: a mkfifo that runs AND leaves a real FIFO (Node's own lstat says so). A mkfifo of an emulation layer (Git Bash on Windows) answers 0 and leaves a plain file.
+    if (mk.status !== 0 || !fs.lstatSync(fifo, { throwIfNoEntry: false })?.isFIFO()) { t.skip('this machine cannot make a real FIFO here (no mkfifo, or one that leaves no pipe)'); return; }
     const r = await run([fifo]);
     assert.equal(r.status, 1, 'the child ended on its own, refusing the pipe: ' + r.stdout + r.stderr);
     assert.ok(r.stdout.split(/\r?\n/).some((l) => l.startsWith('FAIL ') && l.endsWith('README.md: cannot be read (not a regular file)')), r.stdout);
