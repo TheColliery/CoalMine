@@ -2,6 +2,15 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.3] - 2026-11-14
+
+The rot-canary write row says an unattended run reports only
+
+### Fixed
+- **rot-canary's `write` row no longer says the skill applies fixes on an unattended Stop-hook run.** Since 3.28.1 the Stop hook reads `CLAUDE_CODE_SESSION_ATTENDED` and tells the agent report only unless a user can answer; the row now says a fix is applied only where a user can answer (or on a manual run the agent judges), and keeps the denial behaviour (the fix reported as NOT applied, the checkpoint and revert as NOT available, never claimed done). The agent applies this; the hook decides only the text it emits.
+- **rot-canary's cadence line** (`autoFixMode` decides fixes) now says a fix happens only where a user can answer, as `autoFixMode` allows. One duplicate clause about the safe-fix loop left the standing-consent paragraph (the Fix mode list still states it), so the rendered skill stays under the size bound.
+- A test teardown helper refuses to delete outside its temp root.
+
 ## [3.28.2] - 2026-11-14
 
 Advisory skill checks on pull requests, a named skill author and the marketplace owner
