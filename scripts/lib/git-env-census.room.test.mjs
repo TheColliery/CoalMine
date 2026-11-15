@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanGitSpawns, collectScriptsMjs, gitBlobId } from './git-env-census.mjs';
-import { ROOM_PINS } from './git-env-census.pins.mjs';
+import { ROOM_PINS, ASYNC_GIT_PINS } from './git-env-census.pins.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 // The fixtures are assembled from pieces so this file never holds a literal git spawn itself: the census scans scripts/**, this file included.
@@ -70,14 +70,25 @@ test('room rule (R14 LOW-1): keepUserConfig appears only in the installer and in
 // const { exec: sh } = cp, promisify(exec)), and a first argument that is not a git literal (a variable, a ternary, 'git.exe'). None exists in scripts/ today (reachability 0); the
 // census cannot judge such a call by text either, and a git child belongs on spawnSync/execFileSync with gitEnv() (git-env.mjs).
 const ASYNC_GIT = /\b(spawn|execFile|exec|execSync)\s*\(\s*(['"`])git\b/;
+// A file is exempt from this rule only through an ASYNC_GIT_PINS row, and only while its content hashes to the row's blob (gitBlobId, the census's own hash).
 function asyncGitSpawns(files) {
-  return files.filter((f) => ASYNC_GIT.test(f.text)).map((f) => f.rel);
+  return files.filter((f) => ASYNC_GIT.test(f.text) && !ASYNC_GIT_PINS.some((p) => p.rel === f.rel && p.blob === gitBlobId(f.text))).map((f) => f.rel);
 }
 
 test('room rule (09a MEDIUM-1): no scripts/**/*.mjs file starts a git child with spawn, execFile, exec or execSync', () => {
   const files = collectScriptsMjs(repo);
   assert.ok(files.length > 20, 'the rule walked ' + files.length + ' files: the file set is not the room');
-  assert.deepEqual(asyncGitSpawns(files), [], 'a git child is started by an async or shell spawner the canon census cannot read: use spawnSync/execFileSync with gitEnv()');
+  assert.deepEqual(asyncGitSpawns(files), [], 'a git child is started by an async or shell spawner the canon census cannot read: use spawnSync/execFileSync with gitEnv(), or pin the file by blob in ASYNC_GIT_PINS');
+});
+
+test('room rule (09a MEDIUM-1) PINNED: every ASYNC_GIT_PINS row exempts a live file that still holds its async git spawn (a pin that exempts nothing is stale)', () => {
+  const live = collectScriptsMjs(repo);
+  for (const p of ASYNC_GIT_PINS) {
+    const f = live.find((x) => x.rel === p.rel);
+    assert.ok(f, 'the pinned file ' + p.rel + ' is not in the live set: the pin is stale');
+    assert.ok(ASYNC_GIT.test(f.text), 'the pinned file ' + p.rel + ' no longer starts an async git child: the pin is stale');
+    assert.equal(gitBlobId(f.text), p.blob, 'the pinned file ' + p.rel + ' no longer hashes to its pin: re-derive the pin');
+  }
 });
 
 // RED-FIRST, one control leg per spawner: each planted shape is a git child the canon census passes with calls 0, and this rule must flag it. The calls are
@@ -100,6 +111,14 @@ for (const [name, call] of SHAPES) {
     assert.equal(canon.calls, 0, 'the canon census now reads this spawner: the room rule is redundant for ' + name + ' and should be retired');
   });
 }
+
+// RED-FIRST for the pins: a pinned rel whose text no longer hashes to the pin's blob is flagged again (one edited byte re-arms the rule).
+test('room rule (09a MEDIUM-1) RED-FIRST: a pinned file whose text no longer hashes to its blob is flagged again', () => {
+  const pin = ASYNC_GIT_PINS[0];
+  const edited = { rel: pin.rel, text: IMP + SHAPES[0][1] };
+  assert.notEqual(gitBlobId(edited.text), pin.blob, 'control: the planted text is not the pinned content');
+  assert.deepEqual(asyncGitSpawns([edited]), [pin.rel], 'the room rule exempted a pinned file whose content changed');
+});
 
 test('room rule (09a MEDIUM-1): the sync spawners and non-git children are not flagged (no false positive)', () => {
   const ok = [

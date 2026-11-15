@@ -616,15 +616,31 @@ function inAssignTarget(ctx, n) {
   const j = s < 0 ? -1 : decide[s];
   if (j < 0) return false;
   if (!isP(toks[j], '(')) return true; // a [ or { whose closer is followed by =
-  // the ( of a for head: n is on its left when an `of` or `in` comes before the first `;`
+  // the ( of a for head: n is on its left when the head's first top-level `of`, `in` or `;` is an `of` or `in` and comes after n
+  const kw = forHeadKeyword(ctx, j);
+  return kw !== null && kw.binds && n < kw.at;
+}
+
+// For the ( of a for head at j: { at, binds } for its first top-level `of`, `in` or `;` (binds: it is `of` or `in`), or null when the head has none or
+// does not close. Found once per head and cached, so asking it for every reference in the head is linear, never a walk to the head's end each time.
+const FOR_KW = new WeakMap();
+function forHeadKeyword(ctx, j) {
+  const { toks, m } = ctx;
+  let cache = FOR_KW.get(toks);
+  if (!cache) { cache = new Map(); FOR_KW.set(toks, cache); }
+  if (cache.has(j)) return cache.get(j);
+  let found = null;
   const c = m.get(j);
-  if (c === undefined) return false;
-  for (let k = n; k < c; k++) {
-    if (isOpenerTok(toks[k])) { const e = m.get(k); if (e === undefined) return false; k = e; continue; }
-    if (isP(toks[k], ';')) return false;
-    if (isId(toks[k], 'of') || isId(toks[k], 'in')) return true;
+  if (c !== undefined) {
+    for (let k = j + 1; k < c; k++) {
+      CENSUS_WORK.steps++;
+      if (isOpenerTok(toks[k])) { const e = m.get(k); if (e === undefined) break; k = e; continue; }
+      if (isP(toks[k], ';')) { found = { at: k, binds: false }; break; }
+      if (isId(toks[k], 'of') || isId(toks[k], 'in')) { found = { at: k, binds: true }; break; }
+    }
   }
-  return false;
+  cache.set(j, found);
+  return found;
 }
 
 // A callback method is read-only only when its one argument is an arrow with at most one parameter: a third parameter hands
@@ -1121,10 +1137,17 @@ export function censusGitSpawns(files, exempt = CENSUS_EXEMPT) {
 
 // Real filesystem walk of scripts/**/*.mjs, `rel` relative to `repo` so a finding names the
 // exact path the reviewer's own manual census used (a forward-slash path under the repository's scripts folder).
-// It reads regular files only, each within MAX_SOURCE_BYTES (ours, far above any script the flock ships): a symlink or junction anywhere under scripts/, a .mjs
-// that is not a regular file and a .mjs past the budget are refused by name with a throw, never followed, skipped or read (Deep Scan 2026-11-01: a .mjs link
-// to an endless device made the census read without end). The file type is checked again on the open descriptor, so a swap after the listing is caught too.
+// It reads regular files only, each within MAX_SOURCE_BYTES (ours, far above any script the flock ships): a symlink or junction the listing shows under
+// scripts/, a .mjs that is not a regular file and a .mjs past the budget are refused by name with a throw, never followed, skipped or read. The walk trusts
+// the listing's types for a FOLDER: a folder swapped to a link after it is listed is walked through (readdirSync follows it), and every file read under
+// it is still checked as below and read under the budget (Deep Scan 2026-11-01: a .mjs link
+// to an endless device made the census read without end). The open refuses a link where the platform can (O_NOFOLLOW) and never waits on a pipe
+// (O_NONBLOCK); after it, the descriptor must be a regular file and the file the name names NOW (a name that is a link, or holds another file, is refused
+// before any read, on every platform). The size is checked on the descriptor, and the read itself stops at the budget plus one byte, so a file that grows
+// after the check is refused too. The same shape as release-notes.mjs's readChangelog.
 export const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
+const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
+const LINK_OPEN_ERRORS = new Set(['ELOOP', 'EMLINK', 'EFTYPE']); // what an O_NOFOLLOW open of a link fails with (Linux and macOS, FreeBSD, NetBSD)
 export function collectScriptsMjs(repo) {
   const scriptsDir = path.join(repo, 'scripts');
   const files = [];
@@ -1136,12 +1159,25 @@ export function collectScriptsMjs(repo) {
       if (e.isDirectory()) { walk(p); continue; }
       if (!e.name.endsWith('.mjs')) continue;
       if (!e.isFile()) throw new Error(`${rel} is not a regular file: the census refuses it by name and never reads it`);
-      const fd = fs.openSync(p, 'r');
+      const linkRefused = () => new Error(`${rel} is a symlink or junction: the census refuses it by name and never follows it`);
+      let fd;
+      try { fd = fs.openSync(p, OPEN_FLAGS); } catch (err) { throw err && LINK_OPEN_ERRORS.has(err.code) ? linkRefused() : err; }
       try {
-        const st = fs.fstatSync(fd);
+        const st = fs.fstatSync(fd, { bigint: true });
+        const named = fs.lstatSync(p, { bigint: true });
+        if (named.isSymbolicLink()) throw linkRefused();
         if (!st.isFile()) throw new Error(`${rel} is not a regular file: the census refuses it by name and never reads it`);
+        if (named.dev !== st.dev || named.ino !== st.ino) throw new Error(`${rel} changed between the listing and the read: the census refuses it by name and never reads it`);
         if (st.size > MAX_SOURCE_BYTES) throw new Error(`${rel} is ${st.size} bytes, past the census budget of ${MAX_SOURCE_BYTES}: refused by name, not read`);
-        files.push({ rel, text: fs.readFileSync(fd, 'utf8') });
+        const chunks = [];
+        let total = 0;
+        const chunk = Buffer.alloc(65536);
+        for (let n; (n = fs.readSync(fd, chunk, 0, Math.min(chunk.length, MAX_SOURCE_BYTES + 1 - total), null)) > 0;) {
+          chunks.push(Buffer.from(chunk.subarray(0, n)));
+          total += n;
+          if (total > MAX_SOURCE_BYTES) throw new Error(`${rel} is more than ${MAX_SOURCE_BYTES} bytes by the read (it grew after the size check), past the census budget of ${MAX_SOURCE_BYTES}: refused by name, not used`);
+        }
+        files.push({ rel, text: Buffer.concat(chunks).toString('utf8') });
       } finally { fs.closeSync(fd); }
     }
   })(scriptsDir);

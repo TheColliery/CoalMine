@@ -23,18 +23,31 @@ const env = (k, d) => (Number(process.env[k]) > 0 ? Number(process.env[k]) : d);
 // A front door is a page a visitor reads, so a named file is read only as a regular file under a byte bound (ours: 4 MiB, far past any README),
 // checked on the open descriptor before the read: a device or a pipe in its place has no end to read to. The open comes first (a stat of the name
 // before it is a race), refuses a link where the platform can (O_NOFOLLOW) and never waits on a pipe (O_NONBLOCK); where it cannot (Windows), the
-// name is checked for a link after the open. The same shape as release-notes.mjs's readChangelog.
+// name is checked for a link after the open. The descriptor must also be the file the name names now (dev and ino): a name that holds another file is
+// refused before any read. The read itself stops at the bound plus one byte, so a file that grows after the size check is refused too. The same shape
+// as release-notes.mjs's readChangelog.
 const MAX_FILE_BYTES = 4194304;
 const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
+const LINK_OPEN_ERRORS = new Set(['ELOOP', 'EMLINK', 'EFTYPE']); // what an O_NOFOLLOW open of a link fails with (Linux and macOS, FreeBSD, NetBSD)
 function readBounded(f) {
   const notRegular = () => Object.assign(new Error('not a regular file'), { code: 'not a regular file' });
   let fd;
-  try { fd = fs.openSync(f, OPEN_FLAGS); } catch (e) { throw e && e.code === 'ELOOP' ? notRegular() : e; }
+  try { fd = fs.openSync(f, OPEN_FLAGS); } catch (e) { throw e && LINK_OPEN_ERRORS.has(e.code) ? notRegular() : e; }
   try {
-    const st = fs.fstatSync(fd);
-    if (!st.isFile() || fs.lstatSync(f).isSymbolicLink()) throw notRegular();
+    const st = fs.fstatSync(fd, { bigint: true });
+    const named = fs.lstatSync(f, { bigint: true });
+    if (!st.isFile() || named.isSymbolicLink()) throw notRegular();
+    if (named.dev !== st.dev || named.ino !== st.ino) throw Object.assign(new Error('changed'), { code: 'changed between the check and the read: refused, never read' });
     if (st.size > MAX_FILE_BYTES) throw Object.assign(new Error('too large'), { code: `${st.size} bytes, past the byte bound of ${MAX_FILE_BYTES}` });
-    return fs.readFileSync(fd, 'utf8');
+    const chunks = [];
+    let total = 0;
+    const chunk = Buffer.alloc(65536);
+    for (let n; (n = fs.readSync(fd, chunk, 0, Math.min(chunk.length, MAX_FILE_BYTES + 1 - total), null)) > 0;) {
+      chunks.push(Buffer.from(chunk.subarray(0, n)));
+      total += n;
+      if (total > MAX_FILE_BYTES) throw Object.assign(new Error('too large'), { code: `more than ${MAX_FILE_BYTES} bytes by the read (it grew after the size check), past the byte bound of ${MAX_FILE_BYTES}` });
+    }
+    return Buffer.concat(chunks).toString('utf8');
   } finally { fs.closeSync(fd); }
 }
 

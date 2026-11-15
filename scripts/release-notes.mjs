@@ -5,7 +5,7 @@
 // (node/runtime.md sec 1's own scope note) -- a crash here is an ordinary uncaught exception,
 // non-zero exit, no false green; static top-level lib imports are fine.
 import fs from 'node:fs';
-// UMB-182: the workflow also hands in PREVIOUS_STABLE_TAG (`git describe --exclude='*-*'`, '' on a
+// UMB-182: the workflow also hands in PREVIOUS_STABLE_TAG (the nearest stable tag of this tag's own line, found by its `git log --topo-order` walk; '' on a
 // first stable release) and LATEST_TAG (the repo's current Latest, '' when there is none). Unset
 // behaves as '' -- the heading check is then skipped and says so -- so the canon workflow always sets both.
 import { spawnSync } from 'node:child_process';
@@ -139,9 +139,11 @@ function main() {
   for (const [name, value] of [['PREVIOUS_STABLE_TAG', prev], ['LATEST_TAG', latest]]) {
     if (!value) continue;
     const p = parseReleaseTag(value);
-    const ok = pkg ? p && !p.pre && (name === 'LATEST_TAG' || p.pkg === pkg) : BARE.test(value);
+    // the current Latest may sit on any line, a bare tag's included: the launch form never asks makeLatestFlag, so a bare launch beside a <pkg>-vX.Y.Z
+    // Latest is posted (the workflow's launch filter lets it through); a STABLE bare tag there is refused by makeLatestFlag, which never guesses the line
+    const ok = name === 'LATEST_TAG' ? Boolean(p && !p.pre) : pkg ? p && !p.pre && p.pkg === pkg : BARE.test(value);
     if (!ok) {
-      const form = !pkg ? 'vX.Y.Z tag' : name === 'LATEST_TAG' ? 'vX.Y.Z tag (or <pkg>-vX.Y.Z)' : `${pkg}-vX.Y.Z tag of the same package line`;
+      const form = name === 'LATEST_TAG' ? 'vX.Y.Z tag (or <pkg>-vX.Y.Z)' : !pkg ? 'vX.Y.Z tag' : `${pkg}-vX.Y.Z tag of the same package line`;
       console.error(`release-notes: ${name} "${value}" is not a bare ${form} -- refusing to guess`);
       process.exitCode = 1;
       return;

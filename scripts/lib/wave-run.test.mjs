@@ -419,7 +419,9 @@ const clockedLimits = (clock) => ({ ...LIMITS, fileTimeoutMs: clock * 2, deadlin
 const SLOW_START_MS = 1500;
 fs.writeFileSync(path.join(SANDBOX, 'slow-start.preload.mjs'), 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ' + SLOW_START_MS + ');' + String.fromCharCode(10));
 const SLOW_START_ENV = { NODE_OPTIONS: '--import ' + pathToFileURL(path.join(SANDBOX, 'slow-start.preload.mjs')).href };
-// A solo command-line run of the passing file under `extra`, timed: the measurement a command-line test sizes its clock from.
+// A solo command-line run of the passing file under `extra`, timed: the measurement a command-line test sizes its clock from. The clock is sized from
+// this live reading on purpose: a fixed clock (2,000 ms at 442f359) killed the passing file on a loaded runner, and the slow-start witness below shows
+// a fixed clock failing where the sized one passes. Load moves the reading and the clock together, so the outcome does not depend on it.
 const soloCliMs = (extra) => {
   const t0 = Date.now();
   const solo = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass')], extra);

@@ -91,7 +91,7 @@ test('release-notes.mjs: CHANGELOG.md missing fails loud, exit 1, names the prob
   assert.match(res.stderr, /could not read CHANGELOG\.md/);
 });
 
-// UMB-182: the workflow passes PREVIOUS_STABLE_TAG (git describe) and LATEST_TAG (the repo's current Latest).
+// UMB-182: the workflow passes PREVIOUS_STABLE_TAG (the nearest stable tag of the same line, by its git log walk) and LATEST_TAG (the repo's current Latest).
 const TWO = '## [1.2.0] - 2026-09-22\n\nNew.\n\n### Added\n- x\n\n## [1.1.0] - 2026-09-01\n\nOld.\n';
 
 test('release-notes.mjs: release-latest.txt is "true" with no Latest yet and "false" for a tag older than Latest -- RED before UMB-182', () => {
@@ -703,3 +703,18 @@ test('release-notes.mjs: importing it runs nothing -- no output, no files, exit 
   assert.equal(entry.status, 0, entry.stdout + entry.stderr); assert.equal(fs.existsSync(path.join(dir, 'release-title.txt')), true);
 });
 const ENTRY_FOR_IMPORT = '## [1.2.0] - 2026-09-22\n\nA test-only CLI wiring proof.\n\n### Added\n- x\n';
+
+// The workflow's launch filter lets a bare launch through in a repository whose Latest sits on a package line (<pkg>-vX.Y.Z); the launch form never takes
+// Latest, so the script must post it too. A STABLE bare tag beside a package-line Latest still refuses: makeLatestFlag never guesses which line is Latest.
+test('release-notes.mjs: a bare launch-form tag in a repository whose current Latest is a <pkg>-vX.Y.Z tag is posted, never Latest; a stable bare tag there still refuses', () => {
+  const dir = scratchWithLib();
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), LAUNCH);
+  const res = run(dir, { GITHUB_REF_NAME: 'main', RELEASE_TAG: 'v0.1.0-beta.1', LAUNCH_FORM: 'true', PREVIOUS_STABLE_TAG: '', LATEST_TAG: 'core-v2.0.0' });
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-latest.txt'), 'utf8'), 'false');
+  const stableDir = scratchWithLib();
+  fs.writeFileSync(path.join(stableDir, 'CHANGELOG.md'), TWO);
+  const stable = run(stableDir, { GITHUB_REF_NAME: 'v1.2.0', PREVIOUS_STABLE_TAG: 'v1.1.0', LATEST_TAG: 'core-v2.0.0' });
+  assert.equal(stable.status, 1, stable.stderr);
+  assert.equal(fs.existsSync(path.join(stableDir, 'release-title.txt')), false);
+});

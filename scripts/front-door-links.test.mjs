@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { extractLinks, probe, judge, checkFiles } from './lib/front-door-links.mjs';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), 'front-door-links.mjs');
@@ -286,5 +286,44 @@ test('CLI: a named file that is a pipe is refused at once, never waited on -- RE
     const r = await run([fifo]);
     assert.equal(r.status, 1, 'the child ended on its own, refusing the pipe: ' + r.stdout + r.stderr);
     assert.ok(r.stdout.split(/\r?\n/).some((l) => l.startsWith('FAIL ') && l.endsWith('README.md: cannot be read (not a regular file)')), r.stdout);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// A file that grows after its size check: a preload makes fstat report 0 bytes for every regular file, standing in for a writer that appends after the
+// check. The read itself must stop at the bound plus one byte; a read to the end of the file would take it all.
+test('CLI: a named file that grows past the byte bound after its size check is a FAIL line: the read stops at the bound', async () => {
+  const bound = Number(/^const MAX_FILE_BYTES = ([0-9]+);/m.exec(fs.readFileSync(CLI, 'utf8'))?.[1]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdl-'));
+  try {
+    const big = path.join(dir, 'README.md');
+    fs.writeFileSync(big, 'x'.repeat(bound + 1));
+    const preload = path.join(dir, 'size-zero.preload.mjs');
+    fs.writeFileSync(preload, [
+      "import fs from 'node:fs';",
+      'const orig = fs.fstatSync;',
+      "fs.fstatSync = function (...a) { const s = orig.apply(this, a); if (s.isFile()) Object.defineProperty(s, 'size', { value: 0 }); return s; };",
+    ].join('\n'));
+    const r = await run([big], { NODE_OPTIONS: '--import ' + pathToFileURL(preload).href });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^FAIL .*README\.md: cannot be read \(more than \d+ bytes by the read/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// The open lands on another regular file than the one the name holds (a swap between the open and the check, or a redirected open): the reader compares
+// the descriptor with the name (dev and ino) and refuses before any read, the readChangelog shape. A preload opens an empty file for this one name.
+test('CLI: a named file whose open lands on another file than its name holds is a FAIL line, never read', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdl-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'README.md'), '# x\n');
+    fs.writeFileSync(path.join(dir, 'other.md'), '');
+    const preload = path.join(dir, 'redirect.preload.mjs');
+    fs.writeFileSync(preload, [
+      "import fs from 'node:fs';",
+      'const orig = fs.openSync;',
+      "fs.openSync = function (p, ...rest) { return orig.call(this, String(p).endsWith('README.md') ? String(p).slice(0, -'README.md'.length) + 'other.md' : p, ...rest); };",
+    ].join('\n'));
+    const r = await run([path.join(dir, 'README.md')], { NODE_OPTIONS: '--import ' + pathToFileURL(preload).href });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^FAIL .*README\.md: cannot be read \(changed between the check and the read/m);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
