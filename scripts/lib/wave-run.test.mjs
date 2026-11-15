@@ -259,8 +259,8 @@ test('refuses a run with no finite clock, a duplicate file or an empty roster: t
 
 // ---- the reading itself: the byte-equal core, called as a child --------------------------------------------------------------------------
 // CoalFace's machine-reading.mjs, adopted by blob id and NEVER edited here (the owner's rule, BB-87: an improvement found here goes back to CoalFace, whose head builds it in its own belt,
-// and this folder re-adopts by blob id). Source: CoalFace commit 82f8eaf (the file at skills/coalface/scripts/machine-reading.mjs, its plugin/ twin the same blob).
-const MACHINE_READING_BLOB = '5f861a3427e0c06ee677e0e3fe59c912237a86ab'; // re-pinned 2026-10-15 (the 15b courier): CoalFace 82f8eaf, skills/coalface/scripts/machine-reading.mjs; was 1c550b66 (62184163)
+// and this folder re-adopts by blob id). Source: CoalFace commit 87e5cfb (the file at skills/coalface/scripts/machine-reading.mjs, its plugin/ twin the same blob).
+const MACHINE_READING_BLOB = '12192a84b9bcce37573e236410b2b16da8db5257'; // re-pinned 2026-11-15: CoalFace 87e5cfb, skills/coalface/scripts/machine-reading.mjs (the entry guard compares real paths); was 5f861a34 (82f8eaf)
 test('machine-reading.mjs is CoalFace\'s file byte for byte (its git blob id, line endings as the repository stores them) -- RED before BB-87', () => {
   const text = fs.readFileSync(MACHINE_READING).toString('utf8').replace(/\r\n/g, '\n');
   const body = Buffer.from(text, 'utf8');
@@ -303,6 +303,23 @@ test('defaultRead against the real core: one reading comes back as BREATHE or WA
   assert.equal(r.error, undefined);
   assert.equal(typeof r.raw.thresholds.cpuMaxPct, 'number');
   assert.equal(typeof r.raw.thresholds.memMinPct, 'number');
+});
+
+// A runner whose checkout root is reached through a link (a junction on Windows, a symlinked folder elsewhere, as on a CI runner) starts the core by
+// the linked path. Node realpaths the module's own URL but keeps argv[1] as typed, so a guard that compared the two raw ran nothing and every reading
+// came back UNMEASURED. The link points at a sandbox copy of the core, never at this folder, and is removed by its own test. The capability is
+// probed: a volume that refuses the link skips this leg visibly.
+test('defaultRead against the real core started through a linked folder: still BREATHE or WAIT, never UNMEASURED', async (t) => {
+  const real = path.join(SANDBOX, 'reader-real');
+  const linked = path.join(SANDBOX, 'reader-linked');
+  fs.mkdirSync(real);
+  fs.copyFileSync(MACHINE_READING, path.join(real, 'machine-reading.mjs'));
+  try { fs.symlinkSync(real, linked, process.platform === 'win32' ? 'junction' : 'dir'); } catch (e) { t.skip(`this volume refuses a folder link (${e.code})`); return; }
+  try {
+    const r = await defaultRead({ readerPath: path.join(linked, 'machine-reading.mjs'), timeoutMs: LIMITS.fileTimeoutMs })({ running: 1 });
+    assert.ok(['BREATHE', 'WAIT'].includes(r.verdict), `${r.verdict} ${r.error ?? ''}`);
+    assert.equal(r.error, undefined);
+  } finally { fs.unlinkSync(linked); }
 });
 
 // ---- the command line -----------------------------------------------------------------------------------------------------------------

@@ -24,7 +24,8 @@
 
 import fs from 'node:fs';
 import os from 'node:os';
-import { pathToFileURL } from 'node:url';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const DEFAULTS = Object.freeze({ cpuMaxPct: 80, memMinPct: 10 });
 const SAMPLE_MS = 400; // CPU sample window: long enough to move os.cpus() times, short enough to run before every wave
@@ -203,7 +204,31 @@ async function main() {
   process.exitCode = r.verdict === 'BREATHE' ? EXIT_BREATHE : EXIT_WAIT;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// dev:ino of what a path names, or null where the volume gives none (stat fails, or answers ino 0: a zero id would make any two files one)
+function fileIdentity(p) {
+  try {
+    const s = fs.statSync(p, { bigint: true });
+    return s.ino === 0n ? null : `${s.dev}:${s.ino}`;
+  } catch {
+    return null;
+  }
+}
+
+// Node realpaths the module, argv[1] keeps the caller's spelling (a link's): compare both sides through one resolver. Where a real path cannot be resolved, compare file
+// identity (stat follows a link, so a symlinked folder still matches); where stat gives no identity, the plain resolved paths are the last resort.
+function isMainModule(url) {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(url);
+  try {
+    return fs.realpathSync.native(self) === fs.realpathSync.native(process.argv[1]);
+  } catch {
+    const a = fileIdentity(self);
+    const b = fileIdentity(process.argv[1]);
+    return a !== null && b !== null ? a === b : path.resolve(self) === path.resolve(process.argv[1]);
+  }
+}
+
+if (isMainModule(import.meta.url)) {
   main().catch((e) => {
     process.stderr.write(`machine-reading: could not read this machine (${e && e.code ? e.code : 'error'}). Re-run it, or report at github.com/TheColliery/CoalFace/issues.\n`);
     process.exitCode = EXIT_ERROR;
