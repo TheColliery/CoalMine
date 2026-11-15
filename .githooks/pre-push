@@ -18,22 +18,26 @@
 # A scan that cannot run fails the hook (fail closed, hooks-safety.md 1.0): a missing node or script blocks.
 node scripts/secret-gate.mjs --pre-push "--remote=$1" || exit 1
 
-if [ -f scripts/verify.mjs ]; then
-  # Single guarded node-test gate (existsSync precheck + orphan check + fail-loud);
-  # scripts/test.mjs owns the test list so CI and the hooks cannot drift apart.
-  node scripts/test.mjs || exit 1
-  # PowerShell parity tests (shared ps-config + the spawned rot-canary PS hooks) — skip
-  # if pwsh is absent so the gate still runs on a box without PowerShell; fail loud when present.
-  if command -v pwsh >/dev/null 2>&1; then
-    pwsh -NoProfile -File scripts/lib/ps-config.test.ps1 || exit 1
-    pwsh -NoProfile -File scripts/lib/ps-hooks.test.ps1 || exit 1
-  else
-    # gold-standard 2026-08-18/19 F12 -- see the matching comment in .githooks/pre-commit.
-    echo "SKIP: PS suites not run (pwsh absent -- CI covers them)"
+# CW-071 (CoalWorks chief ruling): fail closed. A missing gate script refuses the push; it never passes it silently.
+for gate in scripts/test.mjs scripts/verify.mjs scripts/consistency.mjs; do
+  if [ ! -f "$gate" ]; then
+    echo "pre-push: $gate is missing, so the gate cannot run; restore it (git checkout -- scripts/) and push again" >&2
+    exit 1
   fi
-  node scripts/verify.mjs || exit 1
-  # Doctrine-mirror + stamp check — see the matching comment in .githooks/pre-commit.
-  node scripts/consistency.mjs
-  exit $?
+done
+# The gate scripts were checked above; this is the test gate (fail loud).
+# scripts/test.mjs owns the test list so CI and the hooks cannot drift apart.
+node scripts/test.mjs || exit 1
+# PowerShell parity tests (shared ps-config + the spawned rot-canary PS hooks) — skip
+# if pwsh is absent so the gate still runs on a box without PowerShell; fail loud when present.
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -File scripts/lib/ps-config.test.ps1 || exit 1
+  pwsh -NoProfile -File scripts/lib/ps-hooks.test.ps1 || exit 1
+else
+  # gold-standard 2026-08-18/19 F12 -- see the matching comment in .githooks/pre-commit.
+  echo "SKIP: PS suites not run (pwsh absent -- CI covers them)"
 fi
-exit 0
+node scripts/verify.mjs || exit 1
+# Doctrine-mirror + stamp check — see the matching comment in .githooks/pre-commit.
+node scripts/consistency.mjs
+exit $?
