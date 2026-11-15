@@ -26,8 +26,10 @@ name: Coverage
 # PRIOR report standing (stale, never corrupt), the same class as codeql.yml. The
 # comparison baseline comes from the push-to-main run, so both triggers are needed.
 #
-# Every step is gated on scripts/test.mjs existing (same gate as ci.yml's Test step): a bare
-# "Use this template" click has no scripts/ yet, and this job then skips cleanly, never red.
+# Every step after the checkout is gated on scripts/test.mjs existing (the gate this template's ci.yml Test step uses; a room whose
+# ci.yml gates differently keeps the two in step; the
+# checkout is not, it is cheap and the gate reads the tree): a bare "Use this template" click has no scripts/ yet,
+# and this job then skips cleanly, never red.
 
 on:
   push:
