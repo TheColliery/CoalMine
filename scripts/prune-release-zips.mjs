@@ -11,7 +11,9 @@
 // Needs GITHUB_TOKEN (contents: write -- the same permission the calling job already holds
 // to create the Release and upload assets) and GITHUB_REPOSITORY ("owner/repo"), both standard
 // GitHub Actions environment variables -- never invented ad hoc.
-import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { selectAssetsToPrune } from './lib/release-prune.mjs';
 
 const API = 'https://api.github.com';
@@ -77,7 +79,31 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// dev:ino of what a path names, or null where the volume gives none (stat fails, or answers ino 0: a zero id would make any two files one)
+function fileIdentity(p) {
+  try {
+    const s = fs.statSync(p, { bigint: true });
+    return s.ino === 0n ? null : `${s.dev}:${s.ino}`;
+  } catch {
+    return null;
+  }
+}
+
+function isMainModule(url) {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(url);
+  try {
+    return fs.realpathSync.native(self) === fs.realpathSync.native(process.argv[1]);
+  } catch {
+    // the real path cannot be resolved: compare file identity (stat follows a link, so a symlinked temp folder still matches); where stat gives no identity (it fails, or a volume answers ino 0) the
+    // plain paths are the last resort
+    const a = fileIdentity(self);
+    const b = fileIdentity(process.argv[1]);
+    return a !== null && b !== null ? a === b : path.resolve(self) === path.resolve(process.argv[1]);
+  }
+}
+
+if (isMainModule(import.meta.url)) {
   main().catch((e) => {
     console.error(`prune-release-zips: ${e.message}`);
     process.exitCode = 1;

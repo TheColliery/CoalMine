@@ -143,7 +143,7 @@ function main(argv) {
   console.log(`lcov-to-cobertura: ${records.length} file(s), ${t.lc}/${t.lv} lines covered -> ${outFile}`);
 }
 
-// Run only as an entry point, never on import (the test imports the two functions above).
+// Run only as an entry point, never on import (scripts/lcov-to-cobertura.test.mjs in the canon repo imports parseLcov and toCobertura above).
 const entry = process.argv[1] && path.resolve(process.argv[1]);
 if (entry && fs.existsSync(entry) && fs.realpathSync.native(entry) === fs.realpathSync.native(fileURLToPath(import.meta.url))) {
   main(process.argv);
