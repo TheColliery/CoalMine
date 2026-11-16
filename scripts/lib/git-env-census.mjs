@@ -609,7 +609,7 @@ function nearestOpener(ctx, n) {
 
 // true when token n is inside the target of a destructuring assignment ({ a: x.y } = o, [x.y] = a) or the left of a for-in / for-of head.
 function inAssignTarget(ctx, n) {
-  const { toks, m } = ctx;
+  const { toks } = ctx;
   CENSUS_WORK.steps++;
   const { open, decide } = upIndex(ctx);
   const s = n > 0 ? open[n - 1] : -1;
@@ -636,7 +636,9 @@ function forHeadKeyword(ctx, j) {
       CENSUS_WORK.steps++;
       if (isOpenerTok(toks[k])) { const e = m.get(k); if (e === undefined) break; k = e; continue; }
       if (isP(toks[k], ';')) { found = { at: k, binds: false }; break; }
-      if (isId(toks[k], 'of') || isId(toks[k], 'in')) { found = { at: k, binds: true }; break; }
+      // `of` is not reserved, so the head's first token can be an object named `of` (`for (of.GIT_DIR of ...)`), never the keyword (t340)
+      const keyword = k > j + 1;
+      if (keyword && (isId(toks[k], 'of') || isId(toks[k], 'in'))) { found = { at: k, binds: true }; break; }
     }
   }
   cache.set(j, found);

@@ -424,7 +424,12 @@ export function fingerprint(file, pattern, value) {
 function readLine(line, nulDrop = true) {
   const found = matchLine(line);
   if (!nulDrop || !line.includes(NUL)) return found;
-  for (const h of matchLine(line.split(NUL).join(''))) if (!found.some((f) => f.pattern === h.pattern && f.value === h.value)) found.push(h);
+  // a Set, not a scan of `found` per hit: a line of many distinct tokens (each NUL-separated) would otherwise cost the square of their count
+  const seen = new Set(found.map((f) => `${f.pattern}${NUL}${f.value}`));
+  for (const h of matchLine(line.split(NUL).join(''))) {
+    const k = `${h.pattern}${NUL}${h.value}`;
+    if (!seen.has(k)) { seen.add(k); found.push(h); }
+  }
   return found;
 }
 
@@ -449,16 +454,16 @@ export function scanText(text, file = '', opts = {}) {
 // the decoded text scanned. THE RULE for "these bytes are wide text": they open with a byte-order mark (FF FE or FE FF for UTF-16, FF FE 00 00 or
 // 00 00 FE FF for UTF-32), or their NULs fall on a code unit's high-byte positions at least WIDE_SKEW times as often as on the other positions
 // (ASCII in UTF-16 puts its NUL on one byte parity; in UTF-32 on three of four positions), and number at least WIDE_MIN_NULS on each high-byte
-// position. Bytes that are not text scatter their NULs over every
-// position, so neither the decoded readings nor the NUL-removed reading is run on them and neither can add a hit to them. A run whose alignment is
-// unknown (a hunk of added lines starts wherever git's line break fell, even inside a character whose low byte is 0x0A) is decoded at every
-// alignment in both byte orders; a reading at a wrong alignment or order can only add a hit, never hide one.
+// position. Bytes that are not text scatter their NULs over every position, so neither the decoded readings nor the NUL-removed reading is run on
+// them and neither can add a hit to them. A known gap: UTF-16 with no mark, dense with characters whose low byte is itself NUL now and then
+// (random CJK, about 1 in 256), puts enough NULs on the other parity to defeat the skew; a byte-order mark decides such a file.
+// Every run of bytes is decoded at every alignment in both byte orders: a blob can start with a stray byte, and a hunk of added lines starts
+// wherever git's line break fell (even inside a character whose low byte is 0x0A). A reading at a wrong alignment or order can only add a hit,
+// never hide one, and the order flip is not a shift: a shifted UTF-16LE character glues its low byte onto the unit before it.
 const WIDE_SKEW = 4;
 // Fewer than the shortest token any pattern matches (15 characters, a Slack token): a key in wide text brings at least that many NULs of its own,
 // so a few stray NULs (a short binary header) never make bytes read as wide text.
 const WIDE_MIN_NULS = 12;
-// A code point past U+10FFFF (a UTF-32 reading at a wrong alignment or order) cannot be a character, and decodes to U+FFFD.
-const REPLACEMENT = String.fromCharCode(0xfffd);
 export function wideKinds(bytes) {
   const b = bytes;
   const kinds = new Set();
@@ -476,49 +481,74 @@ export function wideKinds(bytes) {
   }
   return [...kinds];
 }
-// A UTF-16 surrogate pair decodes as two units that a JS string joins back into one character by itself, so no pairing is needed here.
+// UTF-16 decodes natively (an unpaired surrogate becomes U+FFFD); UTF-32 in chunks of code points, so neither holds one string per character.
+const UTF16LE = new TextDecoder('utf-16le');
+const CODE_POINT_CHUNK = 8192;
 function decodeUnits(bytes, width, offset, littleEndian) {
+  const part = bytes.subarray(offset, offset + Math.floor((bytes.length - offset) / width) * width);
+  if (width === 2) return UTF16LE.decode(littleEndian ? part : Buffer.from(part).swap16());
   const out = [];
-  for (let i = offset; i + width <= bytes.length; i += width) {
-    let cp = 0;
-    for (let j = 0; j < width; j++) cp = cp * 256 + bytes[i + (littleEndian ? width - 1 - j : j)];
-    out.push(cp > 0x10ffff ? REPLACEMENT : String.fromCodePoint(cp));
+  let cps = [];
+  for (let i = 0; i < part.length; i += 4) {
+    const cp = littleEndian ? part.readUInt32LE(i) : part.readUInt32BE(i);
+    // a code point past U+10FFFF (a reading at a wrong alignment or order) cannot be a character: U+FFFD
+    cps.push(cp > 0x10ffff ? 0xfffd : cp);
+    if (cps.length === CODE_POINT_CHUNK) { out.push(String.fromCodePoint(...cps)); cps = []; }
   }
+  out.push(String.fromCodePoint(...cps));
   return out.join('');
 }
 // The decoded readings of a run of bytes: none when the rule does not read it as wide text; otherwise one per unit size it matches, alignment
-// and byte order (aligned = the run starts on a unit boundary, as a whole blob does).
-export function wideTexts(bytes, aligned = false) {
+// and byte order.
+export function wideTexts(bytes) {
   const texts = [];
   for (const kind of wideKinds(bytes)) {
     const width = kind === 'utf16' ? 2 : 4;
-    for (let offset = 0; offset < (aligned ? 1 : width); offset++) for (const le of [true, false]) texts.push(decodeUnits(bytes, width, offset, le));
+    for (let offset = 0; offset < width; offset++) for (const le of [true, false]) texts.push(decodeUnits(bytes, width, offset, le));
   }
   return texts;
 }
+// THE BOUND on what one blob (or one hunk of added lines) may cost: wide text larger than this is not decoded. Decoding holds every reading at
+// once (four for UTF-16, eight for UTF-32, each about the size of the bytes) and the cost grows with the size, so a large file of 16-bit samples,
+// which the rule reads as UTF-16, could exhaust memory on every commit. 8 MiB: no tracked file in any room is larger (the reviewer's census,
+// 2026-11-15), and decoding 8 MiB of 16-bit samples took 3.3 s and a 242 MiB peak on one Windows machine (32 MiB took 13 s and 1.4 GB
+// before the bound). Past the bound the scan does not pass: the bytes get a hit of their
+// own, WIDE_TOO_LARGE, whose fingerprint is that of the file and its exact bytes, so an acknowledgement covers those bytes only and a change asks again.
+export const WIDE_DECODE_MAX_BYTES = 8 << 20;
+export const WIDE_TOO_LARGE = 'wide-text-too-large-to-decode';
+const tooLarge = (bytes, file) => fingerprint(file, WIDE_TOO_LARGE, createHash('sha256').update(bytes).digest('hex'));
 // Scan a whole blob from its bytes: the UTF-8 reading, as scanText reads it, with the NUL-removed second reading only when the rule reads the blob
 // as wide text; then each decoded reading of wide text, adding only a key (by pattern and fingerprint) the readings before it did not find.
-// Bytes the rule does not read as wide text give exactly the UTF-8 reading. hits: [{ line, pattern, fp }]
+// Bytes the rule does not read as wide text give exactly the UTF-8 reading; wide text past WIDE_DECODE_MAX_BYTES gives the UTF-8 reading and a
+// WIDE_TOO_LARGE hit at line 1. hits: [{ line, pattern, fp }]
 export function scanBytes(bytes, file = '') {
-  const decoded = wideTexts(bytes, true);
-  const hits = scanText(bytes.toString('utf8'), file, { nulDrop: decoded.length > 0 });
+  const wide = wideKinds(bytes).length > 0;
+  if (wide && bytes.length > WIDE_DECODE_MAX_BYTES) {
+    return [...scanText(bytes.toString('utf8'), file, { nulDrop: false }), { line: 1, pattern: WIDE_TOO_LARGE, fp: tooLarge(bytes, file) }];
+  }
+  const hits = scanText(bytes.toString('utf8'), file, { nulDrop: wide });
   const seen = new Set(hits.map((h) => `${h.pattern} ${h.fp}`));
-  for (const text of decoded) for (const h of scanText(text, file)) if (!seen.has(`${h.pattern} ${h.fp}`)) { seen.add(`${h.pattern} ${h.fp}`); hits.push(h); }
+  for (const text of wide ? wideTexts(bytes) : []) for (const h of scanText(text, file)) if (!seen.has(`${h.pattern} ${h.fp}`)) { seen.add(`${h.pattern} ${h.fp}`); hits.push(h); }
   return hits;
 }
 // The wide reading of a patch held as BYTES: the added lines of each hunk are joined back into the byte run they were cut from (git cuts at every
-// 0x0A byte, even inside a wide character), and each run the rule reads as wide text is decoded and scanned, and its UTF-8 reading scanned again
-// with its NULs removed. A line in a decoded run is numbered from the hunk's first line. hits: [{ commit, file, line, pattern, fp }]
+// 0x0A byte, even inside a wide character, and marks a last line with no line break with a "\ No newline" line), and each run the rule reads as
+// wide text is decoded and scanned, and its UTF-8 reading scanned again with its NULs removed; a run past WIDE_DECODE_MAX_BYTES gets the
+// WIDE_TOO_LARGE hit instead (a new file's run is its whole content, so the fingerprint matches the tree's). A line in a decoded run is numbered
+// from the hunk's first line. hits: [{ commit, file, line, pattern, fp }]
 function scanPatchWide(bytes, opts) {
   const skip = typeof opts.skipFile === 'function' ? opts.skipFile : null;
   const hits = [];
-  let commit = '', file = null, start = 0, inHeader = false, run = [];
+  let commit = '', file = null, start = 0, inHeader = false, run = [], lastAdded = false;
   const flush = () => {
     if (file !== null && run.length) {
       const runBytes = Buffer.from(run.join(''), 'latin1');
-      const decoded = wideTexts(runBytes);
-      const texts = decoded.length ? [...decoded, runBytes.toString('utf8')] : [];
-      for (const text of texts) for (const h of scanText(text, file)) hits.push({ commit, file, line: start + h.line - 1, pattern: h.pattern, fp: h.fp });
+      if (wideKinds(runBytes).length && runBytes.length > WIDE_DECODE_MAX_BYTES) hits.push({ commit, file, line: start, pattern: WIDE_TOO_LARGE, fp: tooLarge(runBytes, file) });
+      else {
+        const decoded = wideTexts(runBytes);
+        const texts = decoded.length ? [...decoded, runBytes.toString('utf8')] : [];
+        for (const text of texts) for (const h of scanText(text, file)) hits.push({ commit, file, line: start + h.line - 1, pattern: h.pattern, fp: h.fp });
+      }
     }
     run = [];
   };
@@ -534,10 +564,13 @@ function scanPatchWide(bytes, opts) {
     }
     if (l.startsWith('@@') && (inHeader || file !== null)) {
       const m = /^@@@? -\d+(?:,\d+)? (?:-\d+(?:,\d+)? )?\+(\d+)(?:,\d+)? @@/.exec(l);
-      if (m) { flush(); start = Number(m[1]); inHeader = false; continue; }
+      if (m) { flush(); start = Number(m[1]); inHeader = false; lastAdded = false; continue; }
     }
     if (inHeader) continue;
-    if (raw.startsWith('+') && file !== null) run.push(raw.slice(1) + '\n');
+    // "\ No newline at end of file" after an added line: that line had no break, so the run drops the one it was given
+    if (raw.startsWith('\\') && lastAdded && run.length) { run[run.length - 1] = run[run.length - 1].slice(0, -1); continue; }
+    lastAdded = raw.startsWith('+') && file !== null;
+    if (lastAdded) run.push(raw.slice(1) + '\n');
   }
   flush();
   return hits;

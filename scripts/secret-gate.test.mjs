@@ -550,8 +550,8 @@ test('a text file in UTF-16 (LE and BE, with and without a byte-order mark) that
 });
 
 // Wide text a byte-order mark does not announce, and wider text: UTF-16 with a non-ASCII character before the key (U+0100 little-endian, U+4E00
-// big-endian, 4,000 Thai characters), and UTF-32 little-endian. Each line is also read with its NUL bytes removed, so the key's own ASCII bytes come
-// back together whatever the width, order or prefix. A real binary with NULs is still never reported for noise.
+// big-endian, 4,000 Thai characters), and UTF-32 little-endian. The scanner's rule reads each as wide text from where its NULs fall, and decodes it, so
+// the key stands whole whatever the width, order or prefix. A real binary with NULs is still never reported for noise.
 const utf16be = (s) => Buffer.from(s, 'utf16le').swap16();
 const utf32le = (s) => { const b = Buffer.alloc(s.length * 4); [...s].forEach((c, i) => b.writeUInt32LE(c.codePointAt(0), i * 4)); return b; };
 test('wide text with no byte-order mark, a non-ASCII prefix or four bytes a character still has its key refused, in the tree and in the pushed range', () => {
@@ -573,7 +573,7 @@ test('wide text with no byte-order mark, a non-ASCII prefix or four bytes a char
   for (const name of Object.keys(files)) assert.match(p.out, new RegExp(`pushed [0-9a-f]{12} "${name.replace('.', String.fromCharCode(92) + '.')}":2 aws-access-key-id`), name);
 });
 
-// The pushed range reads each commit's patch as text. A key in a UTF-16 file (here little-endian with its mark, as PowerShell 5.1 writes it) that one
+// The pushed range reads each commit's patch as bytes and decodes the hunks the rule reads as wide text. A key in a UTF-16 file (here little-endian with its mark, as PowerShell 5.1 writes it) that one
 // pushed commit adds and a later one deletes never reaches the tree scan, so the range must find it, exactly as it finds the same key in UTF-8.
 test('a UTF-16 key added and then deleted inside a pushed range is refused, as its UTF-8 copy is', () => {
   for (const [label, bytes] of [['utf-16le', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`a\nb ${KEY} c\n`, 'utf16le')])], ['utf-8', Buffer.from(`a\nb ${KEY} c\n`, 'utf8')]]) {
@@ -721,4 +721,122 @@ test('a stray NUL inside a key-shaped token of bytes the rule does not read as w
   const tip = git(dir, 'rev-parse', 'HEAD');
   const p = run(dir, ['--pre-push'], `refs/heads/main ${tip} refs/heads/main ${ZERO}\n`);
   assert.strictEqual(p.code, 0, p.out + p.err);
+});
+
+// 15i V2: a whole blob is decoded at every alignment too. One stray UTF-8 byte before UTF-16LE text shifts every unit, and reading the other byte
+// order is not the same as shifting back: the shifted ใ (43 0E) glues its low byte onto the unit before it.
+test('UTF-16LE text after one stray byte still has its glued key refused in the tree', () => {
+  const r = run(repo([{ 'stray16.txt': Buffer.concat([Buffer.from('x'), Buffer.from(`a\nid ${KEY}${TH(0x0e43, 0x0e0a, 0x0e49)}\n`, 'utf16le')]) }]));
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.ok(r.out.includes('tree "stray16.txt":2 aws-access-key-id'), r.out);
+});
+
+// 15i V4: the rule reads a file of mostly UTF-32 text as UTF-32 only, so a UTF-16 key in it is never decoded; the NUL-removed reading of the run
+// finds it. One pushed commit adds the file and a later one deletes it, so only the pushed range can see it.
+test('a UTF-16 key inside a mostly UTF-32 file, added then deleted inside a pushed range, is refused', () => {
+  const bytes = Buffer.concat([utf32le(`${'x'.repeat(200)}\n`), Buffer.from(`id ${KEY}\n`, 'utf16le')]);
+  const dir = repo([{ 'a.txt': 'one\n' }, { 'mix.txt': bytes }, { 'mix.txt': null }]);
+  assert.strictEqual(run(dir).code, 0, 'the tree at HEAD is clean');
+  const tip = git(dir, 'rev-parse', 'HEAD');
+  const r = run(dir, ['--pre-push'], `refs/heads/main ${tip} refs/heads/main ${ZERO}\n`);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /pushed [0-9a-f]{12} "mix\.txt":\d+ aws-access-key-id/);
+});
+
+// 15i V1: the cost of decoding is bounded. A 32 MiB file of 16-bit samples, which the rule reads as UTF-16 (each sample's high byte is NUL), was
+// decoded whole: 8.1 s and 1.19 GB (the reviewer's measure). Past WIDE_DECODE_MAX_BYTES it is not decoded: the scan fails by name with a hit of its
+// own whose fingerprint the acks file can carry, and the gate's peak memory grows by a few times the blob, never by the dozens decoding costs.
+const SAMPLES_BYTES = 32 << 20;
+test('wide text past the decode bound fails the scan by name, costs a few times its size in memory, and passes once its fingerprint is acknowledged', async () => {
+  const dir = repo([{ 'README.md': 'hello\n' }]);
+  const peakOut = path.join(SANDBOX, `peak-${made.length}.txt`);
+  const measured = () => {
+    const r = run(dir, [], '', { NODE_OPTIONS: `--import ${pathToFileURL(PEAK_PRELOAD).href}`, GATE_PEAK_OUT: peakOut }, 180000);
+    return { r, peak: Number(fs.readFileSync(peakOut, 'utf8')) };
+  };
+  const base = measured();
+  assert.strictEqual(base.r.code, 0, base.r.out + base.r.err);
+  const sha = await new Promise((resolve, reject) => {
+    const child = spawn('git', ['-C', dir, 'hash-object', '-w', '--stdin'], { env: gitEnv(), timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve(out.trim()) : reject(new Error(`hash-object exit ${code}`))));
+    const chunk = Buffer.alloc(1 << 20);
+    for (let i = 0; i < chunk.length; i += 2) chunk[i] = ((i >> 1) * 7) & 0x7f;
+    let left = SAMPLES_BYTES;
+    const pump = () => {
+      while (left > 0) { left -= chunk.length; if (!child.stdin.write(chunk)) { child.stdin.once('drain', pump); return; } }
+      child.stdin.end();
+    };
+    pump();
+  });
+  git(dir, 'update-index', '--add', '--cacheinfo', `100644,${sha},samples.bin`);
+  const big = measured();
+  assert.strictEqual(big.r.code, 1, big.r.out + big.r.err);
+  const m = /tree "samples\.bin":1 wide-text-too-large-to-decode \(fp ([0-9a-f]{16})\)/.exec(big.r.out);
+  assert.ok(m, 'the file is named with its fingerprint: ' + big.r.out + big.r.err);
+  assert.match(big.r.out, /secret-scan\.acks/, 'the message names the acknowledgement file');
+  assert.match(big.r.out, /NOT decoded or scanned\. Check each for keys first: acknowledging its fingerprint in secret-scan\.acks lets those exact bytes pass without the wide-text scan/);
+  assert.doesNotMatch(big.r.out, /secret-shaped match/, 'a file too large to decode is not called a match');
+  const grew = big.peak - base.peak;
+  assert.ok(grew < 6 * SAMPLES_BYTES, `the peak grew by ${(grew / 1048576).toFixed(1)} MiB for a ${SAMPLES_BYTES / 1048576} MiB file`);
+  // the pushed range reads the same bytes past the bound (a new file's hunk is its whole content, its missing last line break restored): the same
+  // hit, with the same fingerprint, so one acknowledgement covers both
+  git(dir, 'commit', '-q', '-m', 'samples');
+  const pushedBefore = run(dir, ['--pre-push'], `refs/heads/main ${git(dir, 'rev-parse', 'HEAD')} refs/heads/main ${ZERO}\n`, {}, 180000);
+  assert.strictEqual(pushedBefore.code, 1, pushedBefore.out + pushedBefore.err);
+  assert.match(pushedBefore.out, new RegExp(`pushed [0-9a-f]{12} "samples\\.bin":1 wide-text-too-large-to-decode \\(fp ${m[1]}\\)`));
+  fs.writeFileSync(path.join(dir, 'secret-scan.acks'), `${m[1]}\n`);
+  git(dir, 'add', 'secret-scan.acks');
+  git(dir, 'commit', '-q', '-m', 'ack');
+  const acked = run(dir, [], '', {}, 180000);
+  assert.strictEqual(acked.code, 0, acked.out + acked.err);
+  const tip = git(dir, 'rev-parse', 'HEAD');
+  const pushed = run(dir, ['--pre-push'], `refs/heads/main ${tip} refs/heads/main ${ZERO}\n`, {}, 180000);
+  assert.strictEqual(pushed.code, 0, pushed.out + pushed.err);
+});
+
+// The bound in the scanner itself: wide text past it gets one hit whose fingerprint follows its exact bytes (an acknowledgement covers those bytes
+// only); bytes that are not wide text are never bounded; UTF-32 longer than one chunk of code points decodes whole.
+test('the decode bound gives wide text past it one hit that follows its bytes, never bounds other text, and long UTF-32 decodes whole', async () => {
+  const { scanBytes, wideTexts, WIDE_DECODE_MAX_BYTES, WIDE_TOO_LARGE } = await import(pathToFileURL(LIB).href);
+  const wide = (fill) => { const b = Buffer.alloc(WIDE_DECODE_MAX_BYTES + 2); for (let i = 0; i < b.length; i += 2) b[i] = i % 64 === 0 ? 0x0a : fill; return b; };
+  const one = scanBytes(wide(0x61), 'w.bin');
+  const two = scanBytes(wide(0x62), 'w.bin');
+  assert.deepStrictEqual(one.map((h) => [h.line, h.pattern]), [[1, WIDE_TOO_LARGE]]);
+  assert.notStrictEqual(one[0].fp, two[0].fp, 'other bytes ask again');
+  assert.notStrictEqual(scanBytes(wide(0x61), 'v.bin')[0].fp, one[0].fp, 'the same bytes at another path ask again');
+  const plain = Buffer.alloc(WIDE_DECODE_MAX_BYTES + 2, 0x61);
+  for (let i = 0; i < plain.length; i += 64) plain[i] = 0x0a;
+  assert.deepStrictEqual(scanBytes(plain, 'a.txt'), []);
+  assert.strictEqual(wideTexts(utf32le('x'.repeat(200000)))[0], 'x'.repeat(200000));
+});
+
+// 16a (15i NIT-2, the c175 item): the bound itself. Wide text of exactly WIDE_DECODE_MAX_BYTES is still decoded and scanned; one byte more is not
+// (the bound unit test above). The key at the end is found, and no too-large hit is given.
+test('wide text of exactly the decode bound is still scanned, with no too-large hit', async () => {
+  const { scanBytes, WIDE_DECODE_MAX_BYTES } = await import(pathToFileURL(LIB).href);
+  const b = Buffer.alloc(WIDE_DECODE_MAX_BYTES);
+  for (let i = 0; i < b.length; i += 2) b[i] = i % 64 === 0 ? 0x0a : 0x61;
+  const key = Buffer.from(`\nid ${KEY}\n`, 'utf16le');
+  key.copy(b, b.length - key.length);
+  assert.deepStrictEqual(scanBytes(b, 'edge.bin').map((h) => h.pattern), ['aws-access-key-id']);
+});
+
+// t340 (CodeRabbit, on CoalWash's copy): the NUL-removed reading de-duplicated each hit by scanning every hit before it, so one line of many
+// distinct key-shaped tokens with NULs between their characters cost the square of their count (20,000 tokens: 11.8 s on one machine; 40,000:
+// 41.6 s). With a Set it is linear (20,000: about 0.1 s). The bound below sits between the two by two orders of magnitude.
+test('one line of 20,000 distinct key-shaped tokens with NULs between their characters is read in linear time, every token once', async () => {
+  const { scanText } = await import(pathToFileURL(LIB).href);
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const tok = (i) => { let s = ''; for (let k = 0; k < 16; k++) { s += A[i % 32]; i = Math.floor(i / 32); } return 'AKIA' + s; };
+  const line = Array.from({ length: 20000 }, (_, i) => tok(i)).join(' ').split('').join(String.fromCharCode(0));
+  const start = Date.now();
+  const hits = scanText(line, 'f.txt');
+  const ms = Date.now() - start;
+  assert.strictEqual(hits.length, 20000);
+  assert.ok(ms < 2000, `20,000 tokens took ${ms} ms`);
+  const spaced = (s) => s.split('').join(String.fromCharCode(0));
+  assert.strictEqual(scanText(`${spaced(KEY)} ${spaced(KEY)}`, 'f.txt').length, 1, 'the same token twice on one line is one hit');
 });
