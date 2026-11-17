@@ -1,4 +1,5 @@
 // secret-scan.mjs — a zero-dependency secret scanner for a git gate.
+// Past the 800-line signal on purpose: one scanner that every copy takes whole, so a split would change each copy.
 //
 // PORTABLE BY CONTRACT: node builtins only, no repository path, name or constant. A sibling
 // repo copies this file byte-for-byte; everything repo-specific (which files, how a hit is
@@ -464,12 +465,17 @@ const WIDE_SKEW = 4;
 // Fewer than the shortest token any pattern matches (15 characters, a Slack token): a key in wide text brings at least that many NULs of its own,
 // so a few stray NULs (a short binary header) never make bytes read as wide text.
 const WIDE_MIN_NULS = 12;
-export function wideKinds(bytes) {
+// The wide kind a byte-order mark at the start of b declares, none without one.
+function bomKinds(b) {
+  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xfe && b[2] === 0 && b[3] === 0) return ['utf32'];
+  if (b.length >= 4 && b[0] === 0 && b[1] === 0 && b[2] === 0xfe && b[3] === 0xff) return ['utf32'];
+  if (b.length >= 2 && ((b[0] === 0xff && b[1] === 0xfe) || (b[0] === 0xfe && b[1] === 0xff))) return ['utf16'];
+  return [];
+}
+// extra: kinds the caller knows from the file's own committed mark (see scanPatch's bomOf); they count even where the bytes alone do not show them.
+export function wideKinds(bytes, extra = []) {
   const b = bytes;
-  const kinds = new Set();
-  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xfe && b[2] === 0 && b[3] === 0) kinds.add('utf32');
-  else if (b.length >= 4 && b[0] === 0 && b[1] === 0 && b[2] === 0xfe && b[3] === 0xff) kinds.add('utf32');
-  else if (b.length >= 2 && ((b[0] === 0xff && b[1] === 0xfe) || (b[0] === 0xfe && b[1] === 0xff))) kinds.add('utf16');
+  const kinds = new Set([...extra, ...bomKinds(b)]);
   const z = [0, 0, 0, 0];
   for (let i = 0; i < b.length; i++) if (b[i] === 0) z[i & 3]++;
   const even = z[0] + z[2];
@@ -500,9 +506,9 @@ function decodeUnits(bytes, width, offset, littleEndian) {
 }
 // The decoded readings of a run of bytes: none when the rule does not read it as wide text; otherwise one per unit size it matches, alignment
 // and byte order.
-export function wideTexts(bytes) {
+export function wideTexts(bytes, extra = []) {
   const texts = [];
-  for (const kind of wideKinds(bytes)) {
+  for (const kind of wideKinds(bytes, extra)) {
     const width = kind === 'utf16' ? 2 : 4;
     for (let offset = 0; offset < width; offset++) for (const le of [true, false]) texts.push(decodeUnits(bytes, width, offset, le));
   }
@@ -535,17 +541,31 @@ export function scanBytes(bytes, file = '') {
 // 0x0A byte, even inside a wide character, and marks a last line with no line break with a "\ No newline" line), and each run the rule reads as
 // wide text is decoded and scanned, and its UTF-8 reading scanned again with its NULs removed; a run past WIDE_DECODE_MAX_BYTES gets the
 // WIDE_TOO_LARGE hit instead (a new file's run is its whole content, so the fingerprint matches the tree's). A line in a decoded run is numbered
-// from the hunk's first line. hits: [{ commit, file, line, pattern, fp }]
+// from the hunk's first line. The committed file's mark (opts.bomOf, a git read) is read once per file, and only for a run past line 1 that holds a
+// NUL byte; a plain run takes no read. A file whose mark says it is past WIDE_DECODE_MAX_BYTES gets one WIDE_TOO_LARGE hit, keyed by its blob id.
+// hits: [{ commit, file, line, pattern, fp }]
 function scanPatchWide(bytes, opts) {
   const skip = typeof opts.skipFile === 'function' ? opts.skipFile : null;
+  const bomOf = typeof opts.bomOf === 'function' ? opts.bomOf : null;
   const hits = [];
-  let commit = '', file = null, start = 0, inHeader = false, run = [], lastAdded = false;
+  let commit = '', file = null, start = 0, inHeader = false, run = [], lastAdded = false, fileHunks = 0;
+  // Each file's committed mark is read once, and only when a run needs it (see flush).
+  const marks = new Map();
+  const markOf = () => {
+    const key = commit + '\0' + file;
+    if (!marks.has(key)) marks.set(key, bomOf ? bomOf(commit, file) : { kinds: [] });
+    return marks.get(key);
+  };
   const flush = () => {
     if (file !== null && run.length) {
       const runBytes = Buffer.from(run.join(''), 'latin1');
-      if (wideKinds(runBytes).length && runBytes.length > WIDE_DECODE_MAX_BYTES) hits.push({ commit, file, line: start, pattern: WIDE_TOO_LARGE, fp: tooLarge(runBytes, file) });
+      // The mark sits on line 1: a run holding line 1 carries it in its own bytes. A wide key always carries NUL bytes (ASCII in UTF-16 or UTF-32 does),
+      // so a run with none takes no mark and no git call.
+      const mark = (fileHunks === 1 && start === 1) || !runBytes.includes(0) ? { kinds: [] } : markOf();
+      if (mark.tooLarge !== undefined) hits.push({ commit, file, line: start, pattern: WIDE_TOO_LARGE, fp: fingerprint(file, WIDE_TOO_LARGE, mark.tooLarge) });
+      else if (wideKinds(runBytes, mark.kinds).length && runBytes.length > WIDE_DECODE_MAX_BYTES) hits.push({ commit, file, line: start, pattern: WIDE_TOO_LARGE, fp: tooLarge(runBytes, file) });
       else {
-        const decoded = wideTexts(runBytes);
+        const decoded = wideTexts(runBytes, mark.kinds);
         const texts = decoded.length ? [...decoded, runBytes.toString('utf8')] : [];
         for (const text of texts) for (const h of scanText(text, file)) hits.push({ commit, file, line: start + h.line - 1, pattern: h.pattern, fp: h.fp });
       }
@@ -554,17 +574,17 @@ function scanPatchWide(bytes, opts) {
   };
   for (const raw of bytes.toString('latin1').split('\n')) {
     const l = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
-    if (l.startsWith('\0COMMIT ')) { flush(); commit = l.slice(8).trim(); file = null; inHeader = false; continue; }
-    if (l.startsWith('diff --git ') || l.startsWith('diff --cc ')) { flush(); file = null; inHeader = true; continue; }
+    if (l.startsWith('\0COMMIT ')) { flush(); commit = l.slice(8).trim(); file = null; inHeader = false; fileHunks = 0; continue; }
+    if (l.startsWith('diff --git ') || l.startsWith('diff --cc ')) { flush(); file = null; inHeader = true; fileHunks = 0; continue; }
     if (inHeader && l.startsWith('+++ ')) {
-      const p = Buffer.from(l.slice(4).replace(/\t$/, ''), 'latin1').toString('utf8');
+      const p = Buffer.from(dropOneTab(l.slice(4)), 'latin1').toString('utf8');
       file = p === '/dev/null' ? null : unquotePath(p).replace(/^b\//, '');
       if (file !== null && skip && skip(file)) file = null;
       continue;
     }
     if (l.startsWith('@@') && (inHeader || file !== null)) {
       const m = /^@@@? -\d+(?:,\d+)? (?:-\d+(?:,\d+)? )?\+(\d+)(?:,\d+)? @@/.exec(l);
-      if (m) { flush(); start = Number(m[1]); inHeader = false; lastAdded = false; continue; }
+      if (m) { flush(); start = Number(m[1]); fileHunks++; inHeader = false; lastAdded = false; continue; }
     }
     if (inHeader) continue;
     // "\ No newline at end of file" after an added line: that line had no break, so the run drops the one it was given
@@ -583,6 +603,8 @@ function scanPatchWide(bytes, opts) {
 // is not git's quoting comes back raw: the fingerprint then matches no ack, which is the safe side.
 const BACKSLASH = String.fromCharCode(92);
 const C_ESCAPES = new Map([['a', 7], ['b', 8], ['t', 9], ['n', 10], ['v', 11], ['f', 12], ['r', 13], ['"', 34], [BACKSLASH, 92]]);
+// git ends a `+++` path with ONE TAB when the name holds a space: this drops that one trailing TAB and nothing else (a string compare, not a regular-expression replace).
+const dropOneTab = (s) => (s.endsWith('\t') ? s.slice(0, -1) : s);
 function unquotePath(p) {
   if (!(p.length >= 2 && p.startsWith('"') && p.endsWith('"'))) return p;
   const s = p.slice(1, -1);
@@ -621,7 +643,7 @@ export function looksBinary(bytes) {
 // and the caller's explicit choice (e.g. a path it knows is a genuine binary). A skip decided by a NAME alone is a hole: a text file
 // named like a binary carries its secrets past the scan. Decide "binary" from the content, with looksBinary above.
 // A patch held as BYTES (the caller's git(args, { buffer: true }) returned a Buffer) is also read as wide text, hunk by hunk; a patch held as a
-// string is read as it always was. The wide reading adds only a key (by commit, file, pattern and fingerprint) the UTF-8 reading did not find.
+// string is read as it always was. opts.bomOf(commit, file) gives a file's committed mark ({ kinds } or { tooLarge }; scanPushed supplies it). The wide reading adds only a key (by commit, file, pattern and fingerprint) the UTF-8 reading did not find.
 export function scanPatch(patch, opts = {}) {
   if (!Buffer.isBuffer(patch)) return scanPatchText(patch, opts, true);
   const hits = scanPatchText(patch.toString('utf8'), opts, false);
@@ -645,7 +667,7 @@ function scanPatchText(patch, opts, nulDrop) {
     if (inHeader && l.startsWith('+++ ')) {
       // git ends a `+++` path with ONE TAB when the name holds a space, quoted or not (27D-2, git 2.56.0). An unquoted name never holds a
       // raw TAB (git writes it as \t), so that one trailing TAB is the separator and never part of the name.
-      const p = l.slice(4).replace(/\t$/, '');
+      const p = dropOneTab(l.slice(4));
       file = p === '/dev/null' ? null : unquotePath(p).replace(/^b\//, '');
       if (file !== null && skip && skip(file)) file = null;
       continue;
@@ -757,6 +779,18 @@ export function scanPushed(stdinText, git, opts = {}) {
   const refs = parsePushRefs(stdinText);
   const remote = opts.remote === undefined || opts.remote === null || opts.remote === '' ? null : checkRemote(opts.remote);
   const hasCommit = (sha) => { try { git(['cat-file', '-e', `${sha}^{commit}`]); return true; } catch { return false; } };
+  // The committed file's mark (its byte-order mark): a patch's zero-context hunk does not carry a mark on an unchanged line 1. Read once per file, and
+  // only for a run past line 1 that holds a NUL byte (see scanPatchWide): one git call, cat-file blob, which returns the whole blob (git has no head
+  // read), so a blob past the caller's git buffer throws and the scan fails. A marked blob past WIDE_DECODE_MAX_BYTES is not decoded: it gets the
+  // fail-closed WIDE_TOO_LARGE hit, keyed by its blob id. An unmarked blob past the bound passes on its bytes, as the tree scan passes it.
+  const bomOf = (commit, file) => {
+    const spec = `${commit}:${file}`;
+    const head = git(['cat-file', 'blob', spec], { buffer: true });
+    if (!Buffer.isBuffer(head)) { const e = new Error('the committed file could not be read as bytes'); e.code = 'EBOMREAD'; throw e; }
+    const kinds = bomKinds(head);
+    if (kinds.length && head.length > WIDE_DECODE_MAX_BYTES) return { tooLarge: git(['rev-parse', spec]).trim() };
+    return { kinds };
+  };
   // FAIL CLOSED on a pushed object that is not a commit. `rev-list` returns NOTHING, with no error,
   // for a blob, a tree, or a tag of either, so a range scan would pass it unread
   // (`git tag x $(git hash-object -w secrets.env)` then a push). Every such ref is named in one
@@ -788,7 +822,7 @@ export function scanPushed(stdinText, git, opts = {}) {
     // asked for as bytes, so wide text in it can be decoded; a caller whose git() returns a string still gets the UTF-8 reading
     const patch = git(['-c', 'core.quotepath=off', 'show', '--format=%x00COMMIT %H', '--unified=0', '--text',
       '--no-color', '--no-ext-diff', '--no-textconv', '--diff-merges=first-parent', sha], { buffer: true });
-    const found = scanPatch(patch, opts).map((h) => ({ ...h, kind: 'diff' }));
+    const found = scanPatch(patch, { ...opts, bomOf }).map((h) => ({ ...h, kind: 'diff' }));
     for (const h of scanText(git(['show', '-s', '--format=%B', sha]), MESSAGE_LABEL.message)) {
       found.push({ commit: sha, file: null, line: h.line, pattern: h.pattern, fp: h.fp, kind: 'message' });
     }

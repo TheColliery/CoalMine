@@ -36,19 +36,25 @@ const gitEnv = () => ({
   GIT_CEILING_DIRECTORIES: path.dirname(SANDBOX),
 });
 
+// The identity and the no-signing switch ride on every call, never into the fixture's config: three `git config` spawns per repository cost about
+// 0.5 s each fixture on Windows (measured 2026-11-16), a quarter of a fixture, and this file builds some 60.
+const GIT_IDENTITY = ['-c', 'user.email=test@example.invalid', '-c', 'user.name=test', '-c', 'commit.gpgsign=false'];
 function git(dir, ...args) {
-  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() }).trim();
+  return execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() }).trim();
 }
+
+// One `git init`, made once: every fixture starts as a copy of this empty repository (a copy of five small entries is milliseconds, an init is
+// about a quarter of a second on Windows, measured 2026-11-16). `--template=` leaves out the sample hooks, so there is nothing to copy but the skeleton.
+const INIT_TEMPLATE = path.join(SANDBOX, 'init-template');
+fs.mkdirSync(INIT_TEMPLATE);
+execFileSync('git', ['init', '-q', '-b', 'main', '--template=', INIT_TEMPLATE], { timeout: 60000, stdio: 'ignore', env: gitEnv() });
 
 // A throwaway repository holding the gate and its scanner, with one commit per entry of `commits` ({ file: text } maps;
 // a null text deletes the file).
 function repo(commits, { withLib = true } = {}) {
   const dir = fs.mkdtempSync(path.join(SANDBOX, 'secret-gate-'));
   made.push(dir);
-  git(dir, 'init', '-q', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.invalid');
-  git(dir, 'config', 'user.name', 'test');
-  git(dir, 'config', 'commit.gpgsign', 'false');
+  fs.cpSync(INIT_TEMPLATE, dir, { recursive: true });
   fs.mkdirSync(path.join(dir, 'scripts', 'lib'), { recursive: true });
   fs.copyFileSync(GATE, path.join(dir, 'scripts', 'secret-gate.mjs'));
   if (withLib) fs.copyFileSync(LIB, path.join(dir, 'scripts', 'lib', 'secret-scan.mjs'));
@@ -506,6 +512,8 @@ fs.writeFileSync(FAKE_CATFILE, [
   "if (mode === 'early') out = real.subarray(0, firstEnd);",
   "if (mode === 'negsize') out = Buffer.concat([Buffer.from(head[0] + ' ' + head[1] + ' -1' + String.fromCharCode(10, 10), 'latin1'), real.subarray(firstEnd)]);",
   "if (mode === 'nonl') out = Buffer.concat([real.subarray(0, firstEnd - 1), real.subarray(firstEnd)]);",
+  // huge: the first header declares 300,000,000 bytes (past the 256 MiB ceiling) and the stream then ends: only the header check can answer it by name
+  "if (mode === 'huge') out = Buffer.concat([Buffer.from(head[0] + ' blob 300000000' + String.fromCharCode(10), 'latin1'), Buffer.from('xx')]);",
   "process.stdout.write(out, () => { process.exitCode = mode === 'exit1' ? 1 : 0; });",
 ].join('\n'));
 const FAKE_PRELOAD = path.join(SANDBOX, 'fake-catfile.preload.mjs');
@@ -524,6 +532,24 @@ test('a cat-file answer that ends early, gives a bad size, drops a newline or ex
     assert.ok(r.out.includes(`FAIL SECRETS: git could not read the staged files (${why}); the tree was NOT scanned`), `${mode}: ${r.out}${r.err}`);
     assert.doesNotMatch(r.err, /TypeError/, mode);
   }
+});
+
+// t342 F9 (17b): SECRET_GATE_MAX_HELD_BYTES can only LOWER the ceiling. The reviewer's mutant (a ceiling taken from any positive value) survived the 17a tests, which ran a LOWER value and a huge one only
+// on a small tree. Here a cat-file that declares a 300,000,000-byte blob (past the 256 MiB ceiling) is run with the variable raised far past it: the gate must still refuse the header by name with the
+// DEFAULT ceiling in the message, where a gate that obeyed the raised value would read on and end with "cat-file output ended early". A lowered value and an invalid one are checked beside it.
+test('SECRET_GATE_MAX_HELD_BYTES cannot raise the held-bytes ceiling: a blob declared past 256 MiB is refused by name whatever the variable says -- RED against a gate that takes any positive value', () => {
+  const dir = repo([{ 'README.md': 'hello\n' }]);
+  const base = { NODE_OPTIONS: `--import ${pathToFileURL(FAKE_PRELOAD).href}`, FAKE_CATFILE_MODE: 'huge' };
+  const named = /FAIL SECRETS: "README\.md" is too large to hold: more than (\d+) bytes of staged text would be held in memory at once; the tree was NOT scanned/;
+  for (const value of [undefined, '999999999999', '268435456', '268435457', '0', '-5', 'abc', '1e30', '']) {
+    const r = run(dir, [], '', { ...base, ...(value === undefined ? {} : { SECRET_GATE_MAX_HELD_BYTES: value }) });
+    assert.strictEqual(r.code, 1, `${value}: ${r.out}${r.err}`);
+    const m = named.exec(r.out);
+    assert.ok(m, `${value}: the declared 300,000,000-byte blob was not refused by name: ${r.out}${r.err}`);
+    assert.strictEqual(m[1], '268435456', `${value}: the ceiling in force is the default 256 MiB`);
+  }
+  const lowered = run(dir, [], '', { ...base, SECRET_GATE_MAX_HELD_BYTES: '1000' });
+  assert.match(lowered.out, /more than 1000 bytes of staged text/, 'a lower value is obeyed');
 });
 
 // A text file in UTF-16 holds a NUL in every code unit of ASCII text, so a gate that decodes UTF-8 or tests "binary" first never sees its key.
@@ -743,10 +769,20 @@ test('a UTF-16 key inside a mostly UTF-32 file, added then deleted inside a push
   assert.match(r.out, /pushed [0-9a-f]{12} "mix\.txt":\d+ aws-access-key-id/);
 });
 
-// 15i V1: the cost of decoding is bounded. A 32 MiB file of 16-bit samples, which the rule reads as UTF-16 (each sample's high byte is NUL), was
-// decoded whole: 8.1 s and 1.19 GB (the reviewer's measure). Past WIDE_DECODE_MAX_BYTES it is not decoded: the scan fails by name with a hit of its
-// own whose fingerprint the acks file can carry, and the gate's peak memory grows by a few times the blob, never by the dozens decoding costs.
-const SAMPLES_BYTES = 32 << 20;
+// A line of 4 KiB, not 64 bytes: the scan costs per line, and 131,000 short lines made each 8 MiB scan in the bound tests take about a second for
+// nothing they prove (16j, measured: 949 ms against 178 ms per scan).
+const LINE_BYTES = 4096;
+// 15i V1: the cost of decoding is bounded. A file of 16-bit samples, which the rule reads as UTF-16 (each sample's high byte is NUL), was decoded
+// whole: a 32 MiB one took 8.1 s and 1.19 GB (the reviewer's measure). Past WIDE_DECODE_MAX_BYTES it is not decoded: the scan fails by name with a hit
+// of its own whose fingerprint the acks file can carry, and the gate's peak memory grows by a few times the file, never by the dozens decoding costs.
+// 16j: the file is 9 MiB, one MiB past the 8 MiB bound, not 32: past the bound its size changes nothing the test proves, and each gate run over it
+// costs seconds. The peak assertion below is six times the file (54 MiB): the gate's peak grows by about 27 MiB over a tiny repo with the bound and by about
+// 82 MiB without it (measured 2026-11-16 on this file's shape, gate and scanner as shipped against the scanner with the bound disabled; Windows 11, Node 26, n = 1 each). The 54 MiB is a
+// midpoint between 27 and 82, not a derived number, and it was measured on Windows only: macOS and Linux account a process's peak differently, so the three-OS CI result of the push is read
+// before any room copies this file. The 16j wording of
+// this comment, a decode cost of about 240 MiB against a bound of ten times the file (90 MiB), was wrong: 240 MiB was a peak, on a file with short lines, and 82
+// MiB sits under 90, so that bound told nothing apart; the exit code and the message below were what caught a scanner without the bound.
+const SAMPLES_BYTES = 9 << 20;
 test('wide text past the decode bound fails the scan by name, costs a few times its size in memory, and passes once its fingerprint is acknowledged', async () => {
   const dir = repo([{ 'README.md': 'hello\n' }]);
   const peakOut = path.join(SANDBOX, `peak-${made.length}.txt`);
@@ -763,7 +799,7 @@ test('wide text past the decode bound fails the scan by name, costs a few times 
     child.on('error', reject);
     child.on('close', (code) => (code === 0 ? resolve(out.trim()) : reject(new Error(`hash-object exit ${code}`))));
     const chunk = Buffer.alloc(1 << 20);
-    for (let i = 0; i < chunk.length; i += 2) chunk[i] = ((i >> 1) * 7) & 0x7f;
+    for (let i = 0; i < chunk.length; i += 2) chunk[i] = i % LINE_BYTES === 0 ? 0x0a : 0x20 + (((i >> 1) * 7) % 0x5f); // printable 16-bit samples, a line every 4 KiB
     let left = SAMPLES_BYTES;
     const pump = () => {
       while (left > 0) { left -= chunk.length; if (!child.stdin.write(chunk)) { child.stdin.once('drain', pump); return; } }
@@ -801,42 +837,74 @@ test('wide text past the decode bound fails the scan by name, costs a few times 
 // only); bytes that are not wide text are never bounded; UTF-32 longer than one chunk of code points decodes whole.
 test('the decode bound gives wide text past it one hit that follows its bytes, never bounds other text, and long UTF-32 decodes whole', async () => {
   const { scanBytes, wideTexts, WIDE_DECODE_MAX_BYTES, WIDE_TOO_LARGE } = await import(pathToFileURL(LIB).href);
-  const wide = (fill) => { const b = Buffer.alloc(WIDE_DECODE_MAX_BYTES + 2); for (let i = 0; i < b.length; i += 2) b[i] = i % 64 === 0 ? 0x0a : fill; return b; };
+  const wide = (fill) => { const b = Buffer.alloc(WIDE_DECODE_MAX_BYTES + 2); for (let i = 0; i < b.length; i += 2) b[i] = i % LINE_BYTES === 0 ? 0x0a : fill; return b; };
   const one = scanBytes(wide(0x61), 'w.bin');
   const two = scanBytes(wide(0x62), 'w.bin');
   assert.deepStrictEqual(one.map((h) => [h.line, h.pattern]), [[1, WIDE_TOO_LARGE]]);
   assert.notStrictEqual(one[0].fp, two[0].fp, 'other bytes ask again');
   assert.notStrictEqual(scanBytes(wide(0x61), 'v.bin')[0].fp, one[0].fp, 'the same bytes at another path ask again');
   const plain = Buffer.alloc(WIDE_DECODE_MAX_BYTES + 2, 0x61);
-  for (let i = 0; i < plain.length; i += 64) plain[i] = 0x0a;
+  for (let i = 0; i < plain.length; i += LINE_BYTES) plain[i] = 0x0a;
   assert.deepStrictEqual(scanBytes(plain, 'a.txt'), []);
   assert.strictEqual(wideTexts(utf32le('x'.repeat(200000)))[0], 'x'.repeat(200000));
 });
 
 // 16a (15i NIT-2, the c175 item): the bound itself. Wide text of exactly WIDE_DECODE_MAX_BYTES is still decoded and scanned; one byte more is not
-// (the bound unit test above). The key at the end is found, and no too-large hit is given.
+// (the bound unit test above). This file is exactly 8 MiB, AT the bound on purpose, the largest one still decoded; the unit test above holds the file that is over it. The key at the end is found, and no too-large hit is given.
 test('wide text of exactly the decode bound is still scanned, with no too-large hit', async () => {
   const { scanBytes, WIDE_DECODE_MAX_BYTES } = await import(pathToFileURL(LIB).href);
   const b = Buffer.alloc(WIDE_DECODE_MAX_BYTES);
-  for (let i = 0; i < b.length; i += 2) b[i] = i % 64 === 0 ? 0x0a : 0x61;
+  for (let i = 0; i < b.length; i += 2) b[i] = i % LINE_BYTES === 0 ? 0x0a : 0x61;
   const key = Buffer.from(`\nid ${KEY}\n`, 'utf16le');
   key.copy(b, b.length - key.length);
   assert.deepStrictEqual(scanBytes(b, 'edge.bin').map((h) => h.pattern), ['aws-access-key-id']);
 });
 
+// t342 F5 (2026-11-17): the too-large guidance is chosen by the hit's own pattern, not by searching the text of the formatted line, which carries a file name a stranger chooses. A file NAMED like the
+// marker that holds a real key is a secret-shaped match, never "not decoded or scanned" (whose guidance points at acknowledging the fingerprint).
+test('a file named like the too-large marker that holds a real key is reported as a match, not as a skipped file -- RED before 2026-11-17', () => {
+  const name = 'a wide-text-too-large-to-decode (fp x.txt';
+  const r = run(repo([{ [name]: `k ${KEY}\n` }]));
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /FAIL SECRETS: 1 secret-shaped match\(es\)/);
+  assert.doesNotMatch(r.out, /NOT decoded or scanned/, 'a real key hit was reported as a skipped file');
+  assert.ok(!r.out.includes(KEY), 'the value is never printed');
+});
+
+// t342 F9 (2026-11-17): what the stream holds is bounded and a breach is a named FAIL line, never a stack trace. The ceiling is lowered by SECRET_GATE_MAX_HELD_BYTES (it can only be lowered), so no
+// multi-gigabyte fixture is needed. A binary-named blob dropped as it streams is released and does not count.
+test('the bytes held for staged text are bounded: a text blob past the ceiling is a named FAIL line and the tree is not scanned; a dropped binary blob counts for nothing; the variable can only lower the ceiling -- RED before 2026-11-17', () => {
+  const big = 'x'.repeat(300000) + '\n';
+  const dir = repo([{ 'dump.sql': big, 'README.md': 'hello\n' }]);
+  const lowered = run(dir, [], '', { SECRET_GATE_MAX_HELD_BYTES: '100000' });
+  assert.strictEqual(lowered.code, 1, lowered.out + lowered.err);
+  assert.match(lowered.out, /FAIL SECRETS: "dump\.sql" is too large to hold: more than 100000 bytes of staged text would be held in memory at once; the tree was NOT scanned/);
+  assert.doesNotMatch(lowered.out + lowered.err, /\n\s+at |RangeError|ERR_/, 'no stack trace');
+  assert.strictEqual(run(dir).code, 0, 'with no variable the same tree passes');
+  assert.strictEqual(run(dir, [], '', { SECRET_GATE_MAX_HELD_BYTES: '999999999999' }).code, 0, 'a higher value is ignored: it cannot weaken the ceiling');
+  const binary = repo([{ 'logo.png': Buffer.concat([Buffer.from([0, 1, 2, 3]), Buffer.alloc(300000, 7)]).toString('latin1'), 'README.md': 'hello\n' }]);
+  assert.strictEqual(run(binary, [], '', { SECRET_GATE_MAX_HELD_BYTES: '100000' }).code, 0, 'a binary-named binary blob is dropped as it streams and holds nothing');
+});
+
 // t340 (CodeRabbit, on CoalWash's copy): the NUL-removed reading de-duplicated each hit by scanning every hit before it, so one line of many
 // distinct key-shaped tokens with NULs between their characters cost the square of their count (20,000 tokens: 11.8 s on one machine; 40,000:
-// 41.6 s). With a Set it is linear (20,000: about 0.1 s). The bound below sits between the two by two orders of magnitude.
-test('one line of 20,000 distinct key-shaped tokens with NULs between their characters is read in linear time, every token once', async () => {
+// 41.6 s). With a Set it is linear (20,000: about 0.1 s). No wall-clock assertion (t342 F6, 2026-11-17: a loaded runner can pass a 2 s bound slowly): the scan runs in a CHILD with a heap cap and a
+// kill-timeout, and a killed child is the failure. The file is 40,000 tokens, where the quadratic reading costs 41.6 s against a 30 s timeout and the linear one about 0.2 s: two orders of magnitude of
+// margin on each side, and the count of hits and the one-hit-per-token check still run in the child.
+test('one line of 40,000 distinct key-shaped tokens with NULs between their characters is read in linear time, every token once (a killed child is the failure)', async () => {
   const { scanText } = await import(pathToFileURL(LIB).href);
-  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const tok = (i) => { let s = ''; for (let k = 0; k < 16; k++) { s += A[i % 32]; i = Math.floor(i / 32); } return 'AKIA' + s; };
-  const line = Array.from({ length: 20000 }, (_, i) => tok(i)).join(' ').split('').join(String.fromCharCode(0));
-  const start = Date.now();
-  const hits = scanText(line, 'f.txt');
-  const ms = Date.now() - start;
-  assert.strictEqual(hits.length, 20000);
-  assert.ok(ms < 2000, `20,000 tokens took ${ms} ms`);
+  const code = [
+    `import { scanText } from ${JSON.stringify(pathToFileURL(LIB).href)};`,
+    `const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';`,
+    `const tok = (i) => { let s = ''; for (let k = 0; k < 16; k++) { s += A[i % 32]; i = Math.floor(i / 32); } return 'AKIA' + s; };`,
+    `const line = Array.from({ length: 40000 }, (_, i) => tok(i)).join(' ').split('').join(String.fromCharCode(0));`,
+    `const hits = scanText(line, 'f.txt');`,
+    `console.log(JSON.stringify({ n: hits.length, distinct: new Set(hits.map((h) => h.fp)).size }));`,
+  ].join('\n');
+  const r = spawnSync(process.execPath, ['--max-old-space-size=256', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 30000, env: { PATH: process.env.PATH } });
+  assert.strictEqual(r.signal, null, `the scan of 40,000 tokens was killed: it is no longer linear (${r.error ? r.error.code : r.signal})`);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout), { n: 40000, distinct: 40000 });
   const spaced = (s) => s.split('').join(String.fromCharCode(0));
   assert.strictEqual(scanText(`${spaced(KEY)} ${spaced(KEY)}`, 'f.txt').length, 1, 'the same token twice on one line is one hit');
 });

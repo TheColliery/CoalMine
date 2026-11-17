@@ -9,7 +9,7 @@
 // whose value is a scheme and a token (Authorization: Bearer <key>, X-Api-Token: Bearer <key>) unless that token is provider-shaped,
 // or a key split across lines.
 //
-// TWO SCANS. (1) The STAGED tree, always: every blob in the index, which is what a commit records and what a CI checkout
+// TWO SCANS. (1) The STAGED tree, always: every blob in the index except a binary one (a blob whose every staged path has a binary-looking name AND whose first bytes are binary is skipped, below), which is what a commit records and what a CI checkout
 // holds (a staged edit is scanned even when the working file was changed back; an unstaged edit cannot be committed or
 // pushed and is not reported). A commit made with "git commit -a" or a partial commit reads the index that commit uses
 // (GIT_INDEX_FILE), one of the two GIT_* variables the gate keeps. (2) With --pre-push (the hook passes it,
@@ -69,9 +69,17 @@ const gitIn = (a, o) => execFileSync('git', [NO_REPLACE, ...a], { encoding: o &&
 // bytes as they arrive and, when they are binary, dropped as it streams past, never held: a binary blob of any size costs no memory. Every other
 // id is held whole, because it is scanned. Resolves a Map from id to its bytes, BINARY_BLOB for a dropped one, or null for a missing object.
 const BINARY_BLOB = Symbol('binary');
+// What the stream may hold at once (t342 F9, 2026-11-17): every blob that is scanned is held whole, so a very large staged text file (a dump, a data export) would fill the process's memory, and the
+// concat of its pieces would throw outside any try. The count includes a blob still being probed and is released when a probed blob is dropped as binary. Past the ceiling the gate stops with a
+// FAIL line that names the file, and the tree is NOT scanned (fail closed). The ceiling equals gitIn's own maxBuffer; SECRET_GATE_MAX_HELD_BYTES can only LOWER it (a test hook: a value that
+// is not a positive integer, or that is higher, is ignored), so no environment can weaken the gate.
+const HELD_CEILING = 256 << 20;
+const heldCeiling = () => { const n = Number(process.env.SECRET_GATE_MAX_HELD_BYTES); return Number.isSafeInteger(n) && n > 0 && n < HELD_CEILING ? n : HELD_CEILING; };
 const PROBE_BYTES = 8000; // the scanner's looksBinary reads this many first bytes
-function readBlobs(shas, probe, looksBinary) {
+function readBlobs(shas, probe, looksBinary, nameOf = new Map()) {
   const ids = [...new Set(shas)];
+  const ceiling = heldCeiling();
+  let held = 0;
   return new Promise((resolve, reject) => {
     const out = new Map();
     let next = 0;
@@ -79,7 +87,8 @@ function readBlobs(shas, probe, looksBinary) {
     let cur = null; // { id, left, keep: true | false | null (not yet probed), parts, have }
     let bad = null;
     const child = spawn('git', [NO_REPLACE, 'cat-file', '--batch'], { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'], env: gitEnv() });
-    const stop = (msg) => { if (!bad) bad = Object.assign(new Error(msg), { code: 'ECATFILE' }); child.kill(); };
+    const stop = (msg, code = 'ECATFILE') => { if (!bad) bad = Object.assign(new Error(msg), { code }); child.kill(); };
+    const tooBig = (id, what) => stop(`${esc(nameOf.get(id) || id)} ${what}: more than ${ceiling} bytes of staged text would be held in memory at once`, 'EHELD');
     child.stdout.on('data', (chunk) => {
       if (bad) return;
       let data = head.length ? Buffer.concat([head, chunk]) : chunk;
@@ -94,14 +103,18 @@ function readBlobs(shas, probe, looksBinary) {
           if (cur.keep === false) continue;
           cur.parts.push(piece);
           cur.have += take;
+          held += take;
+          if (held > ceiling) return tooBig(cur.id, 'is too large to hold');
           if (cur.keep === null && (cur.have >= PROBE_BYTES || cur.left === 0)) {
             cur.keep = !looksBinary(Buffer.concat(cur.parts));
-            if (!cur.keep) cur.parts = [];
+            if (!cur.keep) { held -= cur.have; cur.parts = []; }
           }
         } else if (cur) {
           if (data[pos] !== 10) return stop('cat-file output was malformed');
           pos++;
-          out.set(cur.id, cur.keep === false ? BINARY_BLOB : Buffer.concat(cur.parts));
+          let whole = BINARY_BLOB;
+          if (cur.keep !== false) { try { whole = Buffer.concat(cur.parts); } catch { return tooBig(cur.id, 'could not be joined'); } }
+          out.set(cur.id, whole);
           cur = null;
         } else {
           const nl = data.indexOf(10, pos);
@@ -113,6 +126,7 @@ function readBlobs(shas, probe, looksBinary) {
           if (parts[1] === 'missing') { out.set(id, null); continue; }
           const size = Number(parts[2]);
           if (!Number.isSafeInteger(size) || size < 0) return stop('cat-file output was malformed');
+          if (!probe.has(id) && held + size > ceiling) return tooBig(id, 'is too large to hold'); // a header already says it: refused before one byte is held
           cur = { id, left: size, keep: probe.has(id) ? null : true, parts: [], have: 0 };
         }
       }
@@ -179,7 +193,8 @@ async function main() {
   };
   const hits = new Set();
   let acked = 0;
-  const keep = (h, where, acks) => { if (acks.has(h.fp)) acked++; else hits.add(`${where} ${h.pattern} (fp ${h.fp})`); };
+  const tooLargeHits = new Set(); // classified by the hit's own pattern where it is kept (t342 F5): the line's text carries a file name, which a stranger chooses
+  const keep = (h, where, acks) => { if (acks.has(h.fp)) acked++; else (h.pattern === scan.WIDE_TOO_LARGE ? tooLargeHits : hits).add(`${where} ${h.pattern} (fp ${h.fp})`); };
   const headAcks = acksAt('HEAD');
 
   let scanned = 0;
@@ -190,8 +205,9 @@ async function main() {
     const allBinaryNamed = new Map(); // id -> true when every path that stages it has a binary-looking name
     for (const e of wanted) allBinaryNamed.set(e.sha, allBinaryNamed.get(e.sha) !== false && BINARY.test(e.name));
     const probe = new Set([...allBinaryNamed].filter(([, b]) => b).map(([id]) => id));
-    try { blobs = await readBlobs(wanted.map((e) => e.sha), probe, (b) => scan.looksBinary(b) && !scan.wideKinds(b).length); } catch (e) {
-      fails.push(`git could not read the staged files (${e && e.code ? e.code : 'cat-file error'}); the tree was NOT scanned`);
+    const nameOf = new Map(wanted.map((e) => [e.sha, e.name]));
+    try { blobs = await readBlobs(wanted.map((e) => e.sha), probe, (b) => scan.looksBinary(b) && !scan.wideKinds(b).length, nameOf); } catch (e) {
+      fails.push(e && e.code === 'EHELD' ? `${e.message}; the tree was NOT scanned` : `git could not read the staged files (${e && e.code ? e.code : 'cat-file error'}); the tree was NOT scanned`);
     }
   }
   // A binary-looking NAME only marks a blob for the content probe: it is skipped when its bytes are binary too (a NUL in its first bytes,
@@ -230,8 +246,8 @@ async function main() {
   }
   if (badAck.length) fails.push(`${ACKS} line(s) ${badAck.join(', ')} (revision:line) are not a 16-hex fingerprint; refusing to guess what they acknowledge`);
   // a file too large to decode holds no match and no value: its own line says what an acknowledgement of it does
-  const tooLarge = [...hits].filter((h) => h.includes(` ${scan.WIDE_TOO_LARGE} (fp `));
-  const matches = [...hits].filter((h) => !tooLarge.includes(h));
+  const tooLarge = [...tooLargeHits];
+  const matches = [...hits];
   if (tooLarge.length) fails.push(`${tooLarge.length} file(s) the scanner reads as UTF-16 or UTF-32 text are larger than ${scan.WIDE_DECODE_MAX_BYTES >> 20} MiB, so their wide text was NOT decoded or scanned. Check each for keys first: acknowledging its fingerprint in ${ACKS} lets those exact bytes pass without the wide-text scan: ${tooLarge.slice(0, 5).join('; ')}${tooLarge.length > 5 ? ' ...' : ''}`);
   if (matches.length) fails.push(`${matches.length} secret-shaped match(es), values never printed. Remove each and rotate it if it was real, or acknowledge a known public value by fingerprint in ${ACKS}, committed on the branch you push: ${matches.slice(0, 5).join('; ')}${matches.length > 5 ? ' ...' : ''}`);
   if (fails.length) {
