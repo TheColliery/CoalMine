@@ -32,9 +32,19 @@ export const OUTER_TIMEOUT_MS = RUN_TIMEOUT_MS + TEST_TIMEOUT_MS + OUTER_GRACE_M
 export const RUN_KILL_SIGNAL = 'SIGKILL';
 export const WAVE_RUN = 'scripts/lib/wave-run.mjs';
 
-export function testSpawnPlan(tests, baseEnv) {
+// THE NODE 22 MAPPING (the head's ruling, the c113 bounce of 2026-11-18, on the CI cut measured in CoalMine jobs 134464623316 and 134467705581). On Node 22
+// --test-timeout clocks the WHOLE FILE, so the per-test value of 120 s cut the file at 120 s: tests 1 to 44 of secret-gate.test.mjs took about 44 s, then test 45
+// ("wide text past the decode bound") ran at least about 77 s (five gate runs over a 9 MiB blob) before the clock ended the file. The same cut hit the older blob
+// in CoalLedger (fc9dc14, job 133162505764), so returning to an older blob is no fix. The cut test is canon: its cost is couriered upward to the canon owner, never
+// edited in this room. The flag therefore carries FILE_CLOCK_MS on Node 22 (the file clock this room already holds) and TEST_TIMEOUT_MS on Node 24 and later. The
+// boundary is "before Node 24", not "Node 22 exactly": a line before 24 clocks the whole file too, and no such line is in the matrix.
+export function fileTimeoutFlagMs(nodeMajor) {
+  return nodeMajor < 24 ? FILE_CLOCK_MS : TEST_TIMEOUT_MS;
+}
+
+export function testSpawnPlan(tests, baseEnv, nodeMajor = Number(process.versions.node.split('.')[0])) {
   return {
-    args: [WAVE_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(TEST_TIMEOUT_MS), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', ...tests],
+    args: [WAVE_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(fileTimeoutFlagMs(nodeMajor)), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', ...tests],
     env: { ...baseEnv },
     timeout: OUTER_TIMEOUT_MS,
     killSignal: RUN_KILL_SIGNAL,

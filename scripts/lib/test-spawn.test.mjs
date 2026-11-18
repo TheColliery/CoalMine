@@ -15,11 +15,19 @@ import { testSpawnPlan, HEAP_MB, TEST_TIMEOUT_MS, FILE_CLOCK_MS, RUN_TIMEOUT_MS,
 const ROOM = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 test('test-spawn: the argv is the wave runner with the room numbers, then the file list after --', () => {
-  const { args } = testSpawnPlan(['a.test.mjs', 'b.test.mjs'], {});
+  // Pinned to Node 24, where --test-timeout clocks each test: the default node of this box may be 22 (whole-file clock), see the next test.
+  const { args } = testSpawnPlan(['a.test.mjs', 'b.test.mjs'], {}, 24);
   assert.deepEqual(args, [WAVE_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(TEST_TIMEOUT_MS), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', 'a.test.mjs', 'b.test.mjs']);
   assert.equal(WAVE_RUN, 'scripts/lib/wave-run.mjs');
   assert.ok(!args.includes('--serial'), 'files are admitted by the live reading, not run one at a time');
   assert.ok(!args.some((a) => a.startsWith('--test-')), 'the node --test flags are wave-run\'s own business (force-exit, the clock per test), not the plan\'s');
+});
+
+test('test-spawn: on Node 22 the --test-timeout value is the FILE clock (it clocks the whole file there); on Node 24 and later it is the per-test clock', () => {
+  const flagOf = (args) => args[args.indexOf('--file-timeout-ms') + 1];
+  assert.equal(flagOf(testSpawnPlan(['a.test.mjs'], {}, 22).args), String(FILE_CLOCK_MS), 'Node 22 (whole-file clock)');
+  assert.equal(flagOf(testSpawnPlan(['a.test.mjs'], {}, 24).args), String(TEST_TIMEOUT_MS), 'Node 24 (per test)');
+  assert.equal(flagOf(testSpawnPlan(['a.test.mjs'], {}, 26).args), String(TEST_TIMEOUT_MS), 'Node 26 (per test)');
 });
 
 test('test-spawn: the per-test clock is a named, finite value above the slowest measured file (47.7 s, 2026-10-08) and not past two minutes', () => {
@@ -69,7 +77,8 @@ function plant(t, probeSource, testClockMs = 3000) {
   assert.notEqual(roster, runner, 'the roster in the copy was replaced');
   fs.writeFileSync(path.join(dir, 'scripts', 'test.mjs'), roster);
   const planSrc = fs.readFileSync(path.join(ROOM, 'scripts', 'lib', 'test-spawn.mjs'), 'utf8');
-  const plan = planSrc.replace('TEST_TIMEOUT_MS = 120000', `TEST_TIMEOUT_MS = ${testClockMs}`).replace('RUN_TIMEOUT_MS = 600000', `RUN_TIMEOUT_MS = ${PLANT_RUN_MS}`);
+  // The file clock is patched with the per-test one: on Node 22 the flag carries the file clock (fileTimeoutFlagMs), so the copy's clock stays the one the fixture set on every leg.
+  const plan = planSrc.replace('TEST_TIMEOUT_MS = 120000', `TEST_TIMEOUT_MS = ${testClockMs}`).replace('FILE_CLOCK_MS = 240000', `FILE_CLOCK_MS = ${testClockMs}`).replace('RUN_TIMEOUT_MS = 600000', `RUN_TIMEOUT_MS = ${PLANT_RUN_MS}`);
   assert.notEqual(plan, planSrc, 'the numbers in the copy were patched');
   fs.writeFileSync(path.join(dir, 'scripts', 'lib', 'test-spawn.mjs'), plan);
   for (const f of COPIED) fs.copyFileSync(path.join(ROOM, 'scripts', 'lib', f), path.join(dir, 'scripts', 'lib', f));
