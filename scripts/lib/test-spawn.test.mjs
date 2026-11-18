@@ -10,14 +10,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { testSpawnPlan, HEAP_MB, TEST_TIMEOUT_MS, FILE_CLOCK_MS, RUN_TIMEOUT_MS, OUTER_TIMEOUT_MS, RUN_KILL_SIGNAL, WAVE_RUN } from './test-spawn.mjs';
+import { parseRunArgs, fileTimeLine } from './test-run.mjs';
+import { testSpawnPlan, HEAP_MB, TEST_TIMEOUT_MS, FILE_CLOCK_MS, RUN_TIMEOUT_MS, OUTER_TIMEOUT_MS, RUN_KILL_SIGNAL, TEST_RUN, WAVE_RUN } from './test-spawn.mjs';
 
 const ROOM = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 test('test-spawn: the argv is the wave runner with the room numbers, then the file list after --', () => {
   // Pinned to Node 24, where --test-timeout clocks each test: the default node of this box may be 22 (whole-file clock), see the next test.
   const { args } = testSpawnPlan(['a.test.mjs', 'b.test.mjs'], {}, 24);
-  assert.deepEqual(args, [WAVE_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(TEST_TIMEOUT_MS), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', 'a.test.mjs', 'b.test.mjs']);
+  assert.deepEqual(args, [TEST_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(TEST_TIMEOUT_MS), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', 'a.test.mjs', 'b.test.mjs']);
+  assert.equal(TEST_RUN, 'scripts/lib/test-run.mjs');
   assert.equal(WAVE_RUN, 'scripts/lib/wave-run.mjs');
   assert.ok(!args.includes('--serial'), 'files are admitted by the live reading, not run one at a time');
   assert.ok(!args.some((a) => a.startsWith('--test-')), 'the node --test flags are wave-run\'s own business (force-exit, the clock per test), not the plan\'s');
@@ -67,7 +69,7 @@ test('test-spawn: scripts/test.mjs spawns its child with the plan argv, env, bac
 // ---- end to end: the REAL test.mjs, plan and wave runner, copied into a temp tree whose roster is one planted file ----
 // The per-test clock and the whole-run deadline are patched down in the COPY only (3 s and 6 s unless a test says otherwise). Every
 // run is bounded by its own 40 s timer that kills the whole tree, so a regression fails this test instead of hanging the suite.
-const COPIED = ['wave-run.mjs', 'machine-reading.mjs', 'stdout-sync.mjs', 'test-notice.mjs'];
+const COPIED = ['wave-run.mjs', 'test-run.mjs', 'machine-reading.mjs', 'stdout-sync.mjs', 'test-notice.mjs'];
 function plant(t, probeSource, testClockMs = 3000) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-testspawn-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
@@ -165,4 +167,24 @@ test('test-spawn (run) TAP-names MUST, control: a file whose named test passes i
   const r = await runPlanted(dir);
   assert.equal(r.code, 0, r.out.slice(-500));
   assert.doesNotMatch(r.out, /VACUOUS/);
+});
+
+// 29ix (c116): the CI gate reads each file's wall time from its job log, so every file prints one `file <path> <ms> ms <STATUS>` line, a PASS included
+// (the wave runner's own CLI prints only the files that did not pass, and no time at all).
+test('test-spawn (run) TIMES: every file prints its own wall time on its own line, a PASS included', async (t) => {
+  const dir = plant(t, "import test from 'node:test';\ntest('a named test that passes', () => {});\n");
+  const r = await runPlanted(dir);
+  assert.equal(r.code, 0, r.out.slice(-500));
+  assert.match(r.out, /^file scripts\/lib\/probe\.test\.mjs \d+ ms PASS$/m, r.out.slice(-600));
+});
+
+// 29ix: the room's runner reads its flags strictly (an unknown flag, a missing number or an empty roster is a usage error, never a default) and prints one timing line per file.
+test('test-run: the flags are read strictly; a missing number, an unknown flag or an empty roster is a usage error, and the file line carries the path, whole milliseconds and the status', () => {
+  const ok = parseRunArgs(['--heap-mb', '2048', '--file-timeout-ms', '120000', '--deadline-ms', '600000', '--', 'a.test.mjs']);
+  assert.deepEqual(ok, { files: ['a.test.mjs'], heapMb: 2048, fileTimeoutMs: 120000, deadlineMs: 600000 });
+  assert.throws(() => parseRunArgs(['--heap-mb', '2048', '--file-timeout-ms', '120000', '--', 'a.test.mjs']), /--deadline-ms is required/);
+  assert.throws(() => parseRunArgs(['--heap-mb', '0', '--file-timeout-ms', '1', '--deadline-ms', '1', '--', 'a.test.mjs']), /positive whole number/);
+  assert.throws(() => parseRunArgs(['--serial', '--heap-mb', '1', '--file-timeout-ms', '1', '--deadline-ms', '1', '--', 'a.test.mjs']), /unknown argument: --serial/);
+  assert.throws(() => parseRunArgs(['--heap-mb', '1', '--file-timeout-ms', '1', '--deadline-ms', '1']), /no test files/);
+  assert.equal(fileTimeLine('scripts/a.test.mjs', 1234.6, 'PASS'), 'file scripts/a.test.mjs 1235 ms PASS');
 });

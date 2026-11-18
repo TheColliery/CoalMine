@@ -30,6 +30,8 @@ export const RUN_TIMEOUT_MS = 600000;
 export const OUTER_GRACE_MS = 30000;
 export const OUTER_TIMEOUT_MS = RUN_TIMEOUT_MS + TEST_TIMEOUT_MS + OUTER_GRACE_MS;
 export const RUN_KILL_SIGNAL = 'SIGKILL';
+export const TEST_RUN = 'scripts/lib/test-run.mjs';
+// The canon wave runner the room's runner calls (test-run.mjs); the plan no longer starts it directly.
 export const WAVE_RUN = 'scripts/lib/wave-run.mjs';
 
 // THE NODE 22 MAPPING (the head's ruling, the c113 bounce of 2026-11-18, on the CI cut measured in CoalMine jobs 134464623316 and 134467705581). On Node 22
@@ -44,7 +46,7 @@ export function fileTimeoutFlagMs(nodeMajor) {
 
 export function testSpawnPlan(tests, baseEnv, nodeMajor = Number(process.versions.node.split('.')[0])) {
   return {
-    args: [WAVE_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(fileTimeoutFlagMs(nodeMajor)), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', ...tests],
+    args: [TEST_RUN, '--heap-mb', String(HEAP_MB), '--file-timeout-ms', String(fileTimeoutFlagMs(nodeMajor)), '--deadline-ms', String(RUN_TIMEOUT_MS), '--file-clock-ms', String(FILE_CLOCK_MS), '--', ...tests],
     env: { ...baseEnv },
     timeout: OUTER_TIMEOUT_MS,
     killSignal: RUN_KILL_SIGNAL,
