@@ -3,12 +3,12 @@
 // A pin is { rel, blob, why }: the file at `rel` is exempt ONLY while its content hashes to `blob` (git hash-object), so one edited byte or one re-sync
 // makes the file a finding again ("re-derive") and the exemption cannot outlive its reason. Each `why` quotes the finding it answers.
 // A second export, ASYNC_GIT_PINS, takes the same { rel, blob, why } rows for the room's MEDIUM-1 rule only (git-env-census.room.test.mjs), never the census or verify.mjs.
-// The row is a byte-equal org carrier, never edited here; the finding went upward in the 09a return. The second row (scripts/secret-scan.test.mjs) came out at 09b: Bankfire's a0319dcd builds every child env from named keys, which the census reads whole.
+// The row is a byte-equal org carrier, never edited here; the finding went upward in the 09a return. The second row (scripts/secret-scan.test.mjs) came out at 09b: a canon test builds every child env from named keys, which the census reads whole.
 export const ROOM_PINS = [
   {
     rel: 'scripts/secret-gate.mjs',
-    blob: '0dd7e4e1f3ce9cf64a9a787836cf82ed47f95d44',
-    why: "The pin follows the canon re-copy of this file from .github 1af0733 (its git spawns are re-read at INSPECT; the blob moved from 856956a1 to 6b452f2f at f1c9a4d, and from 6b452f2f to 4bf97717 at 1af0733; and from 4bf97717 to 175f0a52 at 609d86b, and from 175f0a52 to 33e8a4ae at a7161df, and from 33e8a4ae to 0dd7e4e1 at 03438a1 (Bankfire c5c22d4)). The canon gate (published-code template) builds its git env as a FILTER of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES (commit mode must read the index a hook names), which the canon census refuses by rule at both of its git spawns (`gitIn` and `readBlobs`):\"execFileSync('git', ...) env: holds process.env without gitEnv() -- ambient GIT_* reaches the child\". The canon ships no pins, so each room that carries the gate pins it here.",
+    blob: '719f76676090101f56113ac5a0cd8cb13721d470',
+    why: "The pin follows the canon re-copy of this file from .github 1af0733 (its git spawns are re-read at INSPECT; the blob moved from 856956a1 to 6b452f2f at f1c9a4d, and from 6b452f2f to 4bf97717 at 1af0733; and from 4bf97717 to 175f0a52 at 609d86b, and from 175f0a52 to 33e8a4ae at a7161df, and from 33e8a4ae to 0dd7e4e1 at 03438a1, and from 0dd7e4e1 to 719f7667 at 78c53e6). The canon gate (published-code template) builds its git env as a FILTER of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES (commit mode must read the index a hook names), which the canon census refuses by rule at both of its git spawns (`gitIn` and `readBlobs`):\"execFileSync('git', ...) env: holds process.env without gitEnv() -- ambient GIT_* reaches the child\". The canon ships no pins, so each room that carries the gate pins it here.",
   },
 ];
 
@@ -16,12 +16,12 @@ export const ROOM_PINS = [
 export const ASYNC_GIT_PINS = [
   {
     rel: 'scripts/secret-gate.mjs',
-    blob: '0dd7e4e1f3ce9cf64a9a787836cf82ed47f95d44',
-    why: "Its one async git spawn (cat-file --batch, streamed on stdin, line 89, read at 03438a1) passes gitEnv(), the canon's own filter of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
+    blob: '719f76676090101f56113ac5a0cd8cb13721d470',
+    why: "Its one async git spawn (cat-file --batch, streamed on stdin, line 108, read at 78c53e6, from 0dd7e4e1 to 719f7667 at 78c53e6) passes gitEnv(), the canon's own filter of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
   },
   {
     rel: 'scripts/secret-gate.test.mjs',
-    blob: '77eeb1260f1b28aeb4f3fa97173e2809b85e34b0',
-    why: "Its two async git spawns (hash-object -w --stdin, at lines 429 and 796, read at 03438a1) each pass gitEnv(), the same canon filter; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
+    blob: '18842d6019639045b452f68affc88feb7c67b0b3',
+    why: "Its two async git spawns (hash-object -w --stdin, at lines 429 and 799, read at 78c53e6, from 77eeb126 to 18842d60 at 78c53e6) each pass gitEnv(), the same canon filter; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
   },
 ];

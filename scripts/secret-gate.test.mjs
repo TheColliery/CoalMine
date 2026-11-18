@@ -514,7 +514,10 @@ fs.writeFileSync(FAKE_CATFILE, [
   "if (mode === 'nonl') out = Buffer.concat([real.subarray(0, firstEnd - 1), real.subarray(firstEnd)]);",
   // huge: the first header declares 300,000,000 bytes (past the 256 MiB ceiling) and the stream then ends: only the header check can answer it by name
   "if (mode === 'huge') out = Buffer.concat([Buffer.from(head[0] + ' blob 300000000' + String.fromCharCode(10), 'latin1'), Buffer.from('xx')]);",
-  "process.stdout.write(out, () => { process.exitCode = mode === 'exit1' ? 1 : 0; });",
+  // rechunk: the whole, correct answer, handed over in pieces of FAKE_CHUNK bytes, each written when the last was accepted (no timer: a 1 ms timer is about 15 ms on Windows), so the gate sees pieces of a size git does not choose (18b: the verdict must not depend on them)
+  "if (process.env.FAKE_SPAWN_LOG) fs.appendFileSync(process.env.FAKE_SPAWN_LOG, 'cat-file' + String.fromCharCode(10));",
+  "if (mode === 'rechunk') { const n = Number(process.env.FAKE_CHUNK); (async () => { for (let i = 0; i < out.length; i += n) await new Promise((r) => process.stdout.write(out.subarray(i, i + n), r)); })(); }",
+  "else process.stdout.write(out, () => { process.exitCode = mode === 'exit1' ? 1 : 0; });",
 ].join('\n'));
 const FAKE_PRELOAD = path.join(SANDBOX, 'fake-catfile.preload.mjs');
 fs.writeFileSync(FAKE_PRELOAD, [
@@ -886,25 +889,168 @@ test('the bytes held for staged text are bounded: a text blob past the ceiling i
   assert.strictEqual(run(binary, [], '', { SECRET_GATE_MAX_HELD_BYTES: '100000' }).code, 0, 'a binary-named binary blob is dropped as it streams and holds nothing');
 });
 
-// t340 (CodeRabbit, on CoalWash's copy): the NUL-removed reading de-duplicated each hit by scanning every hit before it, so one line of many
-// distinct key-shaped tokens with NULs between their characters cost the square of their count (20,000 tokens: 11.8 s on one machine; 40,000:
-// 41.6 s). With a Set it is linear (20,000: about 0.1 s). No wall-clock assertion (t342 F6, 2026-11-17: a loaded runner can pass a 2 s bound slowly): the scan runs in a CHILD with a heap cap and a
-// kill-timeout, and a killed child is the failure. The file is 40,000 tokens, where the quadratic reading costs 41.6 s against a 30 s timeout and the linear one about 0.2 s: two orders of magnitude of
-// margin on each side, and the count of hits and the one-hit-per-token check still run in the child.
-test('one line of 40,000 distinct key-shaped tokens with NULs between their characters is read in linear time, every token once (a killed child is the failure)', async () => {
+// t343 F5 (2026-11-18): a binary-looking NAME and a first 8,000 bytes without a NUL pattern read as wide were enough to skip a UTF-16 file whose wide text starts later: one ASCII character, then CJK text with no
+// NUL byte, then a key. The same bytes under a text name were scanned. Now a blob dropped by its prefix is still asked, chunk by chunk as it streams, whether any later chunk reads as wide text; if one does it is read
+// again and judged on its whole bytes. A real binary (NULs on both parities) is still skipped, however large, and one past the held-bytes ceiling stays skipped.
+test('a UTF-16 file under a binary-looking name whose wide text starts after the first 8,000 bytes is scanned like its text-named twin; a real binary is still skipped -- RED before 2026-11-18', () => {
+  const body = 'x' + '\u4e4e'.repeat(5000) + '\nid ' + KEY + '\n';
+  const wide = Buffer.from(body, 'utf16le');
+  const binary = Buffer.concat([Buffer.from([0x89, 0x50, 0x00, 0x00]), Buffer.alloc(20000, 0), Buffer.from(`id ${KEY}\n`, 'latin1'), Buffer.from([0x00, 0x01, 0x00]), Buffer.alloc(20000, 7)]);
+  const r = run(repo([{ 'late.bin': wide, 'twin.txt': Buffer.concat([wide, Buffer.from([0x20, 0x00])]), 'real.png': binary }]));
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /tree "late\.bin":2 aws-access-key-id/, 'the binary-named wide file is scanned: ' + r.out);
+  assert.match(r.out, /tree "twin\.txt":2 aws-access-key-id/, 'its text-named twin is, as before');
+  assert.doesNotMatch(r.out, /real\.png/, 'a real binary with NULs on both parities stays out of the text scan');
+  assert.ok(!r.out.includes(KEY) && !r.err.includes(KEY), 'the value is never printed');
+});
+
+// t343 F5, the 18a reviewer's surviving mutants (2026-11-18): the first test above fits in ONE chunk, so a gate that never asked the chunks after the drop (nochunk) or never read a flagged blob again
+// (noreread) passed it. Two files past 64 KiB, each of which only one path can find: LATE has its only wide-reading bytes after the first chunk, FIRST has them from byte 8,000, inside the first chunk, then
+// 80 KB of NUL-free CJK (a first-chunk decision judged on its first 8,000 bytes alone, "prefix", misses it). The 18b bounce replaced the per-chunk check by totals over the whole blob; the tests below it
+// (the TAIL and SPLIT witnesses, the oracle, the chunk sizes) pin that. Each file here is named .bin and holds the key on line 2.
+test('a binary-named UTF-16 file past 64 KiB is scanned whether its wide-reading bytes sit in a later chunk or in the first chunk past the prefix -- RED against the nochunk, noreread and prefix mutants', () => {
+  const utf16 = (s) => Buffer.from(s, 'utf16le');
+  const CJK = (n) => '\u4e4e'.repeat(n);
+  const late = utf16('x' + CJK(36000) + '\nid ' + KEY + '\n');
+  const first = utf16('x' + CJK(3999) + '\nid ' + KEY + '\n' + 'a'.repeat(80) + CJK(40000)); // the ASCII run starts at byte 8000, right after the prefix
+  assert.ok(late.length > 65536 && first.length > 65536 + 8000, 'both files are past the first chunk');
+  const r = run(repo([{ 'late-chunk.bin': late, 'first-chunk.bin': first }]), [], '', {}, 120000);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.match(r.out, /tree "late-chunk\.bin":2 aws-access-key-id/, 'the key in a LATER chunk is found: ' + r.out);
+  assert.match(r.out, /tree "first-chunk\.bin":2 aws-access-key-id/, 'the key in the first chunk past the prefix is found: ' + r.out);
+  assert.ok(!r.out.includes(KEY) && !r.err.includes(KEY), 'the value is never printed');
+});
+
+// 18b (HIGH): the verdict on a binary-named blob must equal judging the WHOLE file, whatever the chunk sizes. The two reviewer witnesses, rebuilt here with this file's KEY, each defeat every per-piece form of the
+// check: TAIL has 12 NULs on even positions in its first 8,000 bytes and the key line (25 odd NULs) in the first chunk past them, then one weak odd NUL every 6,200 bytes, so no piece reads wide and the whole file
+// does; SPLIT has the key line cut across the 128 KiB chunk edge with each half weakened (a few NULs on each side), again wide only in total. The third test is the oracle: blobs around the rule's thresholds,
+// the gate's verdict compared with scanning the whole buffer (looksBinary and wideKinds, then scanBytes), so a clever per-piece rule cannot pass by matching two shapes.
+const WIT_SIZE = 400000;
+const witTail = () => {
+  const b = Buffer.alloc(WIT_SIZE, 0x41);
+  for (let i = 1; i <= 12; i++) b[i * 100 + (i % 2) * 2] = 0;
+  Buffer.from('\nid ' + KEY + '\n', 'utf16le').copy(b, 8000);
+  for (let p = 70000; p + 1 < WIT_SIZE; p += 6200) { b[p] = 0x7a; b[p + 1] = 0; }
+  return b;
+};
+const witPredrop = () => {
+  const b = Buffer.alloc(WIT_SIZE, 0x41);
+  for (let i = 1; i <= 12; i++) b[i * 100 + (i % 2) * 2] = 0; // 12 NULs on even positions, split between offsets 0 and 2 mod 4 so no UTF-32 reading
+  Buffer.from('\nid ' + KEY + '\n', 'utf16le').copy(b, 8000); // 25 on odd positions
+  for (let k = 0; k < 15; k++) { b[9000 + k * 200] = 0x7a; b[9001 + k * 200] = 0; } // 15 more, all before the first piece ends
+  for (let k = 0; k < 11; k++) { const p = 70000 + k * 5000; b[p] = 0x7a; b[p + 1] = 0; } // 11 after it: under the threshold alone
+  return b;
+};
+const witSplit = () => {
+  const b = Buffer.alloc(WIT_SIZE, 0x41);
+  b[100] = 0;
+  for (const p of [130800, 130804, 130810, 130814, 131300, 131304, 131310, 131314]) b[p] = 0;
+  Buffer.from('\nid ' + KEY + '\n', 'utf16le').copy(b, 131048);
+  for (let p = 196608; p + 1 < 393216; p += 6000) { b[p] = 0x7a; b[p + 1] = 0; }
+  return b;
+};
+test('a binary-named blob whose wide-text evidence is split across pieces, each piece reading as binary, is judged on the whole file: the reviewer\'s TAIL and SPLIT witnesses are found -- RED before 18b', async () => {
+  const { wideKinds, looksBinary } = await import(pathToFileURL(LIB).href);
+  for (const [name, blob] of [['tail.bin', witTail()], ['split.bin', witSplit()], ['predrop.bin', witPredrop()]]) {
+    assert.ok(looksBinary(blob) && wideKinds(blob).length > 0, name + ': the whole file reads as wide text (the premise)');
+    for (let off = 0; off < blob.length; off += 65536) assert.strictEqual(wideKinds(blob.subarray(off, off + 65536)).length, 0, name + ': no 64 KiB piece reads wide on its own');
+    const r = run(repo([{ [name]: blob }]), [], '', {}, 120000);
+    assert.strictEqual(r.code, 1, name + ': ' + r.out + r.err);
+    assert.ok(r.out.includes('tree "' + name + '":2 aws-access-key-id'), name + ' is scanned: ' + r.out);
+    assert.ok(!r.out.includes(KEY) && !r.err.includes(KEY), 'the value is never printed');
+  }
+});
+
+test('the gate\'s verdict on a binary-named blob equals the whole-buffer verdict across the wide-text rule\'s thresholds and chunk edges (the oracle) -- RED before 18b', async () => {
+  const { wideKinds, looksBinary, scanBytes } = await import(pathToFileURL(LIB).href);
+  const make = (opposing, keyAt, later) => {
+    const b = Buffer.alloc(300000, 0x41);
+    b[3] = 0; // one NUL in the prefix: git's rule calls the blob binary
+    for (let i = 0; i < opposing; i++) b[200 + i * 100 + (i % 2) * 2] = 0; // even positions, split between offsets 0 and 2 mod 4
+    Buffer.from('\nid ' + KEY + '\n', 'utf16le').copy(b, keyAt);
+    for (let k = 0; k < later; k++) { const p = 70000 + k * 6200; b[p] = 0x7a; b[p + 1] = 0; }
+    return b;
+  };
+  const files = {};
+  for (const opposing of [0, 7, 11, 12]) for (const keyAt of [8000, 131048]) for (const later of [0, 37]) files[`b-${opposing}-${keyAt}-${later}.bin`] = make(opposing, keyAt, later);
+  const verdict = (b) => (looksBinary(b) && !wideKinds(b).length ? false : scanBytes(b, 'x').length > 0);
+  const names = Object.keys(files);
+  const outs = {};
+  for (let i = 0; i < names.length; i += 4) { // four blobs a run: the gate lists at most five matches
+    const group = names.slice(i, i + 4);
+    const out = run(repo([Object.fromEntries(group.map((n) => [n, files[n]]))]), [], '', {}, 240000).out;
+    for (const n of group) outs[n] = out;
+  }
+  let flagged = 0;
+  for (const [name, b] of Object.entries(files)) {
+    const found = outs[name].includes('tree "' + name + '":');
+    assert.strictEqual(found, verdict(b), name + ': the gate says ' + (found ? 'found' : 'skipped') + ', the whole-buffer verdict says ' + (verdict(b) ? 'found' : 'skipped'));
+    if (verdict(b)) flagged++;
+  }
+  assert.ok(flagged > 0 && flagged < Object.keys(files).length, 'the grid has both outcomes, so the comparison tests something: ' + flagged);
+});
+
+// 18b: the verdict must not depend on the size of the pieces the stream arrives in. The same two witnesses, with the cat-file answer handed over in pieces of 1,001 and 4,093 bytes (neither a multiple of
+// four, so a piece starts at a different position mod 4 each time): a gate that counted NULs by position inside each piece instead of by absolute offset would split the evidence between the two parities and miss it.
+test('the two witnesses are found whatever size the cat-file pieces arrive in (absolute offsets, not per-piece positions) -- RED against a per-piece position count', () => {
+  for (const chunk of [1001, 4093]) {
+    for (const [name, blob] of [['tail.bin', witTail()], ['split.bin', witSplit()], ['predrop.bin', witPredrop()]]) {
+      const r = run(repo([{ [name]: blob }]), [], '', { NODE_OPTIONS: `--import ${pathToFileURL(FAKE_PRELOAD).href}`, FAKE_CATFILE_MODE: 'rechunk', FAKE_CHUNK: String(chunk) }, 180000);
+      assert.strictEqual(r.code, 1, `${name} in pieces of ${chunk}: ${r.out}${r.err}`);
+      assert.ok(r.out.includes('tree "' + name + '":2 aws-access-key-id'), `${name} in pieces of ${chunk}: ${r.out}`);
+    }
+  }
+});
+
+// 18c (LOW): how many blobs are read AGAIN is pinned, so a rule that flags too much (a skew of 1) costs a test and not just time. Each gate run's cat-file children are counted through the fake's log: a tree of a
+// real binary (NULs on both parities) is read once; a tree holding the wide-in-sum witness is read twice (the stream, then that one blob again).
+test('a real binary is never read twice and a blob wide only in sum is read exactly twice (the re-read count) -- RED against a rule that flags too much', () => {
+  const countReads = (files) => {
+    const log = path.join(SANDBOX, 'spawn-' + Math.random().toString(36).slice(2) + '.log');
+    const r = run(repo([files]), [], '', { NODE_OPTIONS: `--import ${pathToFileURL(FAKE_PRELOAD).href}`, FAKE_CATFILE_MODE: 'plain', FAKE_SPAWN_LOG: log }, 120000);
+    const n = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).length : 0;
+    return { r, n };
+  };
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x00, 0x00]), Buffer.alloc(30000, 0), Buffer.from('id ' + KEY + '\n', 'latin1'), Buffer.from([0x00, 0x01, 0x00]), Buffer.alloc(30000, 7), Buffer.from([0, 3, 0, 5, 0, 0, 0, 9])]);
+  const plain = countReads({ 'real.png': png });
+  assert.strictEqual(plain.r.code, 0, plain.r.out + plain.r.err);
+  assert.strictEqual(plain.n, 1, 'a real binary is read once');
+  const few = Buffer.alloc(20000, 0x41);
+  few[3] = 0; few[10] = 0; few[20] = 0; few[30] = 0; few[40] = 0; // five NULs, all on even positions: binary by git's rule, far under the wide-text floor of 12
+  const fewReads = countReads({ 'few.bin': few });
+  assert.strictEqual(fewReads.r.code, 0, fewReads.r.out + fewReads.r.err);
+  assert.strictEqual(fewReads.n, 1, 'five NULs on one parity are not wide text: read once (a floor of 1 would read it again)');
+  const wide = countReads({ 'predrop.bin': witPredrop() });
+  assert.strictEqual(wide.r.code, 1, wide.r.out + wide.r.err);
+  assert.strictEqual(wide.n, 2, 'a blob wide only in sum is read twice');
+});
+
+// t340 (CodeRabbit, on CoalWash's copy): the NUL-removed reading de-duplicated each hit by scanning every hit before it, so one line of many distinct key-shaped tokens with NULs between their characters cost
+// the square of their count (20,000 tokens: 11.8 s on one machine; 40,000: 41.6 s). With a Set it is linear. NO CLOCK decides it (t342 F6, then t344 F2, 2026-11-18: a kill-timeout passed a quadratic scan on a
+// machine 1.4 times faster than the one that measured it): the child counts the ELEMENTS VISITED by Array's searching methods (some, find, findIndex, includes, indexOf, filter, every and their kin) while it scans,
+// and the visits must stay under 20 per token. A Set costs none (0 at 4,000 tokens); the quadratic de-duplication costs n(n-1)/2 (7,998,000 at 4,000), 100 times the bound, on any machine. The timeout stays only as
+// the process-safety limit. The count sees searches through those methods, not a hand-written loop: a quadratic written as a loop would pass this test and is the limit of it.
+test('one line of 4,000 distinct key-shaped tokens with NULs between their characters is read in linear WORK, every token once (counted visits, no clock) -- RED against the quadratic de-duplication', async () => {
   const { scanText } = await import(pathToFileURL(LIB).href);
+  const N = 4000;
   const code = [
-    `import { scanText } from ${JSON.stringify(pathToFileURL(LIB).href)};`,
-    `const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';`,
-    `const tok = (i) => { let s = ''; for (let k = 0; k < 16; k++) { s += A[i % 32]; i = Math.floor(i / 32); } return 'AKIA' + s; };`,
-    `const line = Array.from({ length: 40000 }, (_, i) => tok(i)).join(' ').split('').join(String.fromCharCode(0));`,
-    `const hits = scanText(line, 'f.txt');`,
-    `console.log(JSON.stringify({ n: hits.length, distinct: new Set(hits.map((h) => h.fp)).size }));`,
+    "let visited = 0;",
+    "for (const m of ['some', 'find', 'findIndex', 'findLast', 'findLastIndex', 'includes', 'indexOf', 'lastIndexOf', 'filter', 'every']) { const orig = Array.prototype[m]; Array.prototype[m] = function (...a) { visited += this.length; return orig.apply(this, a); }; }",
+    "const { scanText } = await import(" + JSON.stringify(pathToFileURL(LIB).href) + ");",
+    "const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';",
+    "const tok = (i) => { let s = ''; for (let k = 0; k < 16; k++) { s += A[i % 32]; i = Math.floor(i / 32); } return 'AKIA' + s; };",
+    "const line = Array.from({ length: " + N + " }, (_, i) => tok(i)).join(' ').split('').join(String.fromCharCode(0));",
+    "visited = 0;",
+    "const hits = scanText(line, 'f.txt');",
+    "console.log(JSON.stringify({ n: hits.length, distinct: new Set(hits.map((h) => h.fp)).size, visited }));",
   ].join('\n');
-  const r = spawnSync(process.execPath, ['--max-old-space-size=256', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 30000, env: { PATH: process.env.PATH } });
-  assert.strictEqual(r.signal, null, `the scan of 40,000 tokens was killed: it is no longer linear (${r.error ? r.error.code : r.signal})`);
+  const r = spawnSync(process.execPath, ['--max-old-space-size=256', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 60000, env: { PATH: process.env.PATH } });
+  assert.strictEqual(r.signal, null, 'the child was killed by the safety timeout: ' + (r.error ? r.error.code : r.signal));
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.deepStrictEqual(JSON.parse(r.stdout), { n: 40000, distinct: 40000 });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.n, N);
+  assert.strictEqual(out.distinct, N);
+  assert.ok(out.visited < 20 * N, 'the scan of ' + N + ' tokens visited ' + out.visited + ' array elements while searching (bound ' + 20 * N + '): it is no longer linear');
   const spaced = (s) => s.split('').join(String.fromCharCode(0));
   assert.strictEqual(scanText(`${spaced(KEY)} ${spaced(KEY)}`, 'f.txt').length, 1, 'the same token twice on one line is one hit');
 });

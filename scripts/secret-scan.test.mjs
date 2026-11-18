@@ -1383,3 +1383,19 @@ test('the scanner drops the trailing TAB of a +++ path without a regular-express
   const hits = scanPatch(patch);
   assert.deepStrictEqual(hits.map((h) => h.file), ['my file.txt'], 'the one TAB git writes after a name with a space is not part of the name');
 });
+
+// F4, push path (1107ag): a GUARD, green on the lib before this unit too. The same witness as a pushed hunk: the added lines are the file's bytes cut at
+// each 0x0A byte, as git cuts them. The push path's raw patch reading runs without NUL removal, so it never holds a wide key; the key is found only by
+// the decoded run, which is on line 3. The guard keeps it that way if the raw reading ever gains a NUL drop.
+test('F4 push path guard: a pushed wide hunk reports the key on the decoded line (line 3)', () => {
+  const KEY = ['gh', 'p_', 'A'.repeat(36)].join('');
+  const file = Buffer.from('a\n' + String.fromCharCode(0x0e0a) + '\nid ' + KEY + '\n', 'utf16le');
+  const pieces = [];
+  let from = 0;
+  for (let i = 0; i < file.length; i++) if (file[i] === 0x0a) { pieces.push(file.subarray(from, i)); from = i + 1; }
+  const body = pieces.map((p) => '+' + p.toString('latin1') + '\n').join('');
+  const patch = Buffer.from('\0COMMIT ' + '1'.repeat(40) + '\n' + 'diff --git a/w.txt b/w.txt\n--- /dev/null\n+++ b/w.txt\n@@ -0,0 +1,' + pieces.length + ' @@\n' + body, 'latin1');
+  const hits = scanLib.scanPatch(patch).filter((h) => h.pattern === 'github-token');
+  assert.deepStrictEqual(hits.map((h) => h.line), [3], 'the key was reported on the raw patch line');
+  assert.strictEqual(hits[0].fp, scanLib.fingerprint('w.txt', 'github-token', KEY), 'the fingerprint changed');
+});
