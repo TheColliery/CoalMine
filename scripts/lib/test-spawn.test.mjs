@@ -195,3 +195,11 @@ test('test-run: the flags are read strictly; a missing number, an unknown flag o
   assert.throws(() => parseRunArgs(['--heap-mb', '1', '--file-timeout-ms', '1', '--deadline-ms', '1']), /no test files/);
   assert.equal(fileTimeLine('scripts/a.test.mjs', 1234.6, 'PASS'), 'file scripts/a.test.mjs 1235 ms PASS');
 });
+
+// 3.28.4 (i44 MEDIUM, c118): the runner answers --help with its usage on stdout and exits 0, before any required-number check, and does no work.
+test('test-run: --help prints the usage on stdout and exits 0, with no run started (the required numbers are not asked for)', () => {
+  const r = spawnSync(process.execPath, [path.join(ROOM, 'scripts', 'lib', 'test-run.mjs'), '--help'], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^usage: test-run\.mjs /m, r.stdout);
+  assert.equal(parseRunArgs(['-h']).help, true);
+});

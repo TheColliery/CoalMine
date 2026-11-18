@@ -25,6 +25,7 @@ export function parseRunArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') { out.files.push(...argv.slice(i + 1)); break; }
+    if (a === '--help' || a === '-h') { out.help = true; continue; }
     if (a in NUMBER_FLAGS) {
       const raw = argv[++i];
       if (!/^[1-9]\d*$/.test(raw ?? '')) throw new Error(`${a} needs a positive whole number`);
@@ -32,6 +33,7 @@ export function parseRunArgs(argv) {
     } else if (a.startsWith('-')) throw new Error(`unknown argument: ${a}`);
     else out.files.push(a);
   }
+  if (out.help) return out; // --help asks for no numbers and starts no run
   for (const k of ['heapMb', 'fileTimeoutMs', 'deadlineMs']) {
     if (out[k] === undefined) throw new Error(`--${k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())} is required: the room's numbers, and a run with no finite clock is refused`);
   }
@@ -49,6 +51,7 @@ async function main() {
     process.exitCode = EXIT_USAGE;
     return;
   }
+  if (args.help) { process.stdout.write(USAGE); return; }
   const started = new Map();
   let run;
   try {
