@@ -40,6 +40,13 @@ test('test-spawn: the file clock is finite, above the slowest serial file and ab
   assert.ok(Number.isInteger(FILE_CLOCK_MS) && FILE_CLOCK_MS > 47700 && FILE_CLOCK_MS > TEST_TIMEOUT_MS && FILE_CLOCK_MS < RUN_TIMEOUT_MS, String(FILE_CLOCK_MS));
 });
 
+// 29ix (c116): sized from CI readings of the runner, not from one box. The slowest Node 22 file held is secret-gate.test.mjs at 232,811 ms (Windows, CI run 44351624973,
+// job 134968603135, commit a58bfcc). The clock holds at least 1.5 times that reading.
+test('test-spawn: the file clock holds at least 1.5 times the slowest Node 22 file read on CI (232,811 ms, run 44351624973)', () => {
+  const SLOWEST_NODE22_FILE_MS = 232811;
+  assert.ok(FILE_CLOCK_MS >= Math.ceil(1.5 * SLOWEST_NODE22_FILE_MS), `${FILE_CLOCK_MS} < ${Math.ceil(1.5 * SLOWEST_NODE22_FILE_MS)}`);
+});
+
 test('test-spawn: the whole-run deadline is finite, above the measured serial suite (271 s, 2026-10-08), and the outer backstop around wave-run stays inside the gate job timeout (15 min)', () => {
   assert.ok(Number.isInteger(RUN_TIMEOUT_MS) && RUN_TIMEOUT_MS > 271000, String(RUN_TIMEOUT_MS));
   assert.ok(OUTER_TIMEOUT_MS > RUN_TIMEOUT_MS + TEST_TIMEOUT_MS, 'the backstop must outlast the deadline AND the wait wave-run allows its killed children');

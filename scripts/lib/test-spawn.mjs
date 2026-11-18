@@ -20,12 +20,17 @@
 // test took 10.6 s (secret-scan.test.mjs, "a tag chain longer than the bound FAILS CLOSED") and the slowest file 47.7 s wall (secret-scan.test.mjs; next render.test.mjs 41.5 s,
 // install.test.mjs 39.5 s). 120 s is about 2.5 times the slowest file. A synchronous block is cut by that call's own `timeout`, not by this flag.
 // FILE_CLOCK_MS is the wall clock of ONE file, the clock that reaches a hang before the file's first test (which --test-timeout never does). Waves put several files on the box at once,
-// so a file's wall can be longer than its serial 47.7 s; 240 s is about five times it and twice the per-test clock.
+// so a file's wall can be longer than its serial 47.7 s. 240 s (the 2026-10-08 figure) was sized from one box; it was cut on CI, so FILE_CLOCK_MS is now sized from the
+// runner (29ix, 2026-11-18). CI READINGS, Node 22, commit a58bfcc, the slowest file of each leg (run ids and job ids of CI run 44351624973, attempt 1, and its re-run,
+// attempt 2, the same commit): Windows secret-gate.test.mjs 232,811 ms (job 134968603135) and 129,501 ms (job 134974365263); macOS 176,370 ms (job 134968603003)
+// and 139,744 ms (job 134974365136); Ubuntu 217,782 ms (job 134968603263) and 181,522 ms (job 134974365053). Other repos, same runner class, from their CI runs:
+// CoalBoard macOS 224.9 s, CoalLedger Windows 187.8 s. 420 s holds 1.8 times the largest reading held here (232.8 s) and 1.87 times CoalBoard's macOS reading; the
+// gate job's 15-minute timeout and this whole-run deadline (600 s) stay above it.
 // RUN_TIMEOUT_MS is the whole run: the serial suite took 249 s (test.mjs) and 271 s (sum of the files' walls) on the same busy box, waves finish sooner, and 600 s stays under the gate job's
 // 15-minute timeout-minutes in ci.yml.
 export const HEAP_MB = 2048;
 export const TEST_TIMEOUT_MS = 120000;
-export const FILE_CLOCK_MS = 240000;
+export const FILE_CLOCK_MS = 420000;
 export const RUN_TIMEOUT_MS = 600000;
 export const OUTER_GRACE_MS = 30000;
 export const OUTER_TIMEOUT_MS = RUN_TIMEOUT_MS + TEST_TIMEOUT_MS + OUTER_GRACE_MS;
