@@ -29,7 +29,7 @@ const STUB = 'process.exitCode = 0;\n';
 // HOME and USERPROFILE then point at a folder inside the fixture's temp root, and the system config is off, so git reads no operator config.
 function git(cwd, base, args) {
   const home = path.join(base, 'home');
-  return spawnSync('git', args, { cwd, env: { ...gitEnv(base), HOME: home, USERPROFILE: home, GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8', timeout: 60_000 });
+  return spawnSync('git', args, { cwd, env: { ...gitEnv(base), HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8', timeout: 60_000 });
 }
 // Commit identity and no signing, passed as -c. The -c pairs set those two values; they do not keep operator config out, git() does.
 const ID = ['-c', 'user.name=cm-witness', '-c', 'user.email=cm-witness@example.invalid', '-c', 'commit.gpgsign=false'];
@@ -134,4 +134,22 @@ test('a fixture git never reads the operator global config: a value planted in H
   const probe = git(repo, base, ['config', '--get', 'cm.probe']);
   assert.notEqual(probe.stdout.trim(), 'leaked', 'the planted operator value reached the fixture git: ' + probe.stdout);
   assert.notEqual(probe.status, 0, 'the fixture git reads no global config, so the key is absent');
+});
+
+// A fixture git never reads the operator XDG config either: git also reads $XDG_CONFIG_HOME/git/config (reviewer LOW, i47).
+test('a fixture git never reads the operator XDG config: a value planted under XDG_CONFIG_HOME is invisible to it', (t) => {
+  const { base, repo } = fixture(t);
+  const xdg = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-hookxdg-'));
+  t.after(() => removeTree(xdg));
+  fs.mkdirSync(path.join(xdg, 'git'), { recursive: true });
+  fs.writeFileSync(path.join(xdg, 'git', 'config'), '[cm]\n\tprobe = leaked\n');
+  const saved = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = xdg;
+  t.after(() => {
+    if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = saved;
+  });
+  const probe = git(repo, base, ['config', '--get', 'cm.probe']);
+  assert.notEqual(probe.stdout.trim(), 'leaked', 'the planted XDG value reached the fixture git: ' + probe.stdout);
+  assert.notEqual(probe.status, 0, 'the fixture git reads no XDG config, so the key is absent');
 });
