@@ -108,7 +108,7 @@ for (const f of ['plugin.json', 'hooks.json']) {
 
 // Bundled extras Claude Code auto-discovers at plugin root. Recursive copy:
 // same EISDIR class as installSkillDir — never assume flat.
-for (const extra of ['agents', 'commands']) {
+for (const extra of ['agents', 'commands', 'assets']) {
   const src = path.join(repo, extra);
   if (fs.existsSync(src)) {
     fs.cpSync(src, path.join(pluginDir, extra), { recursive: true });

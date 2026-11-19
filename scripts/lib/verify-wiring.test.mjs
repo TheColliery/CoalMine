@@ -21,7 +21,7 @@ function mkTmp(prefix) {
 test('verify.mjs negative path: stale dist fails, clean copy passes', () => {
   const tmp = mkTmp('cm-verify-');
   try {
-    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src']) {
+    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src', 'assets']) {
       fs.cpSync(path.join(repo, d), path.join(tmp, d), { recursive: true });
     }
     const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
@@ -47,7 +47,7 @@ test('verify.mjs negative path: stale dist fails, clean copy passes', () => {
 test('verify.mjs negative path: an over-cap .claude-plugin/plugin.json description FAILs the gate', () => {
   const tmp = mkTmp('cm-verify-');
   try {
-    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src']) {
+    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src', 'assets']) {
       fs.cpSync(path.join(repo, d), path.join(tmp, d), { recursive: true });
     }
     const run = () => spawnSync(process.execPath, [path.join(tmp, 'scripts', 'verify.mjs')], { encoding: 'utf8' });
@@ -95,7 +95,7 @@ test('verify.mjs 2.10 config read-path: a bare-read line fails the WHOLE gate --
     for (const d of ['scripts', 'scripts/lib', 'skills', 'hooks', '.claude-plugin']) {
       fs.mkdirSync(path.join(tmp, d), { recursive: true });
     }
-    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'platform-configs']) {
+    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'platform-configs', 'assets']) {
       const src = path.join(repo, d);
       if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
     }
@@ -153,7 +153,7 @@ test('verify.mjs 2.9 config-keys: an undeclared key named in a SKILL.md fails th
 test('verify.mjs 2.8 dist-changelog: a dist change with no CHANGELOG entry fails the WHOLE gate — proves the wiring, not just the module', () => {
   const tmp = mkTmp('cm-verify-distchangelog-');
   try {
-    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src']) {
+    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src', 'assets']) {
       fs.cpSync(path.join(repo, d), path.join(tmp, d), { recursive: true });
     }
     // A SELF-CONTAINED fixture CHANGELOG — not copied from the live repo. Copying it

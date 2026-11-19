@@ -86,7 +86,7 @@ function verifyRun(t, tmp) {
 function loneCrFixture(t) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-lonecr-'));
   t.after(() => removeTree(tmp));
-  for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+  for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt', 'assets']) {
     const src = path.join(repo, d);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
   }

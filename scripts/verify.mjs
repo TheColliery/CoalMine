@@ -379,6 +379,7 @@ try {
       ['evals/', 'eval fixtures are deliberately broken code, not ship-text'],
       ['platform-configs/', 'templates that ship INTO a user tree; their paths are the USER\'s'],
       ['plugin/', 'generated from skills/ -- a finding here duplicates its source'],
+      ['assets/', 'the plugin icon: a binary PNG with no prose; its bytes are checked against plugin/assets/ by the byte compare in the plugin block'],
       ['.gitattributes', 'a pattern file; no prose'],
       ['.gitignore', 'a pattern file; no prose'],
       ['.markdownlint.json', 'JSON carries no comments'],
@@ -672,6 +673,27 @@ const SHARED_REF_NAMES = new Set(SHARED_REFERENCES.map((r) => r.name));
 
 // Aux files (references/, skill-meta.json) ship verbatim — byte-compare both
 // directions so a hand-edited or orphaned dist file can never reach the marketplace.
+// A shipped copy compares BYTE for byte. The UTF-8 text decode cannot see a change inside a binary file (a PNG icon: two different bytes can decode to the same
+// U+FFFD), so the text compare runs only when both files decode losslessly, where CRLF is the one difference it tolerates, as before. Plain files inside the repo, bounded.
+function shippedBytes(abs) {
+  const st = fs.lstatSync(abs);
+  if (!st.isFile() || st.size > MAX_DOC_BYTES) throw new Error(`${path.relative(repo, abs)} is not a plain file within ${MAX_DOC_BYTES} bytes`);
+  // Bounded by the size check above: the file is read in one sized read, and the read-census (raw readFileSync) stays satisfied.
+  const fd = fs.openSync(abs, 'r');
+  try {
+    const buf = Buffer.alloc(st.size);
+    if (fs.readSync(fd, buf, 0, st.size, 0) !== st.size) throw new Error(`${path.relative(repo, abs)} changed while it was read`);
+    return buf;
+  } finally { fs.closeSync(fd); }
+}
+function sameShippedBytes(a, b) {
+  const x = shippedBytes(a);
+  const y = shippedBytes(b);
+  if (x.equals(y)) return true;
+  const lossless = (buf) => Buffer.from(buf.toString('utf8'), 'utf8').equals(buf);
+  if (!lossless(x) || !lossless(y)) return false;
+  return x.toString('utf8').replace(/\r\n/g, '\n') === y.toString('utf8').replace(/\r\n/g, '\n');
+}
 function compareAux(srcDir, dstDir, label) {
   try {
     const srcEntries = fs.readdirSync(srcDir, { withFileTypes: true });
@@ -685,7 +707,7 @@ function compareAux(srcDir, dstDir, label) {
       } else {
         try {
           if (!fs.existsSync(dp)) fail(`${label}/${e.name} missing — run: node scripts/build-plugin.mjs`);
-          else if (readText(sp, repo).replace(/\r\n/g, '\n') !== readText(dp, repo).replace(/\r\n/g, '\n')) fail(`${label}/${e.name} STALE vs source — run: node scripts/build-plugin.mjs`);
+          else if (!sameShippedBytes(sp, dp)) fail(`${label}/${e.name} STALE vs source — run: node scripts/build-plugin.mjs`);
         } catch (err) { fail(`${label}/${e.name} compare failed: ${err.message}`); }
       }
     }
@@ -752,7 +774,7 @@ if (!fs.existsSync(pluginDir)) {
     const pluginEntries = fs.readdirSync(pluginDir, { withFileTypes: true });
     for (const e of pluginEntries) {
       if (e.isDirectory()) {
-        if (!['skills', 'hooks', '.claude-plugin', 'agents', 'commands'].includes(e.name)) {
+        if (!['skills', 'hooks', '.claude-plugin', 'agents', 'commands', 'assets'].includes(e.name)) {
           fail(`plugin/${e.name} is an orphan directory — run: node scripts/build-plugin.mjs`);
         }
       } else if (!['README.md', 'plugin.json', 'hooks.json'].includes(e.name)) { // plugin.json + hooks.json: the Antigravity plugin files (CWK-202), authored at plugin-src/
@@ -805,7 +827,7 @@ if (!fs.existsSync(pluginDir)) {
     }
   } catch (e) { fail(`plugin/.claude-plugin check failed: ${e.message}`); }
   // Bundled extras (agents/, commands/) ship verbatim — both-direction guarantee.
-  for (const extra of ['agents', 'commands']) {
+  for (const extra of ['agents', 'commands', 'assets']) {
     const src = path.join(repo, extra);
     const dist = path.join(pluginDir, extra);
     if (fs.existsSync(src)) {

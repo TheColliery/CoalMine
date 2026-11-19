@@ -47,7 +47,7 @@ function verifyRun(t, tmp) {
 test('verify.mjs 2.11 pointers: a dead pointer and a gitignored citation each fail the WHOLE gate -- proves the wiring, not just the module', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-'));
   try {
-    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt', 'assets']) {
       const src = path.join(repo, d);
       if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
     }
@@ -151,7 +151,7 @@ test('verify.mjs 2.11 pointers: R19 -- a dead path in the CHANGELOG top entry FA
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-chlog-'));
   const TICK = String.fromCharCode(96);
   try {
-    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt', 'assets']) {
       const src = path.join(repo, d);
       if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
     }
@@ -221,7 +221,7 @@ test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-fence-'));
   const TICK = String.fromCharCode(96);
   try {
-    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt', 'assets']) {
       const src = path.join(repo, d);
       if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
     }
@@ -275,7 +275,7 @@ test('verify.mjs 2.11 pointers: R20 -- a version heading quoted in a code fence 
 test('verify.mjs 2.11 pointers: MEDIUM-2 -- an extensionless citation under a gitignored root is checked non-locally, not exempt', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-pointer-nonlocal-'));
   try {
-    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt']) {
+    for (const d of ['scripts', 'skills', 'hooks', 'plugin', '.claude-plugin', 'commands', 'agents', 'platform-configs', 'alt', 'assets']) {
       const src = path.join(repo, d);
       if (fs.existsSync(src)) fs.cpSync(src, path.join(tmp, d), { recursive: true });
     }

@@ -14,7 +14,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 test('verify.mjs: a .coalmine.json one byte over the bound is refused by name, not read whole', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-verify-bound-'));
   try {
-    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src']) {
+    for (const d of ['skills', 'plugin', 'scripts', '.claude-plugin', 'hooks', 'agents', 'commands', 'alt', 'plugin-src', 'assets']) {
       fs.cpSync(path.join(repo, d), path.join(tmp, d), { recursive: true });
     }
     // A valid-looking object padded past the bound: the only thing wrong with it is its size.

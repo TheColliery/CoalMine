@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -61,12 +62,33 @@ function runShipped(command, stdin, sandbox, cwd) {
 const common = (proj, conv) => ({ conversationId: conv, workspacePaths: [proj], transcriptPath: path.join(proj, '.gemini', 'antigravity-cli', 'transcript.jsonl'), artifactDirectoryPath: path.join(proj, '.gemini', 'antigravity-cli', 'artifacts'), modelName: 'auto' });
 const cmdFor = (hooks, event) => handlersOf(hooks).find((h) => h.event === event).handler.command;
 
-test('AG plugin: plugin/plugin.json names the plugin and is the build of plugin-src/plugin.json (nothing but a name)', () => {
+test('AG plugin: plugin/plugin.json is the build of plugin-src/plugin.json (name, displayName, logo), and its logo names a file that ships in plugin/', () => {
   const src = readJson(path.join(repo, 'plugin-src', 'plugin.json'));
   const dist = readJson(path.join(PLUGIN, 'plugin.json'));
   assert.deepEqual(dist, src);
-  assert.deepEqual(Object.keys(dist), ['name']);
+  assert.deepEqual(Object.keys(dist), ['name', 'displayName', 'logo']);
   assert.equal(dist.name, 'coalmine');
+  assert.ok(fs.existsSync(path.join(PLUGIN, dist.logo)), `${dist.logo} ships in plugin/`);
+});
+
+// The Claude icon (directory listing field, code.claude.com plugins-reference): the manifest's icon names an image inside the plugin. The built copy must resolve to the
+// same bytes as assets/icon.png, and those bytes must be a square PNG of at least 512 px. The PNG is read by hand (signature and IHDR), no dependency.
+test('Claude plugin icon: .claude-plugin/plugin.json icon resolves inside plugin/ to assets/icon.png, a square PNG of at least 512 px', () => {
+  const src = readJson(path.join(repo, '.claude-plugin', 'plugin.json'));
+  const dist = readJson(path.join(PLUGIN, '.claude-plugin', 'plugin.json'));
+  assert.deepEqual(dist, src, 'the built manifest is its source');
+  assert.equal(src.icon, './assets/icon.png');
+  const shipped = path.resolve(PLUGIN, src.icon);
+  assert.ok(shipped.startsWith(PLUGIN + path.sep) && fs.existsSync(shipped), `${src.icon} resolves to a file inside plugin/`);
+  const sha = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+  assert.equal(sha(shipped), sha(path.join(repo, 'assets', 'icon.png')), 'the shipped icon is the bytes of assets/icon.png');
+  const png = fs.readFileSync(shipped);
+  assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'PNG signature');
+  assert.equal(png.subarray(12, 16).toString('ascii'), 'IHDR', 'the first chunk is IHDR');
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  assert.equal(width, height, `square (${width}x${height})`);
+  assert.ok(width >= 512, `at least 512 px (${width})`);
 });
 
 test('AG plugin: plugin/hooks.json is the build of plugin-src/hooks.json, one named group, AG events only, command handlers with a timeout inside AG\'s 30 s', () => {
@@ -267,6 +289,39 @@ test('AG plugin: verify.mjs fails a hooks.json naming a missing script, an event
   r = run();
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /plugin\.json name = 'coalmin'/);
+});
+
+// The icon is a binary file: plugin/assets must match assets/ BYTE for byte, both ways. A one-byte change the UTF-8 text decode cannot see, a stray file with no source,
+// and a missing file each FAIL (red first: the first two pass the current gate, which compares text and skips assets/ entirely).
+test('AG plugin: verify.mjs byte-checks plugin/assets against assets/, both ways: a one-byte change the text decode cannot see, a stray file, and a missing file each FAIL', (t) => {
+  const { dir, run } = verifyCopy(t);
+  assert.equal(run().status, 0, 'control: the copied tree verifies clean');
+  const src = path.join(dir, 'assets', 'icon.png');
+  const dist = path.join(dir, 'plugin', 'assets', 'icon.png');
+  const good = fs.readFileSync(dist);
+  assert.ok(good.equals(fs.readFileSync(src)), 'control: the dist icon is the source icon');
+  const at = [...good.keys()].find((i) => {
+    const b = Buffer.from(good);
+    b[i] ^= 0x01;
+    return !b.equals(good) && b.toString('utf8') === good.toString('utf8');
+  });
+  assert.ok(at !== undefined, 'the fixture has a one-byte change the text decode does not show');
+  const flipped = Buffer.from(good);
+  flipped[at] ^= 0x01;
+  fs.writeFileSync(dist, flipped);
+  let r = run();
+  assert.notEqual(r.status, 0, `a one-byte change at offset ${at} FAILS`);
+  assert.match(r.stdout, /plugin\/assets\/icon\.png STALE vs source/);
+  fs.writeFileSync(dist, good);
+  fs.writeFileSync(path.join(dir, 'plugin', 'assets', 'stray.txt'), 'x\n');
+  r = run();
+  assert.notEqual(r.status, 0, 'a file in plugin/assets with no source FAILS');
+  assert.match(r.stdout, /plugin\/assets\/stray\.txt has no source/);
+  fs.rmSync(path.join(dir, 'plugin', 'assets', 'stray.txt'));
+  fs.rmSync(dist);
+  r = run();
+  assert.notEqual(r.status, 0, 'a missing plugin/assets/icon.png FAILS');
+  assert.match(r.stdout, /plugin\/assets\/icon\.png missing/);
 });
 
 test('AG plugin: verify.mjs fails a plugin/ whose AG files are missing or stale against plugin-src/', (t) => {
