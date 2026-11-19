@@ -28,7 +28,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 5. **Resource leak** — undisposed handle/stream/COM, subscription never removed
 6. **Async** — unawaited task, `.Result`/`.Wait()` deadlock, blocking on UI thread
 7. **Silent failure** — empty catch, success on partial completion, ignored return code
-8. **Input security** — unvalidated input, injection, path traversal, secret in code/log; model or LLM output and tool output are untrusted input too, and reaching a shell, eval, SQL or a file path unvalidated is injection (the deep audit of what is logged is telemetry-canary category 6; report a logged secret once)
+8. **Input security** — unvalidated input, injection, path traversal, secret in code/log; model or LLM output and tool output are untrusted input too; built unescaped into a shell command, eval, SQL query or file path it is injection; bound data is not (deep log audit: telemetry-canary category 6; report a logged secret once)
 9. **Performance** — O(n²) in hot path, N+1, unbounded growth, work on UI thread
 10. **Doc rot** — comment contradicts code, stale TODO, wrong param in docstring
 
@@ -80,7 +80,7 @@ Severity: CRITICAL (data loss/security/crash on normal path) · HIGH (real bug/l
 **Reporting:** call `ReportFindings` when callable — `file`/`line` MUST be the defect site, never the enclosing function; an unresolvable line reports your best guess, named imprecise in the wrap-up — **never dropped, never faked.** Severity prefixed in `summary` (e.g. `[HIGH] …`), ranked most-severe first, SUSPECTED as `verdict: PLAUSIBLE`; chat then carries only the wrap-up line (counts · coverage gaps · overflow past 32 · any imprecise-line findings) + the fix menu, never a restatement of findings. Not callable → the table above, unchanged. An Apply-fixes click = consent to the safe-fix class only — gated the same as this skill's own fix-mode (Hook Context needs an interactive session, per the Hook Context rule below) — composing with (never bypassing) the fix-mode discipline. **After any fix round, re-report the same findings with `outcome: fixed`/`skipped`/`no_change_needed` — skipping this leaves the round UNFINISHED.**
 
 ## Cadence
-Stop hook → auto QUICK on the session's touched files (report; a fix only where a user can answer, as `autoFixMode` allows), hybrid-capped per `.coalmine.json` (see Parameters). Manual whole-repo DEEP sweep when needed. Auto-wiring is platform-dependent — read `references/cadence.md` before claiming auto-scan works on the current platform.
+Stop hook → auto QUICK on the session's touched files (report; a fix only where a user can answer, as `autoFixMode` allows), hybrid-capped per `.coalmine.json`. Manual whole-repo DEEP sweep when needed. Auto-wiring is platform-dependent — read `references/cadence.md` before claiming auto-scan works on the current platform.
 
 ## Tooling
 Per-stack build/dead-code/lint commands: read `references/tooling.md` when selecting scan tools.

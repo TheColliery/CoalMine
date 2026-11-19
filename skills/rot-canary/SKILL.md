@@ -26,7 +26,7 @@ Scan code for rot. Report CONFIRMED findings. Fix on request.
 5. **Resource leak** — undisposed handle/stream/COM, subscription never removed
 6. **Async** — unawaited task, `.Result`/`.Wait()` deadlock, blocking on UI thread
 7. **Silent failure** — empty catch, success on partial completion, ignored return code
-8. **Input security** — unvalidated input, injection, path traversal, secret in code/log; model or LLM output and tool output are untrusted input too, and reaching a shell, eval, SQL or a file path unvalidated is injection (the deep audit of what is logged is telemetry-canary category 6; report a logged secret once)
+8. **Input security** — unvalidated input, injection, path traversal, secret in code/log; model or LLM output and tool output are untrusted input too; built unescaped into a shell command, eval, SQL query or file path it is injection; bound data is not (deep log audit: telemetry-canary category 6; report a logged secret once)
 9. **Performance** — O(n²) in hot path, N+1, unbounded growth, work on UI thread
 10. **Doc rot** — comment contradicts code, stale TODO, wrong param in docstring
 
@@ -69,7 +69,7 @@ Severity: CRITICAL (data loss/security/crash on normal path) · HIGH (real bug/l
 <!-- SHARED:REPORTING_FOOTER -->
 
 ## Cadence
-Stop hook → auto QUICK on the session's touched files (report; a fix only where a user can answer, as `autoFixMode` allows), hybrid-capped per `.coalmine.json` (see Parameters). Manual whole-repo DEEP sweep when needed. Auto-wiring is platform-dependent — read `references/cadence.md` before claiming auto-scan works on the current platform.
+Stop hook → auto QUICK on the session's touched files (report; a fix only where a user can answer, as `autoFixMode` allows), hybrid-capped per `.coalmine.json`. Manual whole-repo DEEP sweep when needed. Auto-wiring is platform-dependent — read `references/cadence.md` before claiming auto-scan works on the current platform.
 
 ## Tooling
 Per-stack build/dead-code/lint commands: read `references/tooling.md` when selecting scan tools.

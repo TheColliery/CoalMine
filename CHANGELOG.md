@@ -2,6 +2,13 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.5] - 2026-11-19
+
+rot-canary category 8 counts bound data apart from injection
+
+### Fixed
+- **rot-canary's category 8 no longer reads a model or tool value passed as bound data as injection.** The 3.28.4 line said such output reaching a shell, eval, SQL or a file path unvalidated is injection, so a model value passed to SQL as a bound parameter read as injection. The line now says such output built unescaped into a shell command, eval, SQL query or file path is injection, and bound data is not. Two phrases elsewhere in the skill are shortened to keep the rendered skill under its size bound; no rule is dropped.
+
 ## [3.28.4] - 2026-11-19
 
 rot-canary names model and tool output as untrusted input
