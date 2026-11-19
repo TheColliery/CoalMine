@@ -2,6 +2,15 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.6] - 2026-11-19
+
+The plugin ships its icon and names it in both manifests
+
+The plugin now ships `assets/icon.png`, a 1024 px square PNG. The Claude Code manifest and the Antigravity manifest each name it. Hooks, skills and behaviour are unchanged. Anthropic's plugin directory takes its listing icon from the `icon` field of `plugin.json` when the plugin is submitted, and Claude Code ignores the field at load time (code.claude.com/docs/en/plugins-reference, "Directory listing fields"); this release submits nothing.
+
+### Changed
+- **The plugin carries an icon and both manifests name it.** `.claude-plugin/plugin.json` gains `"icon": "./assets/icon.png"`. The Antigravity manifest (`plugin-src/plugin.json`, built to `plugin/plugin.json`) gains `displayName` and `"logo": "assets/icon.png"`; it held only the name before.
+
 ## [3.28.5] - 2026-11-19
 
 rot-canary category 8 counts bound data apart from injection
