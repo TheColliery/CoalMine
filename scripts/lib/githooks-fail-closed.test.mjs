@@ -26,10 +26,12 @@ const GATES = ['scripts/test.mjs', 'scripts/verify.mjs', 'scripts/consistency.mj
 const STUB = 'process.exitCode = 0;\n';
 
 // Every git spawn in this file: the environment is gitEnv(base), so the fixture never inherits a hook's exported GIT_DIR or GIT_INDEX_FILE.
+// HOME and USERPROFILE then point at a folder inside the fixture's temp root, and the system config is off, so git reads no operator config.
 function git(cwd, base, args) {
-  return spawnSync('git', args, { cwd, env: gitEnv(base), encoding: 'utf8', timeout: 60_000 });
+  const home = path.join(base, 'home');
+  return spawnSync('git', args, { cwd, env: { ...gitEnv(base), HOME: home, USERPROFILE: home, GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8', timeout: 60_000 });
 }
-// Commit identity and no signing, passed as -c so no global config is read.
+// Commit identity and no signing, passed as -c. The -c pairs set those two values; they do not keep operator config out, git() does.
 const ID = ['-c', 'user.name=cm-witness', '-c', 'user.email=cm-witness@example.invalid', '-c', 'commit.gpgsign=false'];
 // A gate path in the fixture repository, from its slash-separated name in GATES.
 function gatePath(repo, gate) {
@@ -112,4 +114,24 @@ test('pre-push fails closed: a push with no scripts/verify.mjs is refused and na
   const ok = git(repo, base, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
   assert.equal(ok.status, 0, 'with every gate present the push is accepted: ' + ok.stdout + ok.stderr);
   assert.equal(git(remote, base, ['rev-parse', '--verify', '-q', 'refs/heads/main']).status, 0, 'the accepted push landed on the remote');
+});
+
+// A fixture git never reads the operator's global config: a value planted in HOME must not reach it (CodeRabbit, row 9).
+test('a fixture git never reads the operator global config: a value planted in HOME is invisible to it', (t) => {
+  const { base, repo } = fixture(t);
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-hookhome-'));
+  t.after(() => removeTree(home));
+  fs.writeFileSync(path.join(home, '.gitconfig'), '[cm]\n\tprobe = leaked\n');
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  t.after(() => {
+    for (const k of Object.keys(saved)) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+  const probe = git(repo, base, ['config', '--get', 'cm.probe']);
+  assert.notEqual(probe.stdout.trim(), 'leaked', 'the planted operator value reached the fixture git: ' + probe.stdout);
+  assert.notEqual(probe.status, 0, 'the fixture git reads no global config, so the key is absent');
 });

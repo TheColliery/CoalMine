@@ -77,6 +77,12 @@ test('test-spawn: scripts/test.mjs spawns its child with the plan argv, env, bac
 // The per-test clock and the whole-run deadline are patched down in the COPY only (3 s and 6 s unless a test says otherwise). Every
 // run is bounded by its own 40 s timer that kills the whole tree, so a regression fails this test instead of hanging the suite.
 const COPIED = ['wave-run.mjs', 'test-run.mjs', 'machine-reading.mjs', 'stdout-sync.mjs', 'test-notice.mjs'];
+// A patch whose target text is absent changes nothing, and a fixture that changes nothing passes for the wrong reason: fail loud instead.
+function patchOnce(src, from, to) {
+  assert.ok(src.includes(from), `the fixture's patch target is absent from test-spawn.mjs, so the copy would keep its own value: ${from}`);
+  return src.replace(from, to);
+}
+
 function plant(t, probeSource, testClockMs = 3000) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'cm-testspawn-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
@@ -87,8 +93,7 @@ function plant(t, probeSource, testClockMs = 3000) {
   fs.writeFileSync(path.join(dir, 'scripts', 'test.mjs'), roster);
   const planSrc = fs.readFileSync(path.join(ROOM, 'scripts', 'lib', 'test-spawn.mjs'), 'utf8');
   // The file clock is patched with the per-test one: on Node 22 the flag carries the file clock (fileTimeoutFlagMs), so the copy's clock stays the one the fixture set on every leg.
-  const plan = planSrc.replace('TEST_TIMEOUT_MS = 120000', `TEST_TIMEOUT_MS = ${testClockMs}`).replace('FILE_CLOCK_MS = 240000', `FILE_CLOCK_MS = ${testClockMs}`).replace('RUN_TIMEOUT_MS = 600000', `RUN_TIMEOUT_MS = ${PLANT_RUN_MS}`);
-  assert.notEqual(plan, planSrc, 'the numbers in the copy were patched');
+  const plan = patchOnce(patchOnce(patchOnce(planSrc, 'TEST_TIMEOUT_MS = 120000', `TEST_TIMEOUT_MS = ${testClockMs}`), 'FILE_CLOCK_MS = 420000', `FILE_CLOCK_MS = ${testClockMs}`), 'RUN_TIMEOUT_MS = 600000', `RUN_TIMEOUT_MS = ${PLANT_RUN_MS}`);
   fs.writeFileSync(path.join(dir, 'scripts', 'lib', 'test-spawn.mjs'), plan);
   for (const f of COPIED) fs.copyFileSync(path.join(ROOM, 'scripts', 'lib', f), path.join(dir, 'scripts', 'lib', f));
   fs.writeFileSync(path.join(dir, 'scripts', 'lib', 'probe.test.mjs'), probeSource);
