@@ -22,7 +22,7 @@ import { checkConfigKeys, checkConfigReadPath } from './lib/config-keys.mjs';
 import { checkPointers, pointerCandidates, looksPathShaped, DEFAULT_SURFACE_PLAN, collectSurfaces, applyCheckIgnoreProbe } from './lib/pointer-check.mjs';
 import { verifyAgainstManifest } from './lib/manifest.mjs';
 import { gitEnv } from './lib/git-env.mjs';
-import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded } from './lib/repo-fs.mjs';
+import { MAX_CONFIG_BYTES, MAX_DOC_BYTES, readRepoFileBounded, readRepoBytesBounded } from './lib/repo-fs.mjs';
 import { descriptionCapCheck, DESC_CAP } from './lib/desc-cap.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -676,15 +676,10 @@ const SHARED_REF_NAMES = new Set(SHARED_REFERENCES.map((r) => r.name));
 // A shipped copy compares BYTE for byte. The UTF-8 text decode cannot see a change inside a binary file (a PNG icon: two different bytes can decode to the same
 // U+FFFD), so the text compare runs only when both files decode losslessly, where CRLF is the one difference it tolerates, as before. Plain files inside the repo, bounded.
 function shippedBytes(abs) {
-  const st = fs.lstatSync(abs);
-  if (!st.isFile() || st.size > MAX_DOC_BYTES) throw new Error(`${path.relative(repo, abs)} is not a plain file within ${MAX_DOC_BYTES} bytes`);
-  // Bounded by the size check above: the file is read in one sized read, and the read-census (raw readFileSync) stays satisfied.
-  const fd = fs.openSync(abs, 'r');
-  try {
-    const buf = Buffer.alloc(st.size);
-    if (fs.readSync(fd, buf, 0, st.size, 0) !== st.size) throw new Error(`${path.relative(repo, abs)} changed while it was read`);
-    return buf;
-  } finally { fs.closeSync(fd); }
+  // The room's bounded reader: it refuses a link, checks the open handle, and reads by size. Null means absent, refused, over the bound or unreadable.
+  const buf = readRepoBytesBounded(abs, repo, MAX_DOC_BYTES);
+  if (buf === null) throw new Error(`${path.relative(repo, abs)} is not a plain file within ${MAX_DOC_BYTES} bytes`);
+  return buf;
 }
 function sameShippedBytes(a, b) {
   const x = shippedBytes(a);
