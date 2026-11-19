@@ -128,12 +128,13 @@ export function nodeOptionsWithHeap(caller, heapMb) {
 
 // ---- the reading: the byte-equal core, called as a child -------------------------------------------------------------------------------
 // Exit 0 BREATHE, 1 WAIT, 2 or anything unreadable UNMEASURED (never blocks, counted), 64 the core refused its arguments (a bug of ours, thrown).
-export function defaultRead({ readerPath = path.join(HERE, 'machine-reading.mjs'), timeoutMs, cpuMax, memMin } = {}) {
+// env: the reader child's environment (a test hands it the sandbox's, t345 #4); with none the child inherits the runner's, as it always did
+export function defaultRead({ readerPath = path.join(HERE, 'machine-reading.mjs'), timeoutMs, cpuMax, memMin, env } = {}) {
   return ({ running }) => new Promise((resolve, reject) => {
     const args = [readerPath, '--json', '--running', String(running)];
     if (cpuMax !== undefined) args.push('--cpu-max', String(cpuMax));
     if (memMin !== undefined) args.push('--mem-min', String(memMin));
-    execFile(process.execPath, args, { timeout: timeoutMs, encoding: 'utf8', windowsHide: true }, (err, stdout) => {
+    execFile(process.execPath, args, { timeout: timeoutMs, encoding: 'utf8', windowsHide: true, ...(env ? { env } : {}) }, (err, stdout) => {
       const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
       if (code === EXIT_USAGE) { reject(new Error(`machine-reading refused its arguments (usage error ${EXIT_USAGE}): ${args.slice(1).join(' ')}`)); return; }
       let raw = null;

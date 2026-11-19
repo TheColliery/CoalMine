@@ -316,10 +316,22 @@ test('defaultRead against the real core started through a linked folder: still B
   fs.copyFileSync(MACHINE_READING, path.join(real, 'machine-reading.mjs'));
   try { fs.symlinkSync(real, linked, process.platform === 'win32' ? 'junction' : 'dir'); } catch (e) { t.skip(`this volume refuses a folder link (${e.code})`); return; }
   try {
-    const r = await defaultRead({ readerPath: path.join(linked, 'machine-reading.mjs'), timeoutMs: LIMITS.fileTimeoutMs })({ running: 1 });
+    const r = await defaultRead({ readerPath: path.join(linked, 'machine-reading.mjs'), timeoutMs: LIMITS.fileTimeoutMs, env: sandboxEnv() })({ running: 1 });
     assert.ok(['BREATHE', 'WAIT'].includes(r.verdict), `${r.verdict} ${r.error ?? ''}`);
     assert.equal(r.error, undefined);
   } finally { fs.unlinkSync(linked); }
+});
+
+// t345 #4, t346 F10 (19a): the reader child a test starts gets the sandbox's environment, never the operator's HOME and TEMP. defaultRead takes the child's
+// environment as an option; with none it inherits, as the runner always did. A probe reader prints the HOME it was given.
+test('defaultRead hands the reader child the environment it is given, and inherits only when none is given -- RED before 19a', async () => {
+  const probe = path.join(SANDBOX, 'env-probe-reader.mjs');
+  fs.writeFileSync(probe, "console.log(JSON.stringify({ home: process.env.HOME ?? null }));" + String.fromCharCode(10));
+  const given = await defaultRead({ readerPath: probe, timeoutMs: LIMITS.fileTimeoutMs, env: sandboxEnv() })({ running: 1 });
+  assert.equal(given.verdict, 'BREATHE', given.error ?? '');
+  assert.equal(given.raw.home, SANDBOX, 'the reader got the sandbox HOME');
+  const inherited = await defaultRead({ readerPath: probe, timeoutMs: LIMITS.fileTimeoutMs })({ running: 1 });
+  assert.equal(inherited.raw.home, process.env.HOME ?? null, 'with no environment given, the reader inherits the runner\'s');
 });
 
 // ---- the command line -----------------------------------------------------------------------------------------------------------------

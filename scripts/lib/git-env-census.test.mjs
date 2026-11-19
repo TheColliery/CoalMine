@@ -121,6 +121,15 @@ test('the census does linear work on the five shapes that made it quadratic: rep
   }
 });
 
+// Counts the bytes fs.readSync hands back while `body` runs (F4 of t342, 2026-11-17): a fixture ONE byte over the budget is read to its last byte by a reader that stops at the budget plus one and by one that
+// reads on to the end, so a bound test needs a file well past the budget and a count of what was actually read.
+function countRead(body) {
+  const real = fs.readSync; const o = { bytes: 0 };
+  fs.readSync = function (...a) { const n = real.apply(this, a); o.bytes += n; return n; };
+  try { body(); } finally { fs.readSync = real; }
+  return o;
+}
+
 // (2) The collector reads only regular files, within a byte budget: a .mjs symlink (or a link to a directory) under scripts/ is refused by name, never
 // followed and never skipped, and a file past the budget is refused by name before it is read.
 test('collectScriptsMjs refuses a .mjs past the byte budget by name, before reading it -- RED before 2026-11-02a', async () => {
@@ -129,8 +138,9 @@ test('collectScriptsMjs refuses a .mjs past the byte budget by name, before read
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-env-census-'));
   try {
     fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'scripts', 'big.mjs'), 'x'.repeat(MAX_SOURCE_BYTES + 1));
-    assert.throws(() => collectScriptsMjs(dir), /scripts\/big\.mjs.*budget/, 'an over-budget file is refused by name');
+    fs.writeFileSync(path.join(dir, 'scripts', 'big.mjs'), 'x'.repeat(2 * MAX_SOURCE_BYTES));
+    const read = countRead(() => assert.throws(() => collectScriptsMjs(dir), /scripts\/big\.mjs.*budget/, 'an over-budget file is refused by name'));
+    assert.strictEqual(read.bytes, 0, 'refused on the descriptor\'s size: not one byte of it was read (the old fixture, one byte over, read every byte before it threw)');
   } finally { removeTree(dir); }
 });
 
@@ -174,8 +184,10 @@ test('a helper with a bare return, or one whose body can end without returning, 
     'function mk() { if (process.argv[2]) return gitEnv(); }',
     'function mk() { if (process.argv[2]) return; return gitEnv(); }',
     'const mk = () => { if (process.argv[2]) return gitEnv(); };',
+    'function mk() {\n  return\n  gitEnv();\n}', // t346 F15: a line break after return ends the statement (ASI), so mk returns undefined
+    'const mk = () => {\n  return\n  {};\n};',
   ]) assert.ok(scan(head + fn + '\n' + call).findings.length >= 1, `passed: ${fn}`);
-  for (const fn of ['function mk() { return gitEnv(); }', 'function mk() { if (process.argv[2]) return gitEnv(); return gitEnv(); }', 'const mk = () => gitEnv();']) {
+  for (const fn of ['function mk() { return gitEnv(); }', 'function mk() { if (process.argv[2]) return gitEnv(); return gitEnv(); }', 'const mk = () => gitEnv();', 'function mk() {\n  return gitEnv(\n  );\n}']) {
     const r = scan(head + fn + '\n' + call);
     assert.deepEqual([r.findings, r.safe], [[], 1], `refused: ${fn}`);
   }
@@ -189,9 +201,11 @@ test('collectScriptsMjs stops reading at the budget: a .mjs that grows past it a
   const orig = fs.fstatSync;
   try {
     fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'scripts', 'grows.mjs'), 'x'.repeat(MAX_SOURCE_BYTES + 1));
+    fs.writeFileSync(path.join(dir, 'scripts', 'grows.mjs'), 'x'.repeat(2 * MAX_SOURCE_BYTES));
     fs.fstatSync = function (...a) { const s = orig.apply(this, a); if (s.isFile()) Object.defineProperty(s, 'size', { value: 0 }); return s; };
-    assert.throws(() => collectScriptsMjs(dir), /scripts\/grows\.mjs.*budget/);
+    const read = countRead(() => assert.throws(() => collectScriptsMjs(dir), /scripts\/grows\.mjs.*budget/));
+    assert.ok(read.bytes <= MAX_SOURCE_BYTES + 1, `the read stopped at the budget plus one byte, not at the end of a file of twice the budget: ${read.bytes} bytes read`);
+    assert.ok(read.bytes > MAX_SOURCE_BYTES, 'and it did read up to the budget (a reader that read nothing would refuse nothing)');
   } finally { fs.fstatSync = orig; removeTree(dir); }
 });
 

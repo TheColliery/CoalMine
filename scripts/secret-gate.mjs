@@ -115,7 +115,10 @@ function readBlobs(shas, probe, looksBinary, nameOf = new Map()) {
       let pos = 0;
       while (pos < data.length) {
         if (cur && cur.left > 0) {
-          const take = Math.min(cur.left, data.length - pos);
+          let take = Math.min(cur.left, data.length - pos);
+          // a blob still being probed takes no more than the prefix the probe reads, so its verdict never depends on how large a piece arrived (t346 F8):
+          // the rest of the piece is read on the next turn of this loop, under the verdict
+          if (cur.keep === null) take = Math.min(take, PROBE_BYTES - cur.have);
           const piece = data.subarray(pos, pos + take);
           pos += take;
           cur.left -= take;
@@ -228,16 +231,29 @@ async function main() {
     const nameOf = new Map(wanted.map((e) => [e.sha, e.name]));
     const prefixBinary = (b) => scan.looksBinary(b) && !scan.wideKinds(b).length;
     try {
-      blobs = await readBlobs(wanted.map((e) => e.sha), probe, prefixBinary, nameOf);
-      // a blob some chunk of which reads as wide text is read again, one at a time, and judged on its whole bytes; one past the held-bytes ceiling stays skipped, as it was before (it cannot be held)
-      for (const [id, v] of [...blobs]) {
+      const first = await readBlobs(wanted.map((e) => e.sha), probe, prefixBinary, nameOf);
+      // A blob whose NUL totals read as wide text is read again, one at a time, and judged on its whole bytes. It is text by the gate's own rule, so the held-bytes
+      // ceiling binds it as it binds text: the first read's buffers and every earlier re-read's count against the same ceiling (t346 F19), and one that cannot be held is a
+      // FAIL line that names it, never a skip as binary (t346 F18: a wide file past the ceiling passed unscanned). The results are staged and become `blobs` only when every
+      // re-read has come back, so a re-read that fails leaves no half-read map behind (t345 #10): the tree is then reported NOT scanned and nothing of it is.
+      const staged = new Map(first);
+      let heldNow = 0;
+      for (const v of first.values()) if (Buffer.isBuffer(v)) heldNow += v.length;
+      for (const [id, v] of first) {
         if (!v || v === BINARY_BLOB || v.rereadBytes === undefined) continue;
-        if (v.rereadBytes > heldCeiling()) { blobs.set(id, BINARY_BLOB); continue; }
+        if (heldNow + v.rereadBytes > heldCeiling()) {
+          fails.push(`${esc(nameOf.get(id) || id)} reads as UTF-16 or UTF-32 text by its NUL counts, but holding its ${v.rereadBytes} bytes would put more than ${heldCeiling()} bytes of staged text in memory at once, so it was NOT scanned; keep the file out of the repository, or track it with Git LFS`);
+          staged.set(id, BINARY_BLOB); // already failed by name above; the scan loop passes over it
+          continue;
+        }
         const again = (await readBlobs([id], new Set(), prefixBinary, nameOf)).get(id);
-        blobs.set(id, again && !scan.wideKinds(again).length ? BINARY_BLOB : again);
+        const kept = again && !scan.wideKinds(again).length ? BINARY_BLOB : again;
+        staged.set(id, kept);
+        if (Buffer.isBuffer(kept)) heldNow += kept.length;
       }
+      blobs = staged;
     } catch (e) {
-      fails.push(e && e.code === 'EHELD' ? `${e.message}; the tree was NOT scanned` : `git could not read the staged files (${e && e.code ? e.code : 'cat-file error'}); the tree was NOT scanned`);
+      fails.push(e && e.code === 'EHELD' ? `${e.message}; the tree was NOT scanned. Keep the file out of the repository, or track it with Git LFS` : `git could not read the staged files (${e && e.code ? e.code : 'cat-file error'}); the tree was NOT scanned`);
     }
   }
   // A binary-looking NAME only marks a blob for the content probe: it is skipped when its bytes are binary too (a NUL in its first bytes,
@@ -247,6 +263,8 @@ async function main() {
     const bytes = blobs.get(e.sha);
     if (bytes === null) { unreadable.push(esc(e.name)); return; }
     if (bytes === BINARY_BLOB) return; // binary-named at every path and binary by its first bytes, dropped while it streamed
+    // only a Buffer is bytes (19b L2): anything else (a marker that leaked, an undefined) fails by name and is never counted as scanned or read as text
+    if (!Buffer.isBuffer(bytes)) { fails.push(`${esc(e.name)} reached the scan as something other than its bytes (an internal error); it was NOT scanned`); return; }
     // a binary-looking name with NUL-bearing bytes is still text when the scanner's wide-text rule reads its first bytes as UTF-16 or UTF-32 (the bytes the stream probe judged)
     if (BINARY.test(e.name) && scan.looksBinary(bytes) && !scan.wideKinds(bytes).length) return;
     scanned++;

@@ -653,6 +653,17 @@ test('release-notes.mjs back-fill: a tag tree that HAS the heading uses its own 
   assert.doesNotMatch(res.stdout, /default branch/);
 });
 
+test('release-notes.mjs back-fill: on a dispatch the entry in the tag tree is found by its exact heading, so a newer entry of the same package above it does not stop the run; the push path keeps the top-entry check -- RED before 19a (t346 F17)', () => {
+  const own = '## [py 0.0.2] - 2026-11-04\n\nA newer py.\n\n### Added\n- newer\n\n## [py 0.0.1] - 2026-11-02\n\nThe tag\'s own words.\n\n### Added\n- own\n';
+  const dir = backfillDir(own);
+  const res = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1', ...FALLBACK });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'release-title.txt'), 'utf8'), 'py v0.0.1 - the tag\'s own words');
+  assert.match(res.stdout, /release-notes: source: the tag's own CHANGELOG\.md/);
+  const push = run(backfillDir(own), { GITHUB_REF_NAME: 'py-v0.0.1' });
+  assert.equal(push.status, 1, 'a push still refuses a tag that is not the top entry: ' + push.stdout + push.stderr);
+});
+
 test('release-notes.mjs back-fill: the PUSH path never falls back -- no CHANGELOG_FALLBACK, a tag tree without the heading is refused as before -- RED before UMB3-193 round 3 (only the log line)', () => {
   const dir = backfillDir(TAG_TREE_NO_ENTRY);
   const res = run(dir, { GITHUB_REF_NAME: 'py-v0.0.1' });
@@ -716,5 +727,7 @@ test('release-notes.mjs: a bare launch-form tag in a repository whose current La
   fs.writeFileSync(path.join(stableDir, 'CHANGELOG.md'), TWO);
   const stable = run(stableDir, { GITHUB_REF_NAME: 'v1.2.0', PREVIOUS_STABLE_TAG: 'v1.1.0', LATEST_TAG: 'core-v2.0.0' });
   assert.equal(stable.status, 1, stable.stderr);
+  // a CHANGELOG read failure or a shape error also exits 1 with no title (t342 F8, 2026-11-17): the refusal is the one makeLatestFlag words, so the leg pins its sentence
+  assert.match(stable.stderr, /the current Latest release is tagged "core-v2.0.0", not a bare vX.Y.Z -- refusing to guess whether v1.2.0 should take Latest/, stable.stderr);
   assert.equal(fs.existsSync(path.join(stableDir, 'release-title.txt')), false);
 });

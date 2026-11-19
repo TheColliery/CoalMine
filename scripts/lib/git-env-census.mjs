@@ -899,6 +899,8 @@ function helperReturns(ctx, name) {
   const out = [];
   for (let n = body.block[0]; n < body.block[1]; n++) {
     if (isId(toks[n], 'return')) {
+      // a line break right after return ends the statement (JavaScript inserts the semicolon), so the value on the next line is never returned (t346 F15)
+      if (n + 1 < body.block[1] && toks[n + 1].ln > toks[n].ln) return `${name} has a return followed by a line break, which returns undefined (the next line is not its value), and Node then gives the child the parent's whole environment`;
       const e = Math.min(exprEnd(ctx, n + 1, true, true), body.block[1]); // a comma in a return is the comma operator: the value is the last operand, so the whole statement is read (F46)
       if (e > n + 1) out.push([n + 1, e]);
       else return `${name} has a return with no value, which hands the child undefined, and Node then gives it the parent's whole environment`;

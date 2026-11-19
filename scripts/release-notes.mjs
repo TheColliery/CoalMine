@@ -181,7 +181,8 @@ function main() {
   }
 
   try {
-    const { summary, lead, sectionsBody } = extractChangelogEntry(changelog, tagVersion, { previousStable: prevVersion, pkg, exact: fromFallback });
+    // a dispatch (CHANGELOG_FALLBACK set) finds this version's entry by its exact heading in either source; only a push keeps the top-entry check (t346 F17)
+    const { summary, lead, sectionsBody } = extractChangelogEntry(changelog, tagVersion, { previousStable: prevVersion, pkg, exact: fromFallback || Boolean(fallbackPath) });
     // A pre-release is never Latest, even when the repo has no Latest yet.
     const latestFlag = launch ? 'false' : makeLatestFlag(tagVersion, latest, pkg);
     const label = pkg ? `${pkg} ` : '';
