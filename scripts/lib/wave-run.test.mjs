@@ -330,8 +330,12 @@ test('defaultRead hands the reader child the environment it is given, and inheri
   const given = await defaultRead({ readerPath: probe, timeoutMs: LIMITS.fileTimeoutMs, env: sandboxEnv() })({ running: 1 });
   assert.equal(given.verdict, 'BREATHE', given.error ?? '');
   assert.equal(given.raw.home, SANDBOX, 'the reader got the sandbox HOME');
-  const inherited = await defaultRead({ readerPath: probe, timeoutMs: LIMITS.fileTimeoutMs })({ running: 1 });
-  assert.equal(inherited.raw.home, process.env.HOME ?? null, 'with no environment given, the reader inherits the runner\'s');
+  // 19c (the courier 29ja, F3): the inherit leg runs inside a parent this test sandboxes (its own HOME), so the reader inherits that, never the operator's HOME and TEMP
+  const parentHome = path.join(SANDBOX, 'inherit-home');
+  const code = `const { defaultRead } = await import(${JSON.stringify(pathToFileURL(WAVE_RUN).href)}); const r = await defaultRead({ readerPath: ${JSON.stringify(probe)}, timeoutMs: ${LIMITS.fileTimeoutMs} })({ running: 1 }); console.log(JSON.stringify(r.raw));`;
+  const parent = spawnSync(process.execPath, ['--max-old-space-size=256', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 60000, env: sandboxEnv({ HOME: parentHome }) });
+  assert.equal(parent.status, 0, parent.stderr);
+  assert.equal(JSON.parse(parent.stdout.trim()).home, parentHome, 'with no environment given, the reader inherits its parent\'s (here a sandboxed parent)');
 });
 
 // ---- the command line -----------------------------------------------------------------------------------------------------------------
@@ -418,11 +422,9 @@ fs.writeFileSync(path.join(SANDBOX, 'many.fixture.mjs'), "import { test } from '
 // a hang BEFORE the first test: --test-timeout never applies to it, only a clock on the file itself can end it
 fs.writeFileSync(path.join(SANDBOX, 'hang-top.fixture.mjs'), "import { test } from 'node:test';" + String.fromCharCode(10) + 'setInterval(() => {}, 1000);' + String.fromCharCode(10) + 'await new Promise(() => {});' + String.fromCharCode(10));
 
-// THE FILE CLOCK OF A TEST IS SIZED FROM A MEASURED SOLO RUN, NEVER A FIXED NUMBER (the class behind c5199ed and the CoalWorks chief's 25a flake, 2026-10-25). The clock is the wall clock of EVERY file
-// the run starts, so a fixed figure also kills the PASSING file whenever a loaded runner takes longer than it to start a node child (CoalWash PR #23, run 38774701714: [FAIL, FAIL] where [FAIL, PASS] was
-// expected; the chief's 25a run: the same shape under load, n = 1). Four times the measured solo run of the passing file plus a second, never below 2,000 ms, kills the hang and leaves the passing file four
-// times its own start to spare. Every test that hands wave-run a file clock takes it from here.
-const sizedFileClock = (soloMs) => Math.max(2000, soloMs * 4 + 1000);
+// A FILE CLOCK IS NEVER SIZED FROM A WALL TIME (19c, UMB4-048; it was sized from a measured solo run from 2026-10-25 to 19c, and that pair of runs saw different loads and flaked). The clock is the wall clock of
+// EVERY file the run starts, so a fixed figure also kills a PASSING file whenever a loaded runner starts it late (CoalWash PR #23, run 38774701714). Its policy is tested with injected timers; a
+// command-line test hands a fixed clock only to a file that never ends on its own (a hang).
 // The limits that go with a file clock (2026-11-02a (b), CoalLedger CI run 41331643210): node's --test-timeout at twice the clock, never the fixed 20 s, so under load the
 // sized clock cannot pass it and leave Node 22 to cancel the hang by the wrong clock; the whole-run deadline four clocks and 20 s.
 const clockedLimits = (clock) => ({ ...LIMITS, fileTimeoutMs: clock * 2, deadlineMs: clock * 4 + 20000, fileClockMs: clock });
@@ -431,15 +433,6 @@ const clockedLimits = (clock) => ({ ...LIMITS, fileTimeoutMs: clock * 2, deadlin
 const SLOW_START_MS = 1500;
 fs.writeFileSync(path.join(SANDBOX, 'slow-start.preload.mjs'), 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ' + SLOW_START_MS + ');' + String.fromCharCode(10));
 const SLOW_START_ENV = { NODE_OPTIONS: '--import ' + pathToFileURL(path.join(SANDBOX, 'slow-start.preload.mjs')).href };
-// A solo command-line run of the passing file under `extra`, timed: the measurement a command-line test sizes its clock from. The clock is sized from
-// this live reading on purpose: a fixed clock (2,000 ms at 442f359) killed the passing file on a loaded runner, and the slow-start witness below shows
-// a fixed clock failing where the sized one passes. Load moves the reading and the clock together, so the outcome does not depend on it.
-const soloCliMs = (extra) => {
-  const t0 = Date.now();
-  const solo = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass')], extra);
-  assert.equal(solo.status, 0, 'the solo run of the passing file must pass: ' + solo.stdout + solo.stderr);
-  return Date.now() - t0;
-};
 const STDOUT_SYNC_URL = pathToFileURL(path.join(HERE, 'stdout-sync.mjs')).href;
 
 test('the simulation is faithful: with no preload a force-exited file of 300 tests loses the end of its TAP and reads VACUOUS (the control for the fix below)', () => {
@@ -512,17 +505,31 @@ test('the stdout preload switches BOTH pipes, stdout and stderr, to blocking (a 
 
 // 2026-10-16 (CoalWash PR #23, run 38774701714, the Windows leg: [FAIL, FAIL] where [FAIL, PASS] was expected, 4.8 s): the clock is the wall clock of EVERY file the run starts, so a fixed 2,000 ms also killed the
 // PASSING file whenever a loaded runner took more than two seconds to start it (a node child with a heap cap and the stdout preload). Reproduced here by making every node start take 2.5 s (a preload that sleeps,
-// NODE_OPTIONS=--import=<it>): the old test read [FAIL, FAIL] in 4.7 s, the runner's own figure. The clock this test uses is now SIZED from a measured solo run of the passing file on this very machine under this very load,
-// four times it plus a second (never below the old 2,000 ms), so the hang is still killed by the clock and the passing file has four times its own measured start to spare.
-test('the file clock: a file that hangs before its first test is killed at the clock of the file (FAIL naming it) and the next file still runs, the clock sized from a measured solo run of the passing file -- RED before the fix', async () => {
-  const t0 = Date.now();
-  const solo = await runWaves({ files: fx('pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE') });
-  assert.deepEqual(solo.results.map((x) => x.status), [STATUS.PASS]);
-  const clock = sizedFileClock(Date.now() - t0);
-  const r = await runWaves({ files: fx('hang-top', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...clockedLimits(clock), serial: true, read: scripted('BREATHE') });
+// NODE_OPTIONS=--import=<it>): the old test read [FAIL, FAIL] in 4.7 s, the runner's own figure. The clock was then sized from a measured solo run of the passing file; since 19c (UMB4-048) no test sizes a
+// wall clock: the test below fires an injected clock from the run's own events.
+// 19c (UMB4-048, the F5 ticket): the clock's POLICY is tested with no wall time at all. runWaves takes its file clock from an injectable timer pair (`timers`); this test's clock fires only
+// when the test fires it: as soon as the hanging file starts, and again after the run, when the passing file has ended. So a file still running at its clock is killed and named, a file that ended
+// before its clock is spared (its timer was cleared at its exit and the late firing does nothing), and the next file still runs, whatever the load. The command-line tests below keep only
+// what needs no sizing: a hang killed at a fixed clock (a hang never ends on its own), and the slow-start witness of why a wall clock cannot be sized for every machine.
+const fakeTimers = () => {
+  const made = [];
+  return {
+    made,
+    setTimeout: (fn, ms) => { const h = { fn, ms, cleared: false, fired: false }; made.push(h); return h; },
+    clearTimeout: (h) => { if (h) h.cleared = true; },
+    fire: () => { for (const h of made) if (!h.cleared && !h.fired) { h.fired = true; h.fn(); } },
+  };
+};
+test('the file clock: a file still running at its clock is killed (FAIL naming it), a file that ended before it is spared, and the next file still runs -- an injected clock fired by the run\'s own events, no wall time (UMB4-048)', async () => {
+  const ft = fakeTimers();
+  const onEvent = (e) => { if (e.type === 'start' && e.file.endsWith('hang-top.fixture.mjs')) setImmediate(() => ft.fire()); };
+  const r = await runWaves({ files: fx('hang-top', 'pass'), cwd: SANDBOX, env: SANDBOX_ENV, ...clockedLimits(20000), serial: true, read: scripted('BREATHE'), timers: ft, onEvent });
+  ft.fire(); // the clock of every file runs out after the run: a cleared one does nothing
   assert.deepEqual(r.results.map((x) => x.status), [STATUS.FAIL, STATUS.PASS]);
-  assert.match(r.results[0].reason, /file clock/);
+  assert.match(r.results[0].reason, /killed at the file clock \(20000 ms\)/);
   assert.equal(r.exitCode, 1);
+  assert.equal(ft.made.length, 2, 'one clock per file, both from the injected timers');
+  assert.deepEqual(ft.made.map((h) => [h.ms, h.fired, h.cleared]), [[20000, true, true], [20000, false, true]], 'the hang\'s clock fired; the passing file\'s was cleared at its exit and never fired');
 });
 
 // 2026-11-02a (b): a test that hands the runner a file clock also hands node's --test-timeout at twice it, so the clock is what ends a hang on every node version
@@ -559,30 +566,25 @@ test('the command line: --file-clock-ms is accepted, shown in the usage, and kil
   const bad = cli(['--file-clock-ms', 'soon']);
   assert.equal(bad.status, 64);
   assert.match(bad.stderr, /--file-clock-ms needs a whole number/);
-  const clock = sizedFileClock(soloCliMs());
-  const r = cli(['--heap-mb', '512', '--file-timeout-ms', String(clock * 2), '--deadline-ms', String(clock * 4 + 20000), '--file-clock-ms', String(clock), '--serial', '--', ...fx('hang-top', 'pass')]);
+  // a hang never ends on its own, so a fixed clock kills it on any machine; whether a passing file is spared is the injected-clock test's above (19c, UMB4-048)
+  const r = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '40000', '--file-clock-ms', '1000', '--serial', '--', ...fx('hang-top')]);
   assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.match(r.stdout, /^FAIL .*hang-top\.fixture\.mjs: killed at the file clock/m);
-  assert.match(r.stdout, /pass 1 · fail 1 \(hang-top\.fixture\.mjs\) · vacuous 0 · skipped 0 · not-run 0 · reconciled 2 of 2 — RED$/m);
+  assert.match(r.stdout, /^FAIL .*hang-top\.fixture\.mjs: killed at the file clock \(1000 ms\)/m);
+  assert.match(r.stdout, /pass 0 · fail 1 \(hang-top\.fixture\.mjs\) · vacuous 0 · skipped 0 · not-run 0 · reconciled 1 of 1 — RED$/m);
 });
 
 // The CoalWorks chief's 25a flake, made deterministic (RED before this fix: the command-line test above hard-coded --file-clock-ms 2000, and under this slow start it read [FAIL, FAIL]). First the
 // witness that the slow start reaches the runner's children: a fixed clock below the node start (1,000 ms under 1,500 ms since 2026-11-07c; the flake's own figures were 2,000 under a loaded runner's
 // start) kills the hang AND the PASSING file. Then the sized clock, measured under the same
-// slow start, lets the passing file through.
+// slow start, let the passing file through; since 19c (UMB4-048) no test sizes a wall clock: a solo run timed under load and the sized run after it saw different loads, so the pair flaked.
 // 2026-11-07c: the sized run no longer carries the hang. A hang is killed only AT the clock, so it held this run for the whole sized clock (about 30 s under the slow start, 41 s for the test, the
 // file 74 to 79 s on Node 24): past the 60 s that Node 22 gives a whole file when a room passes --test-timeout=60000, CoalGob's red after the 07b re-copy. The kill of a hang under the slow start
-// is the fixed run's witness, the kill at a sized clock is the --file-clock-ms test's above, and what only this run can show is that the sized clock spares the passing file.
-test('the command line under a slow node start: a fixed file clock below the node start kills the hang and the passing file too (the flake), a clock sized from a solo run under the same load spares the passing file -- RED before the fix', () => {
+// is the fixed run's witness; since 19c a passing file spared by its clock is the injected-clock test's above, so this run keeps only the fixed clock that kills both files.
+test('the command line under a slow node start: a fixed file clock below the node start kills the hang and the passing file too (the flake a wall clock causes; the policy is the injected-clock test above)', () => {
   const fixed = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '40000', '--file-clock-ms', '1000', '--serial', '--', ...fx('hang-top', 'pass')], SLOW_START_ENV);
   assert.equal(fixed.status, 1, fixed.stdout + fixed.stderr);
   assert.match(fixed.stdout, /^FAIL .*hang-top\.fixture\.mjs: killed at the file clock \(1000 ms\)/m, fixed.stdout);
   assert.match(fixed.stdout, /^FAIL .*pass\.fixture\.mjs: killed at the file clock \(1000 ms\)/m, 'the slow start did not reach the children, so this witness proves nothing: ' + fixed.stdout);
-  const clock = sizedFileClock(soloCliMs(SLOW_START_ENV));
-  const sized = cli(['--heap-mb', '512', '--file-timeout-ms', String(clock * 2), '--deadline-ms', String(clock * 4 + 20000), '--file-clock-ms', String(clock), '--serial', '--', ...fx('pass')], SLOW_START_ENV);
-  assert.equal(sized.status, 0, sized.stdout + sized.stderr);
-  assert.doesNotMatch(sized.stdout, /^FAIL /m, sized.stdout);
-  assert.match(sized.stdout, /pass 1 · fail 0 · vacuous 0 · skipped 0 · not-run 0 · reconciled 1 of 1 — GREEN$/m);
 });
 
 // ---- item 11 of order 09f (2026-10-09): the three defects the flock's first POSIX runs found --------------------------------------------------------

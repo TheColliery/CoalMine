@@ -180,8 +180,11 @@ export function lexAmb(text, force = null) {
   let i = 0;
   if (text.startsWith('#!')) { while (i < text.length && !LINE_TERMINATORS.has(text[i])) i++; } // a shebang line is not code, and ends at any line terminator
   const push = (k, v, s) => toks.push({ k, v, i: s, ln: line });
+  // a new line starts at every ECMA-262 LineTerminator: LF, U+2028, U+2029, and a CR that is not the first half of a CRLF (19c, the courier 29ja F1: counting LF alone hid a
+  // lone CR after a return, so the census read the next line as its value)
+  const isNL = (j) => { const d = text[j]; return d === '\n' || (d === '\r' && text[j + 1] !== '\n') || (LINE_TERMINATORS.has(d) && d !== '\r'); };
   // Where a regex body that starts at `from` ends: the index of its closing slash (outside a [class], a backslash escaping the next character), or -1 when a
-  // line feed or the end comes first. Computed for every start in one backward pass the first time it is asked, so a line of slashes that never close is not
+  // line terminator (LF, CR, U+2028, U+2029: a regex literal holds none) or the end comes first. Computed for every start in one backward pass the first time it is asked, so a line of slashes that never close is not
   // searched again from every later slash (quadratic, Deep Scan 2026-11-01). close[2*j + s] = the answer from j with s = 1 inside a class.
   let reClose = null;
   const regexClose = (from) => {
@@ -193,7 +196,7 @@ export function lexAmb(text, force = null) {
         CENSUS_WORK.steps++;
         const d = text[j];
         let out, inn;
-        if (d === '\n') { out = -1; inn = -1; }
+        if (LINE_TERMINATORS.has(d)) { out = -1; inn = -1; }
         else if (d === '\\') { out = at(j + 2, 0); inn = at(j + 2, 1); }
         else if (d === '[') { out = at(j + 1, 1); inn = out; }
         else if (d === ']') { out = at(j + 1, 0); inn = out; }
@@ -226,10 +229,11 @@ export function lexAmb(text, force = null) {
     let j = from;
     while (j < text.length) {
       const d = text[j];
-      if (d === '\\') { if (text[j + 1] === '\n') line++; j += 2; continue; }
+      // a backslash before a line terminator continues the template on the next line; before a CRLF it skips the CR here and the LF is counted on the next turn
+      if (d === '\\') { if (isNL(j + 1)) line++; j += 2; continue; }
       if (d === '`') { push('tpl', text.slice(from, j), from); i = j + 1; return; }
       if (d === '$' && text[j + 1] === '{') { push('tpl', text.slice(from, j), from); push('tplopen', '${', j); holes.push(braces); i = j + 2; return; }
-      if (d === '\n') line++;
+      if (isNL(j)) line++;
       j++;
     }
     push('tpl', text.slice(from), from);
@@ -238,21 +242,22 @@ export function lexAmb(text, force = null) {
   };
   while (i < text.length) {
     const c = text[i];
-    if (c === '\n') { line++; i++; continue; }
+    if (isNL(i)) { line++; i++; continue; }
     if (/\s/.test(c)) { i++; continue; }
     if (c === '/' && text[i + 1] === '/') { while (i < text.length && !LINE_TERMINATORS.has(text[i])) i++; continue; } // a // comment ends at CR, U+2028 and U+2029 as well as LF
     if (c === '/' && text[i + 1] === '*') {
       const e = text.indexOf('*/', i + 2);
       const stop = e === -1 ? text.length : e + 2;
       if (e === -1 && bad === null) bad = { kind: 'block comment', i, ln: line };
-      for (let j = i; j < stop; j++) if (text[j] === '\n') line++;
+      for (let j = i; j < stop; j++) if (isNL(j)) line++;
       i = stop;
       continue;
     }
     if (c === '"' || c === '\'') {
       const s = i;
       i++;
-      while (i < text.length && text[i] !== c && text[i] !== '\n') { if (text[i] === '\\') { if (text[i + 1] === '\n') line++; i++; } i++; }
+      // a string ends at LF or CR (U+2028 and U+2029 are allowed inside one); a backslash before a line terminator (CRLF as one) continues it on the next line
+      while (i < text.length && text[i] !== c && text[i] !== '\n' && text[i] !== '\r') { if (text[i] === '\\') { if (text[i + 1] === '\r' && text[i + 2] === '\n') { line++; i++; } else if (isNL(i + 1)) line++; i++; } i++; }
       push('str', text.slice(s + 1, i), s);
       if (text[i] === c) i++;
       continue;

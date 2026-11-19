@@ -154,7 +154,8 @@ function killTree(child) {
 const posInt = (n) => Number.isInteger(n) && n > 0;
 
 export async function runWaves(opts) {
-  const { files, cwd = process.cwd(), env = process.env, heapMb, fileTimeoutMs, deadlineMs, fileClockMs, serial = false, onEvent = () => {} } = opts;
+  // timers: the setTimeout/clearTimeout pair the FILE clock runs on (19c, UMB4-048): a test hands its own, fired by the run's events, so the clock's policy is tested with no wall time
+  const { files, cwd = process.cwd(), env = process.env, heapMb, fileTimeoutMs, deadlineMs, fileClockMs, serial = false, onEvent = () => {}, timers = { setTimeout, clearTimeout } } = opts;
   if (!Array.isArray(files) || files.length === 0) throw new UsageError('no test files were given');
   for (const [k, v] of [['heapMb', heapMb], ['fileTimeoutMs', fileTimeoutMs], ['deadlineMs', deadlineMs]]) {
     if (!posInt(v)) throw new UsageError(`${k} must be a positive integer: the heap cap, the clock per test (node --test's --test-timeout) and the whole-run deadline are the room's numbers, and a run with no finite clock is refused`);
@@ -205,7 +206,7 @@ export async function runWaves(opts) {
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
     const entry = { child, killed: null };
-    const clock = fileClockMs === undefined ? null : setTimeout(() => {
+    const clock = fileClockMs === undefined ? null : timers.setTimeout(() => {
       if (!entry.killed) { entry.killed = `killed at the file clock (${fileClockMs} ms)`; killTree(child); }
     }, fileClockMs);
     running.set(file, entry);
@@ -215,7 +216,7 @@ export async function runWaves(opts) {
       const finish = (code, signal, startError) => {
         if (finished) return;
         finished = true;
-        if (clock) clearTimeout(clock);
+        if (clock) timers.clearTimeout(clock);
         running.delete(file);
         const r = startError
           ? { file, status: STATUS.FAIL, reason: `could not start: ${startError}`, counts: null, failing: [] }

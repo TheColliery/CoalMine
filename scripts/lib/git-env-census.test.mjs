@@ -186,8 +186,13 @@ test('a helper with a bare return, or one whose body can end without returning, 
     'const mk = () => { if (process.argv[2]) return gitEnv(); };',
     'function mk() {\n  return\n  gitEnv();\n}', // t346 F15: a line break after return ends the statement (ASI), so mk returns undefined
     'const mk = () => {\n  return\n  {};\n};',
+    // 19c (the courier 29ja, F1): every line terminator ends a return, not only LF: a lone CR, U+2028 and U+2029 (ECMA-262 LineTerminator)
+    'function mk() { return\r  gitEnv(); }',
+    'function mk() { return\u2028  gitEnv(); }',
+    'function mk() { return\u2029  gitEnv(); }',
+    'function mk() { /* a\r comment */ return\r  gitEnv(); }',
   ]) assert.ok(scan(head + fn + '\n' + call).findings.length >= 1, `passed: ${fn}`);
-  for (const fn of ['function mk() { return gitEnv(); }', 'function mk() { if (process.argv[2]) return gitEnv(); return gitEnv(); }', 'const mk = () => gitEnv();', 'function mk() {\n  return gitEnv(\n  );\n}']) {
+  for (const fn of ['function mk() { return gitEnv(); }', 'function mk() { if (process.argv[2]) return gitEnv(); return gitEnv(); }', 'const mk = () => gitEnv();', 'function mk() {\n  return gitEnv(\n  );\n}', 'function mk() {\r\n  return gitEnv();\r\n}', 'function mk() {\r\n  const s = \'a\\\r\nb\';\r\n  return gitEnv();\r\n}']) {
     const r = scan(head + fn + '\n' + call);
     assert.deepEqual([r.findings, r.safe], [[], 1], `refused: ${fn}`);
   }
@@ -240,4 +245,23 @@ test('collectScriptsMjs refuses a .mjs whose open lands on another file than its
     fs.openSync = function (p, ...rest) { return origOpen.call(this, String(p).endsWith('named.mjs') ? path.join(dir, 'other.mjs') : p, ...rest); };
     assert.throws(() => collectScriptsMjs(dir), /scripts\/named\.mjs changed between the listing and the read/);
   } finally { fs.openSync = origOpen; removeTree(dir); }
+});
+
+// 19c (the courier 29ja F1): a finding names the line a reader of the file sees, so every ECMA-262 line terminator counts once, in code and inside a block comment: LF, CRLF (as one), a lone CR,
+// U+2028 and U+2029. The unsandboxed spawn below sits on line 7 whichever terminator the lines before it end with.
+test('a finding names its line counting every line terminator once: LF, CRLF, a lone CR, U+2028 and U+2029, in code and in a block comment -- RED before 19c', () => {
+  const head = "import { spawnSync } from 'node:child_process';";
+  for (const [label, nl] of [['LF', '\n'], ['CRLF', '\r\n'], ['lone CR', '\r'], ['U+2028', String.fromCharCode(0x2028)], ['U+2029', String.fromCharCode(0x2029)]]) {
+    const fixture = [head, 'const a = 1;', '/* one', 'two */ const b = 2;', 'const c = 3;', '', SP + "('git', ['status']);"].join(nl) + nl;
+    const r = scan(fixture);
+    assert.equal(r.findings.length, 1, label + ': ' + JSON.stringify(r.findings));
+    assert.match(r.findings[0], /^fixture\.mjs:7 /, label + ': ' + r.findings[0]);
+  }
+  // 19d (the a00b4d8 review's L1): inside a template literal too: a lone CR, and a backslash continuation over CRLF, each start a line, so the spawn after the template sits on line 6
+  for (const [label, tpl] of [['a lone CR inside a template', 'const t = `one\rtwo`;'], ['a backslash and a lone CR inside a template', 'const t = `one' + String.fromCharCode(92) + String.fromCharCode(13) + 'two`;'], ['a backslash and CRLF inside a template', 'const t = `one' + String.fromCharCode(92) + '\r\ntwo`;']]) {
+    const fixture = [head, tpl, 'const c = 3;', '', SP + "('git', ['status']);"].join('\n') + '\n';
+    const r = scan(fixture);
+    assert.equal(r.findings.length, 1, label + ': ' + JSON.stringify(r.findings));
+    assert.match(r.findings[0], /^fixture\.mjs:6 /, label + ': ' + r.findings[0]);
+  }
 });
