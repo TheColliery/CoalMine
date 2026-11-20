@@ -99,7 +99,9 @@ export function readRepoFileBounded(file, root, maxBytes, prefixOnly = false) {
 // The same read, as raw bytes -- for a caller that hashes (a utf8 round trip would
 // change the digest of any non-UTF-8 byte sequence).
 // Residual, accepted: a regular file swapped in between the lstat above and the open may lie outside the project -- SECURITY.md, "Not covered, named".
-export function readRepoBytesBounded(file, root, maxBytes, prefixOnly = false) {
+// The one bounded reader, one descriptor: the bytes AND the fstat come from the same open file (29kk), so a caller
+// that keys an identity on the stat is keyed on the file it read, never on a name it stat'ed separately.
+export function readRepoBytesAndStat(file, root, maxBytes, prefixOnly = false) {
   if (repoEntryKind(file, root) !== 'file') return null;
   let fd;
   try {
@@ -115,12 +117,18 @@ export function readRepoBytesBounded(file, root, maxBytes, prefixOnly = false) {
       if (n === 0) break;
       got += n;
     }
-    return got === want ? buf : buf.subarray(0, got);
+    return { bytes: got === want ? buf : buf.subarray(0, got), st };
   } catch {
     return null;
   } finally {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* already closed */ } }
   }
+}
+
+// The bytes only, for a caller that does not key on the stat.
+export function readRepoBytesBounded(file, root, maxBytes, prefixOnly = false) {
+  const r = readRepoBytesAndStat(file, root, maxBytes, prefixOnly);
+  return r === null ? null : r.bytes;
 }
 
 // A refused write. `code` lets a caller tell a refusal from an ordinary I/O error.

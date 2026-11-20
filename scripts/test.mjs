@@ -153,6 +153,9 @@ const TESTS = [
   'scripts/verify-release-shape.test.mjs',
   'scripts/decide-upload.test.mjs',
   'scripts/prune-release-zips.test.mjs',
+  // 29kk B1-B3: a user's file changed between the read that seeds a destructive step and the act is kept (configure migration; install hook restore and config block).
+  'scripts/lib/configure-migrate.test.mjs',
+  'scripts/lib/install-window.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

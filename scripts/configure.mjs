@@ -9,7 +9,8 @@ import path from 'path';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
 import { stripJsonc } from './lib/jsonc.mjs';
 import { projectConfigPath, ownDirDefault, LEGACY_CONFIGS, isGlobalCfgFile } from './lib/config-paths.mjs';
-import { FOLDER_FIX, MAX_CONFIG_BYTES, readRepoFileBounded, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { FOLDER_FIX, MAX_CONFIG_BYTES, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { seedOf, stillSeeded } from './lib/seed-identity.mjs';
 
 // The three per-agent-dir shapes were added by the namespace campaign
 // (#69+#39, owner-designated 2026-08-08) alongside the LEGACY dotfile: a
@@ -186,8 +187,10 @@ function main() {
   let cfg = {};
   let hadComments = false;
   let rawConfig = null;
+  let readSeed = null; // 29kk: the bytes and identity of the file read here, re-checked before a legacy removal
   if (lexists(readPath)) {
-    rawConfig = readRepoFileBounded(readPath, isGlobal ? null : projectRoot, MAX_CONFIG_BYTES);
+    readSeed = seedOf(readPath, isGlobal ? null : projectRoot, MAX_CONFIG_BYTES);
+    rawConfig = readSeed === null ? null : readSeed.bytes.toString('utf8');
     // Present but unreadable, not a regular file, or over the bound: refuse -- rebuilding
     // from defaults would overwrite a file we never managed to read.
     if (rawConfig === null) { refuse(readPath, `not a readable regular file of at most ${MAX_CONFIG_BYTES} bytes`); return; }
@@ -294,8 +297,15 @@ function main() {
     // leaves a correctly-written new config; the stray legacy file is simply
     // not cleaned up this run.
     if (isLegacyRead(readPath) && writePath !== readPath) {
-      try { fs.rmSync(readPath, { force: true }); } catch {}
-      console.log(`Migrated the project config from ${readPath} to ${writePath}.`);
+      // 29kk (T-29jw-1, HIGH): the legacy file is the user's until removed. It goes only while it still holds the bytes
+      // read above; a change in between is the user's edit, so the file is kept and the run exits 1.
+      if (!stillSeeded(readSeed)) {
+        console.error(`Kept ${readPath}: it changed after it was read. Check the new config, then remove the file by hand.`);
+        process.exitCode = 1;
+      } else {
+        try { fs.rmSync(readPath, { force: true }); } catch {}
+        console.log(`Migrated the project config from ${readPath} to ${writePath}.`);
+      }
     }
     if (hadComments) {
       console.warn('Note: inline comments were stripped (this tool writes plain JSON). Every key stays documented in platform-configs/.coalmine.json.');

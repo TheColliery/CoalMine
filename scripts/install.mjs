@@ -27,6 +27,7 @@ import { gitEnv } from './lib/git-env.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
 import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
 import { FOLDER_FIX, MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, readRepoBytesBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { seedOf, stillSeeded } from './lib/seed-identity.mjs';
 
 // CWK-137 -- every path below cwd is REPO-DERIVED, i.e. untrusted: a cloned repository can
 // plant `.github/copilot-instructions.md -> ~/.bashrc`, a junction on `.agents`, or a FIFO
@@ -418,7 +419,9 @@ function uninstallGitHooks() {
       // A backup written before the ownership check was fixed can itself be an OLD
       // CoalMine hook filed as foreign — restoring it hands the user back an
       // obsolete CoalMine gate as if it were theirs. Discard, never restore.
-      const backupBody = readHook(backupPath);
+      // 29kk: the backup's bytes and identity are seeded here and re-checked before it is restored over the wrapper (T-29jw-5).
+      const backupSeed = seedOf(backupPath, hooksRoot, MAX_DOC_BYTES);
+      const backupBody = backupSeed === null ? null : backupSeed.bytes.toString('utf8');
       if (backupBody !== null && isOwnHook(backupBody)) {
         fs.unlinkSync(backupPath);
         console.log(`  discarded stale CoalMine backup: ${hookName}.pre-coalmine`);
@@ -444,6 +447,12 @@ function uninstallGitHooks() {
         const recorded = parseBackupHash(readHook(hookPath) ?? '');
         if (!recorded || gitBlobHash(backupBody) !== recorded) {
           console.warn(`  [kept] ${hookName}: ${backupPath} is not the backup CoalMine recorded, so it is not restored. Review it, then restore it by hand if you want it.`);
+          process.exitCode = 1;
+          continue;
+        }
+        // 29kk (T-29jw-5, HIGH): the backup is the user's until it is restored. It goes over the wrapper only while it still holds the bytes read above.
+        if (!stillSeeded(backupSeed)) {
+          console.warn(`  [kept] ${hookName}: ${backupPath} changed after it was read, so it is not restored over CoalMine's hook. Review it, then restore it by hand if you want it.`);
           process.exitCode = 1;
           continue;
         }
@@ -512,7 +521,9 @@ function uninstallConfig(arg) {
     if (!lexists(destFile)) return;
     const root = process.cwd();
     const why = checkRepoWriteTarget(destFile, root);
-    let content = why ? null : readRepoFileBounded(destFile, root, MAX_DOC_BYTES);
+    // 29kk (T-29jw-7): the trigger config is the user's file too; its bytes are seeded here and re-checked before it is rewritten or removed.
+    const contentSeed = why ? null : seedOf(destFile, root, MAX_DOC_BYTES);
+    let content = contentSeed === null ? null : contentSeed.bytes.toString('utf8');
     if (content === null) {
       console.warn(refuseMsg(path.relative(root, destFile), why || `unreadable or larger than ${MAX_DOC_BYTES} bytes`));
       process.exitCode = 1;
@@ -530,6 +541,11 @@ function uninstallConfig(arg) {
       const after = content.slice(ei + end.length);
       content = (before.trimEnd() + '\n\n' + after.trimStart()).trim();
 
+      if (!stillSeeded(contentSeed)) {
+        console.warn(`  [kept] ${path.relative(root, destFile)}: changed after it was read, so the CoalMine block is not removed. Review it, then remove the block by hand.`);
+        process.exitCode = 1;
+        return;
+      }
       if (!content) {
         fs.unlinkSync(destFile);
         console.log(`  removed empty trigger config: ${path.relative(process.cwd(), destFile)}`);
