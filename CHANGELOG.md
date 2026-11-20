@@ -2,6 +2,17 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.7] - 2026-11-20
+
+A user's file that changed during migration or uninstall is kept
+
+`scripts/configure.mjs` and `scripts/install.mjs` read a user's file and later deleted or rewrote it on the strength of that read, so an edit made in between was in neither file and the run reported success. Severity HIGH: one edit to a user's file, lost silently, inside a one-time migration or uninstall. Each of the three places now re-checks the file right before the act. If the file changed, or cannot be read again, it is kept, the run prints one `[kept]` or `Kept` line and exits 1, and the act does not run. The re-check compares the bytes and the file identity with what was read. The time between the last re-check and the act itself is not closed: a swap inside that window is not caught.
+
+### Fixed
+- **`configure.mjs` keeps the old project config when it changed during the migration.** The legacy root config was removed after the migration write, so a change made to it in between was deleted unread — test: `scripts/lib/configure-migrate.test.mjs`
+- **`install.mjs --uninstall` keeps your backed-up git hook when it changed.** The backed-up hook was restored over CoalMine's wrapper and its backup unlinked, so a change to the backup in between was written over the hook — test: `scripts/lib/install-window.test.mjs`
+- **`install.mjs --uninstall` keeps your `.clinerules` or your Copilot instructions file when it changed.** The trigger block was rewritten or removed, so a change to that file in between was overwritten or deleted — test: `scripts/lib/install-window.test.mjs`
+
 ## [3.28.6] - 2026-11-19
 
 The plugin ships its icon and names it in both manifests
