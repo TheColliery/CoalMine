@@ -1104,7 +1104,8 @@ test('a re-read that fails leaves nothing half read: the tree is reported NOT sc
   const log = path.join(SANDBOX, 'spawn-' + Math.random().toString(36).slice(2) + '.log');
   const r = run(repo([{ 'wide.bin': witPlain(), 'other.txt': 'id ' + KEY + '\n' }]), [], '', { NODE_OPTIONS: `--import ${pathToFileURL(FAKE_PRELOAD).href}`, FAKE_CATFILE_MODE: 'second-exit1', FAKE_SPAWN_LOG: log }, 120000);
   assert.strictEqual(r.code, 1, r.out + r.err);
-  assert.match(r.out, /FAIL SECRETS: git could not read the staged files \(exit 1\); the tree was NOT scanned/);
+  // 20a (t352): the line names the file whose re-read failed; the gate still refuses the whole tree (exit 1, nothing reported as scanned), as it did before
+  assert.match(r.out, /FAIL SECRETS: git could not re-read "wide\.bin" \(exit 1\); the tree was NOT scanned/);
   assert.doesNotMatch(r.out, /tree "/, 'no file of a tree reported NOT scanned is reported as scanned or matched: ' + r.out);
   assert.doesNotMatch(r.out + r.err, /\n\s+at |TypeError/, 'no stack trace');
   assert.strictEqual(fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).length, 2, 'the stream ran, then the one re-read that failed');
@@ -1139,4 +1140,50 @@ test('a staged entry whose value reaches the scan as anything but its bytes fail
   assert.strictEqual(r.code, 1, r.out + r.err);
   assert.match(r.out, /FAIL SECRETS: "odd\.txt" reached the scan as something other than its bytes \(an internal error\); it was NOT scanned/);
   assert.doesNotMatch(r.out, /PASS SECRETS/);
+});
+
+// 20a (t352, the CoalWash reviewer's witness): the raw reading and a decoded reading can find one key a different number of times. In UTF-16LE text that opens with U+4161, the raw
+// reading with its NULs removed glues "aA" to the first token, which then fails its boundary: the raw reading finds only the SECOND occurrence, on line 2, and the decoded reading finds
+// both. Matching by ordinal gave that one raw hit the decoded FIRST occurrence's line, 1. A raw hit now takes a decoded line only when both readings found the key equally often.
+test('a raw hit keeps its own line when the decoded reading found the key a different number of times; equal counts still take the decoded lines -- RED before 20a (t352)', async () => {
+  const { scanBytes } = await import(pathToFileURL(LIB).href);
+  const T = 'gh' + 'p_' + 'A'.repeat(36);
+  const uneven = scanBytes(Buffer.from(String.fromCharCode(0x4161) + T + '\n' + T, 'utf16le'), 'w.txt');
+  assert.deepStrictEqual(uneven.map((h) => [h.line, h.pattern]), [[2, 'github-token']], 'the one raw hit is the second occurrence, on line 2');
+  // the equal-count control: U+0A41 is the bytes 41 0A, a line break to the raw reading only; both readings find the key once, so the raw hit (line 2) takes the decoded line, 1
+  const even = scanBytes(Buffer.from(String.fromCharCode(0x0A41) + T, 'utf16le'), 'w.txt');
+  assert.deepStrictEqual(even.map((h) => [h.line, h.pattern]), [[1, 'github-token']], 'equal counts still take the decoded line');
+});
+
+// 20b (the da5b7e9 review's M1): the equal-count rule of 20a kept a RAW line wherever the counts differed, and the raw reading counts a 0x0A byte inside a wide character as a line break,
+// so a key after such a character was named one line too low. A reported line is now the line in the DECODED text where that occurrence's bytes sit, by position: every decoded newline
+// holds a 0x0A byte the raw reading also breaks on, so each raw line lies inside one decoded line, and the merge maps a raw hit's line to it. The reviewer's two cases (U+0A41, the bytes
+// 41 0A, on line 1), the t352 case and the equal-count control above stay green. A FAKE token, built in code.
+test('a reported line is the decoded line where the occurrence sits, whatever the two readings count -- the da5b7e9 review\'s two cases, RED before 20b', async () => {
+  const { scanBytes } = await import(pathToFileURL(LIB).href);
+  const TOK = 'g' + 'hp_' + 'Zx9Q'.repeat(9);
+  const BOM = Buffer.from([0xff, 0xfe]);
+  const w = (s) => Buffer.from(s, 'utf16le');
+  const fakeFromBytes = Buffer.from(TOK, 'latin1'); // the raw reading reads these bytes as the token; the decoded reading reads CJK, on line 4
+  const NL = String.fromCharCode(0x0a41);
+  const lines = (b) => scanBytes(b, 'f.txt').map((h) => [h.line, h.pattern]);
+  // raw 2, wide 1: the real token on decoded line 2, the token-shaped bytes on decoded line 4 (raw lines 3 and 5)
+  assert.deepStrictEqual(lines(Buffer.concat([BOM, w('x' + NL + 'y\nreal ' + TOK + '\nmid\n '), fakeFromBytes, w('\nend\n')])), [[2, 'github-token'], [4, 'github-token']]);
+  // raw 1, wide 2: the raw reading finds the first occurrence (decoded line 2, raw line 3); the second is glued in the raw reading
+  assert.deepStrictEqual(lines(Buffer.concat([BOM, w('x' + NL + 'y\nreal ' + TOK + '\nmid\n' + String.fromCharCode(0x4e2d) + TOK + '\nend\n')])), [[2, 'github-token']]);
+  // a 0x0A byte that is the LOW byte of a unit that is not a newline (U+410A, the bytes 0A 41) breaks only the raw line: the key stays on decoded line 2
+  assert.deepStrictEqual(lines(Buffer.concat([BOM, w('x' + String.fromCharCode(0x410a) + 'y\nreal ' + TOK + '\n')])), [[2, 'github-token']]);
+  // a 0A 00 pair that straddles two units (U+0A41 then U+4100, the bytes 41 0A 00 41) is no decoded newline: only an aligned unit counts
+  assert.deepStrictEqual(lines(Buffer.concat([BOM, w('x' + String.fromCharCode(0x0a41, 0x4100) + 'y\nreal ' + TOK + '\n')])), [[2, 'github-token']]);
+  // 20c (the re-check's N1): a key no decoded reading holds (token-shaped bytes that decode as CJK) is mapped through the reading that fits the file: its byte-order mark's, so a
+  // UTF-16BE file names line 3 where the bytes sit (A7; reading 0, little-endian, saw no newline and named line 1); the same shape in UTF-16LE stays on line 3 (A6)
+  assert.deepStrictEqual(lines(Buffer.concat([BOM, w('x' + NL + 'y\nm\n '), fakeFromBytes, w('\nend')])), [[3, 'github-token']], 'A6, little-endian');
+  assert.deepStrictEqual(lines(Buffer.concat([Buffer.from([0xfe, 0xff]), w('x' + String.fromCharCode(0x410a) + 'y\nm\n ').swap16(), fakeFromBytes, w('\nend').swap16()])), [[3, 'github-token']], 'A7, big-endian');
+  // with no byte-order mark, the reading that decodes the most newlines: the same big-endian bytes without their mark still name line 3
+  // the mark wins over a newline count: in this big-endian file four U+0A00 (the bytes 0A 00) would be newlines to a little-endian reading, which would then decode the most
+  assert.deepStrictEqual(lines(Buffer.concat([Buffer.from([0xfe, 0xff]), w('x' + String.fromCharCode(0x0a00).repeat(4) + 'y\nm\n ').swap16(), fakeFromBytes, w('\nend').swap16()])), [[3, 'github-token']], 'the mark decides');
+  // (sixteen more letters on line 2, so the rule reads it as wide text by its NULs alone; the readings at offset 1 would count the 0x0A inside U+410A as a newline)
+  assert.deepStrictEqual(lines(Buffer.concat([w('x' + String.fromCharCode(0x410a) + 'y\n' + 'm'.repeat(17) + '\n ').swap16(), fakeFromBytes, w('\nend').swap16()])), [[3, 'github-token']], 'A7 without a mark');
+  // big-endian: a decoded newline is the bytes 00 0A, its 0x0A byte LAST; U+0A41 is 0A 41 there, a raw break only
+  assert.deepStrictEqual(lines(Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('x' + NL + 'y\nreal ' + TOK + '\nmid\n', 'utf16le').swap16()])), [[2, 'github-token']]);
 });

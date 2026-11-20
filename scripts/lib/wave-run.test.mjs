@@ -385,7 +385,8 @@ test('the command line: a serial run over real files prints its SKIPPED lines an
   const green = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'skip')]);
   assert.equal(green.status, 0, green.stdout + green.stderr);
   const lines = green.stdout.trim().split(/\r?\n/);
-  assert.deepEqual(lines.slice(0, -1), ['SKIPPED skip.fixture.mjs: "platform leg"']);
+  assert.deepEqual(lines.slice(0, -1).filter((l) => !l.startsWith('TIME ')), ['SKIPPED skip.fixture.mjs: "platform leg"']);
+  assert.deepEqual(lines.filter((l) => l.startsWith('TIME ')).map((l) => l.replace(/: \d+\.\d s$/, '')), ['TIME pass.fixture.mjs', 'TIME skip.fixture.mjs'], 'one TIME line per file, before the summary (20a)');
   assert.match(lines.at(-1), /^wave-run: 2 files · pass 1 · fail 0 · vacuous 0 · skipped 1 · not-run 0 · reconciled 2 of 2 — GREEN$/);
   const red = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'exit0-before')]);
   assert.equal(red.status, 1);
@@ -684,6 +685,24 @@ test('the command line: a skipped leg beside a real pass prints its SKIPPED line
   const r = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass', 'mixed')]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const lines = r.stdout.trim().split(/\r?\n/);
-  assert.deepEqual(lines.slice(0, -1), ['SKIPPED mixed.fixture.mjs: "platform leg"']);
+  assert.deepEqual(lines.slice(0, -1).filter((l) => !l.startsWith('TIME ')), ['SKIPPED mixed.fixture.mjs: "platform leg"']);
+  assert.deepEqual(lines.filter((l) => l.startsWith('TIME ')).map((l) => l.replace(/: \d+\.\d s$/, '')), ['TIME pass.fixture.mjs', 'TIME mixed.fixture.mjs'], 'one TIME line per file, before the summary (20a)');
   assert.match(lines.at(-1), /^wave-run: 2 files · pass 2 · fail 0 · vacuous 0 · skipped 0 · not-run 0 · reconciled 2 of 2 — GREEN$/);
+});
+
+// 20a (the CoalWorks chief's c176, zone row CW-081): a GREEN run prints each file's wall time, so a room sizes its per-file clock from a measurement and not a guess. runWaves reads the time
+// from `timers.now` (default Date.now), the injectable pair 19c added, so this test drives it with a clock of its own and no wall time: each reading moves 1,500 ms on.
+test('every file that ran carries its wall time, and a green run prints one TIME line per file before the summary -- RED before 20a (c176)', async () => {
+  const { timeLines } = await import(pathToFileURL(WAVE_RUN).href);
+  assert.equal(typeof timeLines, 'function', 'wave-run.mjs exports timeLines');
+  let t = 0;
+  const timers = { setTimeout, clearTimeout, now: () => (t += 1500) };
+  const r = await runWaves({ files: fx('pass', 'fail'), cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE'), timers });
+  assert.deepEqual(r.results.map((x) => [x.status, x.ms]), [[STATUS.PASS, 1500], [STATUS.FAIL, 1500]]);
+  assert.deepEqual(timeLines(r.results), r.results.map((x) => `TIME ${x.name}: 1.5 s`));
+  const missing = await runWaves({ files: [...fx('pass'), 'no-such.fixture.mjs'], cwd: SANDBOX, env: SANDBOX_ENV, ...LIMITS, serial: true, read: scripted('BREATHE'), timers });
+  assert.equal(timeLines(missing.results).length, 1, 'a file that never started has no time');
+  const cliRun = cli(['--heap-mb', '512', '--file-timeout-ms', '20000', '--deadline-ms', '60000', '--serial', '--', ...fx('pass')]);
+  assert.equal(cliRun.status, 0, cliRun.stdout + cliRun.stderr);
+  assert.match(cliRun.stdout, /^TIME .*pass\.fixture\.mjs: \d+\.\d s\nwave-run: 1 file · pass 1 /m, 'the command line prints the TIME line on a green run, before the summary');
 });

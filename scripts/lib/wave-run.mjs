@@ -99,6 +99,9 @@ export function classifyFile({ file, code, signal, stdout, killedBy = null }) {
 
 // One `SKIPPED <file>: <test name>` line per skipped test, in roster order. The test name is the file's own text, so it goes out through JSON.stringify (CWE-117): a
 // newline in it cannot forge a line a reader of this output would parse. A room that calls runWaves itself prints these lines before its summary, as main() does.
+// One `TIME <file>: <seconds> s` line per file that ran, in roster order, on EVERY run (green included): the wall time from its start to its exit, so a room sizes its
+// per-file clock from a measured file and not a guess (20a, c176). A file that never started (missing, not run) has none.
+export const timeLines = (results) => results.filter((r) => Number.isFinite(r.ms)).map((r) => `TIME ${r.name ?? r.file}: ${(r.ms / 1000).toFixed(1)} s`);
 export const skippedLines = (results) => results.flatMap((r) => (r.skipped ?? []).map((t) => `SKIPPED ${r.name ?? r.file}: ${JSON.stringify(t)}`));
 
 // ---- the summary: one line, five counts, reconciled against the roster ---------------------------------------------------------------------
@@ -154,7 +157,8 @@ function killTree(child) {
 const posInt = (n) => Number.isInteger(n) && n > 0;
 
 export async function runWaves(opts) {
-  // timers: the setTimeout/clearTimeout pair the FILE clock runs on (19c, UMB4-048): a test hands its own, fired by the run's events, so the clock's policy is tested with no wall time
+  // timers: the setTimeout/clearTimeout pair the FILE clock runs on (19c, UMB4-048): a test hands its own, fired by the run's events, so the clock's policy is tested with no wall time;
+  // timers.now (default Date.now) times each file (20a)
   const { files, cwd = process.cwd(), env = process.env, heapMb, fileTimeoutMs, deadlineMs, fileClockMs, serial = false, onEvent = () => {}, timers = { setTimeout, clearTimeout } } = opts;
   if (!Array.isArray(files) || files.length === 0) throw new UsageError('no test files were given');
   for (const [k, v] of [['heapMb', heapMb], ['fileTimeoutMs', fileTimeoutMs], ['deadlineMs', deadlineMs]]) {
@@ -196,6 +200,7 @@ export async function runWaves(opts) {
   let deadlineHit = false;
 
   const start = (file) => {
+    const t0 = (timers.now ?? Date.now)();
     const child = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-timeout=${fileTimeoutMs}`, '--test-force-exit', file], {
       cwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true,
     });
@@ -222,6 +227,7 @@ export async function runWaves(opts) {
           ? { file, status: STATUS.FAIL, reason: `could not start: ${startError}`, counts: null, failing: [] }
           : classifyFile({ file, code, signal, stdout: out, killedBy: entry.killed });
         r.name = display(file);
+        r.ms = (timers.now ?? Date.now)() - t0;
         if (r.status === STATUS.FAIL || r.status === STATUS.VACUOUS) { r.stdout = out; r.stderr = err; }
         results.set(file, r);
         onEvent({ type: 'exit', file, status: r.status, running: running.size });
@@ -326,6 +332,7 @@ async function main() {
     if (r.stdout || r.stderr) process.stderr.write(`--- ${r.name} (${r.status}) ---\n${r.stdout ?? ''}${r.stderr ?? ''}\n`);
   }
   for (const line of skippedLines(run.results)) process.stdout.write(`${line}\n`);
+  for (const line of timeLines(run.results)) process.stdout.write(`${line}\n`);
   process.stdout.write(`${run.summary.line}\n`);
   process.exitCode = run.exitCode;
 }

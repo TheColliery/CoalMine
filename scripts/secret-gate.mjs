@@ -9,7 +9,7 @@
 // whose value is a scheme and a token (Authorization: Bearer <key>, X-Api-Token: Bearer <key>) unless that token is provider-shaped,
 // or a key split across lines.
 //
-// TWO SCANS. (1) The STAGED tree, always: every blob in the index except a binary one (a blob whose every staged path has a binary-looking name AND whose first bytes are binary is skipped, below), which is what a commit records and what a CI checkout
+// TWO SCANS. (1) The STAGED tree, always: every blob in the index except a binary one (a blob whose every staged path has a binary-looking name AND whose bytes are binary is skipped, below, unless the scanner's wide-text rule reads it as UTF-16 or UTF-32: then it is decoded and scanned), which is what a commit records and what a CI checkout
 // holds (a staged edit is scanned even when the working file was changed back; an unstaged edit cannot be committed or
 // pushed and is not reported). A commit made with "git commit -a" or a partial commit reads the index that commit uses
 // (GIT_INDEX_FILE), one of the two GIT_* variables the gate keeps. (2) With --pre-push (the hook passes it,
@@ -246,14 +246,15 @@ async function main() {
           staged.set(id, BINARY_BLOB); // already failed by name above; the scan loop passes over it
           continue;
         }
-        const again = (await readBlobs([id], new Set(), prefixBinary, nameOf)).get(id);
+        let again;
+        try { again = (await readBlobs([id], new Set(), prefixBinary, nameOf)).get(id); } catch (e) { throw Object.assign(e ?? new Error('cat-file error'), { rereadOf: nameOf.get(id) || id }); } // the line names the file whose re-read failed (t352)
         const kept = again && !scan.wideKinds(again).length ? BINARY_BLOB : again;
         staged.set(id, kept);
         if (Buffer.isBuffer(kept)) heldNow += kept.length;
       }
       blobs = staged;
     } catch (e) {
-      fails.push(e && e.code === 'EHELD' ? `${e.message}; the tree was NOT scanned. Keep the file out of the repository, or track it with Git LFS` : `git could not read the staged files (${e && e.code ? e.code : 'cat-file error'}); the tree was NOT scanned`);
+      fails.push(e && e.code === 'EHELD' ? `${e.message}; the tree was NOT scanned. Keep the file out of the repository, or track it with Git LFS` : `git could not ${e && e.rereadOf ? `re-read ${esc(e.rereadOf)}` : 'read the staged files'} (${e && e.code ? e.code : 'cat-file error'}); the tree was NOT scanned`);
     }
   }
   // A binary-looking NAME only marks a blob for the content probe: it is skipped when its bytes are binary too (a NUL in its first bytes,
