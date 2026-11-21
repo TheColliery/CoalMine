@@ -97,7 +97,7 @@ test('configure: a legacy config that cannot be moved aside is kept with no back
 });
 
 test('configure: an earlier legacy backup is replaced by the move, and the line says so', (t) => {
-  const { root, proj, legacy, bak } = legacyProject(t);
+  const { root, proj, bak } = legacyProject(t);
   fs.writeFileSync(bak, 'OLD BACKUP\n');
   const r = runScript(root, proj, CONFIGURE, ['--autoScanFileCap', '9'], null);
   assert.equal(r.status, 0, `an unchanged legacy file migrates, stderr: ${r.stderr}`);
