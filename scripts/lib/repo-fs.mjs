@@ -143,6 +143,8 @@ export class RepoWriteRefused extends Error {
 // nearest existing ancestor by realpath BEFORE the make), so nothing was made outside; the gap was the in-project link.
 // What a user is told for a refused FOLDER (a link, a junction or a file on the chain); the callers keep their file instruction for a refused FILE (17a INSPECT LOW-1).
 export const FOLDER_FIX = 'make that path a real folder inside the project (remove the link or the file that sits there) and re-run';
+// The instruction a read-only FILE carries (T-29mk-D2). A caller that prints link advice checks for this text and prints it instead, as it does for FOLDER_FIX.
+export const READONLY_FIX = 'make the file writable if you mean to change it';
 function escapesRoot(rel) { return rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel); }
 // The reason a folder chain is refused, or null: only existing components are judged (a missing one has nothing under it). Used by checkRepoDirTarget, so every caller's
 // pre-check refuses before anything is written, and by mkdirRepoParents below.
@@ -223,6 +225,9 @@ export function checkRepoWriteTarget(target, root) {
     return `${target} is a symbolic link to ${to}`;
   }
   if (!st.isFile()) return `${target} exists but is not a regular file`;
+  // T-29mk-D2: a file with no write bit is refused by name, never chmodded and never replaced. Windows reports the read-only attribute as 0o444, so one check covers both.
+  // Stated limit (H3): a file made read-only AFTER this check is still replaced on POSIX, because the rename needs only the folder's write bit. Not closed here.
+  if ((st.mode & 0o222) === 0) return `${target} is read-only; nothing was written -- ${READONLY_FIX}`;
   return null;
 }
 

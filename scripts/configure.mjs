@@ -9,7 +9,7 @@ import path from 'path';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
 import { stripJsonc } from './lib/jsonc.mjs';
 import { projectConfigPath, ownDirDefault, LEGACY_CONFIGS, isGlobalCfgFile } from './lib/config-paths.mjs';
-import { FOLDER_FIX, MAX_CONFIG_BYTES, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { FOLDER_FIX, READONLY_FIX, MAX_CONFIG_BYTES, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
 import { seedOf } from './lib/seed-identity.mjs';
 import { moveAndCompare, sourceNote } from './lib/move-aside.mjs';
 import { trackedStatus } from './lib/tracked-status.mjs';
@@ -174,15 +174,28 @@ function main() {
   // size bound but NO containment, and its write follows the link as before.
   const lexists = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
   const refuse = (p, why) => {
+    // a read-only FILE names itself and its fix in the reason (T-29mk-D2): no link advice for it
+    if (why.includes(READONLY_FIX)) { console.error(`Error: ${why}.`); process.exitCode = 1; return; }
     console.error(`Error: refused to use the config file ${p}: ${why}.`);
     // a refused FOLDER already carries FOLDER_FIX in its reason; only a refused FILE gets the file instruction (17a INSPECT LOW-1)
     if (!why.includes(FOLDER_FIX)) console.error('CoalMine will not read, back up, or write a config through a link or outside the project. Replace it with a regular file inside the project (or delete it) and re-run.');
     process.exitCode = 1;
   };
+  // Every target is checked BEFORE the first write (T-29mk-D2, H2): the config, its new home, and the backup a migration or a malformed config makes.
   if (!isGlobal) {
-    for (const p of new Set([readPath, writePath])) {
+    for (const p of new Set([readPath, writePath, readPath + '.bak'])) {
       const why = checkRepoWriteTarget(p, projectRoot);
       if (why) { refuse(p, why); return; }
+    }
+  } else {
+    // --global follows a link by design (no link check above), but a file with no write bit that would be written or backed up is refused by name
+    // first. statSync, not lstat: the mode read is the link target's, the file that would be written.
+    for (const p of new Set([writePath, readPath + '.bak'])) {
+      let st = null;
+      try { st = fs.statSync(p); } catch (e) {
+        if (e.code !== 'ENOENT') { refuse(p, `it could not be inspected (${e.code})`); return; }
+      }
+      if (st && st.isFile() && (st.mode & 0o222) === 0) { refuse(p, `${p} is read-only; nothing was written -- ${READONLY_FIX}`); return; }
     }
   }
 

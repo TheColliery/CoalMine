@@ -157,6 +157,8 @@ const TESTS = [
   'scripts/lib/configure-migrate.test.mjs',
   'scripts/lib/install-window.test.mjs',
   'scripts/lib/move-aside.test.mjs',
+  // T-29mk-D2: a config, backup or trigger file with no write bit is refused by name, never replaced (the read-only refusal, repo-fs checkRepoWriteTarget).
+  'scripts/lib/configure-readonly.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

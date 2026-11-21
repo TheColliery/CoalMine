@@ -26,7 +26,7 @@ import { TARGETS, detectPresentAgents } from './lib/targets.mjs';
 import { gitEnv } from './lib/git-env.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
 import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
-import { FOLDER_FIX, MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, readRepoBytesBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { FOLDER_FIX, READONLY_FIX, MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, readRepoBytesBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
 import { seedOf } from './lib/seed-identity.mjs';
 import { moveAndCompare, sourceNote } from './lib/move-aside.mjs';
 import { trackedStatus } from './lib/tracked-status.mjs';
@@ -37,7 +37,8 @@ import { trackedStatus } from './lib/tracked-status.mjs';
 // refusal is LOUD (a message naming the path and what to do, and exitCode 1) -- never a
 // silent skip, never a write through the link.
 // A refused FOLDER (a link, junction or file on the chain) already carries its own instruction (FOLDER_FIX); a refused FILE gets the file instruction (17a INSPECT LOW-1).
-const refuseMsg = (what, why) => why.includes(FOLDER_FIX) ? `  [refused] ${what}: ${why}.` : `  [refused] ${what}: ${why} -- CoalMine will not write through a link or outside this project. Replace it with a regular file inside the project (or remove it) and re-run.`;
+// A read-only FILE carries its own instruction (READONLY_FIX, T-29mk-D2): it gets no link advice either.
+const refuseMsg = (what, why) => (why.includes(FOLDER_FIX) || why.includes(READONLY_FIX)) ? `  [refused] ${what}: ${why}.` : `  [refused] ${what}: ${why} -- CoalMine will not write through a link or outside this project. Replace it with a regular file inside the project (or remove it) and re-run.`;
 function lexists(p) {
   try { fs.lstatSync(p); return true; } catch { return false; }
 }
