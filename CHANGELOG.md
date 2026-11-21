@@ -2,6 +2,17 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.8] - 2026-11-21
+
+The config migration and uninstall keep the user's file as a .bak
+
+`configure.mjs` and `install.mjs --uninstall` read a user's file and later removed or rewrote it, so an edit made in the window between the read and the remove was lost with the file, and the run reported success (HIGH). 3.28.7 re-checked the file before the act and left a smaller window; the act itself is now one rename. The file is moved aside to a `.bak` beside it, the moved bytes are compared with what was read, and nothing is removed. A difference warns, names both files and exits 1; a failed move is said, exits 1, and the file stays. Each run says where the backup is and whether it replaced an earlier one, and the `.bak` is the user's to keep or delete: nothing sweeps it. A legacy file that git tracks gets a line on what to commit. A change made after the read-back is still not seen.
+
+### Fixed
+- **`configure.mjs` moves the old project config to a `.bak` beside it instead of removing it.** A change made to the legacy file in the window was lost with it; now it is kept in the backup and the run exits 1 — test: configure: a legacy config that changes at the destroying call, with no read after the seed, keeps its change in the backup and exits 1 (W-c1)
+- **`install.mjs --uninstall` restores the backed-up git hook by one rename over CoalMine's hook.** A change to the backup in the window was lost with the unlinked backup; now the moved file is compared and a difference warns and exits 1 — test: install uninstall (B2): a backed-up hook changed after its read (an appended line) is moved over the hook with the change, the warning names both, and the run exits 1
+- **`install.mjs --uninstall` moves your `.clinerules` or your Copilot instructions file to a `.bak` before it removes the CoalMine block.** A change to the file in the window was overwritten; the file is now rewritten from the bytes read and the file as it was stays in the backup — test: install uninstall (B3): a config changed after its read (an appended line) is moved aside with the change, the file is rewritten from the bytes read, the warning names both, and the run exits 1
+
 ## [3.28.7] - 2026-11-20
 
 A user's file that changed during migration or uninstall is kept
