@@ -72,7 +72,8 @@ function repo(commits, { withLib = true } = {}) {
 
 // The environment of the gate under test, a NODE child and not a git call: the sandbox environment, NODE_OPTIONS by name (a heap cap and a preload of the runner must reach it), a
 // HOME of its own, and whatever the test plants on top (a GIT_DIR a hook inherited).
-const gateEnv = (dir, extraEnv = {}) => ({ ...gitEnv(), NODE_OPTIONS: process.env.NODE_OPTIONS, HOME: dir, USERPROFILE: dir, ...extraEnv });
+// TEMP, TMP and TMPDIR are written out (the values gitEnv() already gives), so the canon's child-env census reads the sandbox by name (21i).
+const gateEnv = (dir, extraEnv = {}) => ({ ...gitEnv(), NODE_OPTIONS: process.env.NODE_OPTIONS, HOME: dir, USERPROFILE: dir, TEMP: SANDBOX, TMP: SANDBOX, TMPDIR: SANDBOX, ...extraEnv });
 
 function run(dir, args = [], input = '', extraEnv = {}, timeout = 60000) {
   const r = spawnSync(process.execPath, ['--max-old-space-size=512', path.join(dir, 'scripts', 'secret-gate.mjs'), ...args], {
@@ -481,6 +482,16 @@ test('git\'s own diagnostic is escaped in the report: a path in it that carries 
 });
 
 // A node child this file starts is capped like any harness child: a heap cap and a kill-timeout, so one runaway cannot take the machine.
+// 21i (21h D19): the word `timeout` anywhere in the call (a comment) passed; the option is read now: `timeout:` with a value other than 0, or the shorthand `timeout`,
+// in the call with its comments removed.
+const hasKillTimeout = (call) => /(?:[{,]\s*)timeout\s*(?::\s*(?!0\b)[\w.]|[,}])/.test(call.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''));
+test('the kill-timeout check reads the option, not the word -- RED before 21i', () => {
+  assert.equal(hasKillTimeout("{ encoding: 'utf8', timeout: 60000 })"), true);
+  assert.equal(hasKillTimeout('{ cwd: dir, input, timeout,\n env })'), true);
+  assert.equal(hasKillTimeout("{ encoding: 'utf8' /* timeout */ })"), false, 'a comment is not the option');
+  assert.equal(hasKillTimeout("{ encoding: 'utf8' } // no timeout here\n)"), false, 'a line comment is not the option');
+  assert.equal(hasKillTimeout('{ timeout: 0 })'), false, 'zero is no clock');
+});
 test('every node child this test file starts carries a heap cap and a kill-timeout', () => {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const calls = [...src.matchAll(/(?:execFileSync|spawnSync|spawn)\(process\.execPath, /g)];
@@ -489,7 +500,7 @@ test('every node child this test file starts carries a heap cap and a kill-timeo
     const call = src.slice(m.index, src.indexOf('});', m.index) + 3);
     const line = src.slice(0, m.index).split('\n').length;
     assert.ok(call.includes('--max-old-space-size='), `line ${line}: no heap cap`);
-    assert.ok(/\btimeout\b/.test(call), `line ${line}: no kill-timeout`);
+    assert.ok(hasKillTimeout(call), `line ${line}: no kill-timeout`);
   }
 });
 
@@ -1056,7 +1067,7 @@ test('one line of 4,000 distinct key-shaped tokens with NULs between their chara
     "const hits = scanText(line, 'f.txt');",
     "console.log(JSON.stringify({ n: hits.length, distinct: new Set(hits.map((h) => h.fp)).size, visited }));",
   ].join('\n');
-  const r = spawnSync(process.execPath, ['--max-old-space-size=256', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 60000, env: { PATH: process.env.PATH } });
+  const r = spawnSync(process.execPath, ['--max-old-space-size=256', '--input-type=module', '-e', code], { encoding: 'utf8', timeout: 60000, cwd: SANDBOX, env: gitEnv() }); // 21i (21h D16): the sandbox, not PATH alone
   assert.strictEqual(r.signal, null, 'the child was killed by the safety timeout: ' + (r.error ? r.error.code : r.signal));
   assert.strictEqual(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
@@ -1274,7 +1285,7 @@ test('a key in a wide spelling is reported in a file with no mark whose NULs do 
 // more than 12 units, in random bytes. FONT-LIKE stands for msyh.ttc: big-endian name and metric tables of small values and little-endian runs, past the 8 MiB decode
 // bound. 7edf02c read both as UTF-16 and drew a "wide text too large" refusal on the second; each must stay plain, with no hit, and the gate must pass them.
 test('binaries whose small 16-bit values run in both byte orders (a PE string table, a font collection) stay plain: no wide reading, no hit, no refusal -- RED against 7edf02c', async () => {
-  const { scanBytes, wideKinds, WIDE_TOO_LARGE } = await import(pathToFileURL(LIB).href);
+  const { scanBytes, wideKinds, looksBinary, WIDE_TOO_LARGE } = await import(pathToFileURL(LIB).href);
   let seed = 11;
   const rnd = (n) => { const b = Buffer.alloc(n); for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) >>> 0; b[i] = seed >>> 24; } return b; };
   const smallBE = (n) => { const b = Buffer.alloc(n * 2); for (let k = 0; k < n; k++) b.writeUInt16BE(1 + (k % 200), k * 2); return b; };
@@ -1292,8 +1303,10 @@ test('binaries whose small 16-bit values run in both byte orders (a PE string ta
     assert.ok(!hits.some((h) => h.pattern === WIDE_TOO_LARGE), name + ': no "too large to decode" refusal');
     assert.strictEqual(hits.length, 0, name + ': no hit: ' + JSON.stringify(hits.map((h) => h.pattern)));
   }
-  const r = run(repo([{ 'pe-like.dll': peLike }]));
-  assert.strictEqual(r.code, 0, 'the gate passes the PE-shaped file: ' + r.out + r.err);
+  // 21i (21h D21): .dll is not on the gate's BINARY list, so the gate scanned the blob as text and the binary-name path was never run; .bin is, and the prefix is binary
+  assert.ok(looksBinary(peLike.subarray(0, 8000)), 'the PE-shaped prefix reads as binary');
+  const r = run(repo([{ 'pe-like.bin': peLike }]));
+  assert.strictEqual(r.code, 0, 'the gate passes the PE-shaped file on its binary-name path: ' + r.out + r.err);
 });
 
 // 21a (a carrier's pull request: CodeRabbit Verify's "false rejection of a longer UTF-16LE word at the 1 MiB window boundary", and CodeRabbit's thread on a key cut by a
@@ -1348,8 +1361,9 @@ test('a staged or pushed path that is not valid UTF-8 fails the gate by name ins
   // 21b (the 21a review's L2): the message says the refusal is about the path and gives the rename that works for such a path in the index; the commands are run
   // here as printed (a wildcard that matches only the byte that is not UTF-8, and the blob id), and the renamed index then passes the path check
   assert.ok(r.out.includes('This refusal is about the path, not about a key in it.'), r.out);
-  assert.ok(r.out.includes('a\\xff.txt: git ls-files -s -- "a[^ -~].txt" ; git update-index --add --cacheinfo 100644,' + sha + ',<new name> ; git rm --cached -q -- "a[^ -~].txt"'), r.out);
-  assert.strictEqual(gitIn(['ls-files', '--', 'a[^ -~].txt']).split('\n').length, 2, 'the printed wildcard matches the two such paths and not ok.txt');
+  // 21j: one command per path, naming it by its bytes as hex and its blob, never a wildcard (which also matched the other path here)
+  assert.ok(r.out.includes('a\\xff.txt: node scripts/secret-gate.mjs --rename-odd=' + odd(0xff).toString('hex') + ':' + sha + ' --to="<new name>"'), r.out);
+  assert.ok(r.out.includes('a\\xfe.txt: node scripts/secret-gate.mjs --rename-odd=' + odd(0xfe).toString('hex') + ':' + sha + ' --to="<new name>"'), r.out);
   // the same two files pushed in a commit
   const tree = gitIn(['write-tree']);
   const commit = gitIn(['commit-tree', tree, '-p', 'HEAD', '-m', 'odd names']);
@@ -1362,10 +1376,10 @@ test('a staged or pushed path that is not valid UTF-8 fails the gate by name ins
 
 // 21a (CodeRabbit on a carrier's pull request, on the gate's failure message): "committed on the branch you push" sent a user whose staged tree held a match to the pushed branch,
 // while the tree scan reads acknowledgments from HEAD. The message now names the tree each kind of hit is acknowledged in.
-test('the failure message says where each kind of hit is acknowledged: a tree hit in HEAD, a pushed hit in the pushed commit -- RED before 21a', () => {
+test('the failure message says where each kind of hit is acknowledged: a tree hit in HEAD, a pushed hit in the tip of the ref pushed -- RED before 21a', () => {
   const r = run(repo([{ 'k.txt': 'token = ' + 'gh' + 'p_' + 'Q7w'.repeat(12) + '\n' }]));
   assert.strictEqual(r.code, 1, r.out + r.err);
-  assert.ok(r.out.includes('committed where the gate reads it: for a "tree" hit in HEAD (the commit checked out), for a "pushed" hit in the pushed commit'), r.out);
+  assert.ok(r.out.includes('committed where the gate reads it: for a "tree" hit in HEAD (the commit checked out), for a "pushed" hit in the tip of the ref you push (21i)'), r.out);
   assert.ok(!r.out.includes('the branch you push'), r.out);
 });
 
@@ -1394,7 +1408,7 @@ test('a wide-spelled word cut at a window\'s text end (1 MiB + 16 KiB past its s
 // 21c (the 21b re-check's N1): the wildcard printed in the refusal kept a path's valid UTF-8 characters as they were, so a path holding U+009B (an 8-bit CSI), U+2028
 // (a line separator) or U+202E (a right-to-left override) sent them raw to the terminal, past the gate's own rule on escaping by category. The reviewer's path, built from
 // code points: every line of the output is printable ASCII, and the printed wildcard still selects that one path and not its neighbours one ordinary character apart.
-test('a path that is not valid UTF-8 and holds C1, line-separator or bidi characters prints as ASCII only, and its wildcard still selects it alone -- RED before 21c', () => {
+test('a path that is not valid UTF-8 and holds C1, line-separator or bidi characters prints as ASCII only, and its rename names it alone -- RED before 21c', () => {
   const dir = repo([{ 'README.md': 'plain\n' }]);
   const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() }).toString().trim();
   const sha = gitIn(['hash-object', '-w', '--stdin'], Buffer.from('nothing here\n'));
@@ -1408,9 +1422,389 @@ test('a path that is not valid UTF-8 and holds C1, line-separator or bidi charac
   const out = r.out + r.err;
   assert.ok(/^[\x20-\x7e\r\n]*$/.test(out), 'only printable ASCII and line ends reach the output: ' + JSON.stringify([...out].filter((c) => c < ' ' && c !== '\n' && c !== '\r' || c > '~').map((c) => 'U+' + c.codePointAt(0).toString(16))));
   assert.strictEqual(out.trim().split(/\r?\n/).length, 1, 'one line: no path splits it');
-  const glob = /"(x\[\^ -~\][^"]*\.txt)"/.exec(r.out);
-  assert.ok(glob, 'a wildcard is printed for the path: ' + r.out);
-  const hits = gitIn(['ls-files', '-z', '--', glob[1]]).split(String.fromCharCode(0)).filter(Boolean);
-  assert.strictEqual(hits.length, 1, 'the printed wildcard lists exactly one path: ' + JSON.stringify(hits));
-  assert.ok(hits[0].endsWith('FAKE' + String.fromCodePoint(0x202e) + '.txt') && !hits[0].startsWith('xA'), 'and it is the forging path, not a neighbour one character apart');
+  // 21j: the rename names the path by its exact bytes (hex), so it selects that one path and none of its neighbours one ordinary character apart
+  for (const p of [forging, near('a')]) assert.ok(r.out.includes('--rename-odd=' + p.toString('hex') + ':' + sha + ' '), 'each path is named by its own bytes: ' + r.out);
+});
+
+// 21i P6 (CodeRabbit on two carriers, 21h D2 D3 D4) and 21j (the 21i INSPECT's HIGH): the recovery printed for a path that is not valid UTF-8 was a WILDCARD, and a
+// wildcard cannot be exact: it matched a new name of the same byte shape (21h), and with `git rm --cached -f` (21i) a VALID neighbour of the same shape (aé.txt) lost its
+// staged change without a word. The gate now prints one command of its own per path, ASCII only so it pastes in any shell: it removes exactly the entry it named, by
+// its path bytes (as hex) and its blob, and adds the blob under the new name, in one index update. These tests RUN the printed command, as printed.
+const oddName = Buffer.concat([Buffer.from('a'), Buffer.from([0xff, 0xfe]), Buffer.from('.txt')]);
+const runPrinted = (dir, out, fresh) => {
+  const line = /a\\xff\\xfe\.txt: (.*?)(?: \| | \.\.\.|$)/m.exec(out);
+  assert.ok(line, 'the recovery is printed for the path: ' + out);
+  for (const cmd of line[1].split(' ; ')) {
+    const argv = [...cmd.replace('<new name>', fresh).matchAll(/(?:"[^"]*"|[^\s"])+/g)].map((m) => m[0].split('"').join('')); // a shell word: quotes group and are removed
+    if (argv[0] === 'node' && argv[1] === 'scripts/secret-gate.mjs') { const r = run(dir, argv.slice(2)); assert.strictEqual(r.code, 0, 'the printed command runs: ' + r.out + r.err); continue; }
+    assert.strictEqual(argv[0], 'git', 'each printed command is the gate or git: ' + cmd);
+    spawnSync('git', [...GIT_IDENTITY, '-C', dir, ...argv.slice(1)], { timeout: 60000, env: gitEnv() }); // a refusal shows in the index below, as it would for the user
+  }
+};
+test('the printed rename recovery, run as printed, keeps the new name with the staged blob and removes only the old entry, also when the staged blob differs from HEAD -- RED before 21i', () => {
+  const dir = repo([{ 'README.md': 'plain\n' }]);
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() }).toString().trim();
+  const blob = (s) => gitIn(['hash-object', '-w', '--stdin'], Buffer.from(s));
+  const entry = (sha) => Buffer.concat([Buffer.from('100644 ' + sha + ' 0\t'), oddName, Buffer.from('\n')]);
+  gitIn(['update-index', '--index-info'], entry(blob('committed\n')));
+  gitIn(['update-ref', 'refs/heads/main', gitIn(['commit-tree', gitIn(['write-tree']), '-p', 'HEAD', '-m', 'odd name'])]);
+  const staged = blob('staged, not committed\n');
+  gitIn(['update-index', '--index-info'], entry(staged)); // the staged blob now differs from HEAD, and no working file exists
+  const listing = () => gitIn(['ls-files', '-s', '-z']).split(String.fromCharCode(0)).filter(Boolean).map((e) => e.replace(/ 0\t/, ' '));
+  const others = listing().filter((e) => !e.endsWith(' a' + String.fromCharCode(0xfffd, 0xfffd) + '.txt')); // every entry but the odd one (its name prints decoded)
+  assert.strictEqual(others.length, listing().length - 1, 'the odd entry is the one left out');
+  const r = run(dir);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  const fresh = 'a' + String.fromCodePoint(0xe9) + '.txt'; // two UTF-8 bytes after the a, as the old name has two bytes
+  runPrinted(dir, r.out, fresh);
+  assert.deepStrictEqual(listing().sort(), [...others, '100644 ' + staged + ' ' + fresh].sort(), 'the new name holds the staged blob and mode, the old entry is gone, nothing else moved');
+});
+test('the printed rename recovery leaves a valid neighbour of the same byte shape, and its staged change, exactly as they were -- RED before 21j', () => {
+  const dir = repo([{ 'README.md': 'plain\n', ['a' + String.fromCodePoint(0xe9) + '.txt']: 'v1\n' }]);
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() }).toString().trim();
+  const neighbour = 'a' + String.fromCodePoint(0xe9) + '.txt';
+  fs.writeFileSync(path.join(dir, neighbour), 'v2-staged\n');
+  gitIn(['add', '--', neighbour]);
+  fs.writeFileSync(path.join(dir, neighbour), 'v3-worktree\n'); // the staged blob differs from HEAD and from the file: only the index holds v2
+  const v2 = gitIn(['hash-object', '--stdin'], Buffer.from('v2-staged\n'));
+  const odd = gitIn(['hash-object', '-w', '--stdin'], Buffer.from('odd file\n'));
+  gitIn(['update-index', '--index-info'], Buffer.concat([Buffer.from('100644 ' + odd + ' 0\t'), oddName, Buffer.from('\n')]));
+  const listing = () => gitIn(['ls-files', '-s', '-z']).split(String.fromCharCode(0)).filter(Boolean).map((e) => e.replace(/ 0\t/, ' '));
+  const others = listing().filter((e) => !e.endsWith(' a' + String.fromCharCode(0xfffd, 0xfffd) + '.txt'));
+  assert.ok(others.includes('100644 ' + v2 + ' ' + neighbour), 'the neighbour\'s staged change is in the index before');
+  const r = run(dir);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  runPrinted(dir, r.out, 'renamed.txt');
+  assert.deepStrictEqual(listing().sort(), [...others, '100644 ' + odd + ' renamed.txt'].sort(), 'only the named entry moved: the neighbour keeps its staged change, every other entry is as it was');
+  assert.strictEqual(fs.readFileSync(path.join(dir, neighbour), 'utf8'), 'v3-worktree\n', 'and the working file is untouched');
+});
+
+// 21i P5 (CodeRabbit on a carrier, 21h D20): a held blob was kept as a list of pieces and joined at its end, so for that moment it was held twice while the count read
+// once, and a blob under the ceiling could take twice the ceiling's memory. A preload in the gate child records the largest Buffer.concat result: neither a text blob
+// held from its header nor one kept after its probe may be joined whole.
+test('a held blob is written into one buffer as it streams: the gate never joins a whole blob, from its header or after its probe -- RED before 21i', () => {
+  const dir = repo([{ 'big.txt': 'plain text line\n'.repeat(3 << 16), 'text.bin': 'more plain text\n'.repeat(3 << 16) }]); // 3 MiB each: one held from its header, one kept after its probe
+  const out = path.join(SANDBOX, 'concat-max.txt');
+  const pre = path.join(SANDBOX, 'concat-max.preload.mjs');
+  fs.writeFileSync(pre, "import fs from 'node:fs';\nconst real = Buffer.concat;\nlet max = 0;\nBuffer.concat = function (list, len) { const r = real.call(this, list, len); if (r.length > max) max = r.length; return r; };\nprocess.on('exit', () => fs.writeFileSync(" + JSON.stringify(out) + ", String(max)));\n");
+  fs.rmSync(out, { force: true });
+  const r = run(dir, [], '', { NODE_OPTIONS: '--import ' + pathToFileURL(pre).href });
+  assert.strictEqual(r.code, 0, r.out + r.err);
+  const max = Number(fs.readFileSync(out, 'utf8'));
+  assert.ok(max < (3 << 20) / 2, `the largest join is ${max} bytes, so no blob of ${3 << 20} bytes was joined whole`);
+});
+
+// 21i P1 (21g thread A, a carrier's pull request): the unit before a wide-spelled run was judged by ONE byte, so a key right after a non-ASCII character whose low
+// byte is a letter (Cyrillic U+0441, Latin U+0141) read as glued to a word and was dropped, while the same text read as wide text was found.
+test('a wide-spelled key right after a non-ASCII character is found in both little-endian spellings, as when the text is read as wide text -- RED before 21i', async () => {
+  const { spelledHits, scanBytes } = await import(pathToFileURL(LIB).href);
+  const T = 'gh' + 'p_' + 'Qw7'.repeat(12);
+  const unit32 = (s, big) => Buffer.concat([...s].map((ch) => { const b = Buffer.alloc(4); if (big) b.writeUInt32BE(ch.codePointAt(0)); else b.writeUInt32LE(ch.codePointAt(0)); return b; }));
+  const spell = { le16: (s) => Buffer.from(s, 'utf16le'), be16: (s) => Buffer.from(s, 'utf16le').swap16(), le32: (s) => unit32(s, false), be32: (s) => unit32(s, true) };
+  const pad = Buffer.alloc(400, 0x81); // no character a spelling can hold, NULs on both parities: not wide text
+  for (let q = 64; q < pad.length; q += 97) pad[q] = 0;
+  const hits = (enc, cp) => spelledHits(Buffer.concat([pad, enc(String.fromCodePoint(cp) + T + '\n'), pad]), 'f.bin').map((h) => h.pattern);
+  for (const [name, enc] of Object.entries(spell)) {
+    // big-endian: a character whose low byte is not a word byte; U+0441 and U+0141 stay refused there (the stated limit in spelledIn)
+    for (const cp of name.startsWith('le') ? [0x441, 0x141, 0x4e2d, 0x20] : [0x4e2d, 0x20]) assert.deepStrictEqual(hits(enc, cp), ['github-token'], `${name}, key after U+${cp.toString(16)}`);
+    if (name.startsWith('be')) assert.deepStrictEqual(hits(enc, 0x441), [], `${name}: the stated limit, a key after U+0441`);
+    assert.deepStrictEqual(spelledHits(Buffer.concat([pad, enc('x' + T + '\n'), pad]), 'f.bin'), [], `${name}: a key glued to an ASCII word stays refused`);
+  }
+  assert.deepStrictEqual(scanBytes(Buffer.from(String.fromCodePoint(0x441) + T + '\n', 'utf16le'), 'f.txt').map((h) => h.pattern), ['github-token'], 'the same text read as wide text (the parity this keeps)');
+});
+
+// 21i P2 (21g thread B, a carrier's pull request): a window held SPELL_EDGE bytes before what it owns, enough for the one character a word boundary reads, not
+// for the WHOLE previous key a glued key's start guard asks for. So the second of two glued keys, starting just past a window's first owned byte, was dropped.
+test('the second of two glued wide-spelled keys starting just past a scan window edge is found, by the search and by the gate probe -- RED before 21i', async () => {
+  const { spelledHits, spelledProbe, fingerprint } = await import(pathToFileURL(LIB).href);
+  const W = 1 << 20;
+  const pad = (n) => { const b = Buffer.alloc(n, 0x81); for (let q = 64; q < n; q += 97) b[q] = 0; return b; };
+  const unit32 = (s) => Buffer.concat([...s].map((ch) => { const b = Buffer.alloc(4); b.writeUInt32LE(ch.codePointAt(0)); return b; }));
+  const probe = (b) => { const r = spelledProbe(); for (let i = 0; i < b.length; i += 65536) r.feed(b.subarray(i, i + 65536)); r.end(); return r.found(); };
+  const aws1 = 'AK' + 'IA' + 'ABCDEFGHIJKLMNOP', aws2 = 'AK' + 'IA' + 'QRSTUVWXYZ234567';
+  const gh1 = 'gh' + 'p_' + 'Ab1'.repeat(85), gh2 = 'gh' + 'p_' + 'Cd2'.repeat(85); // 255-character bodies: the longest lookbehind a github key asks for
+  const cases = [['utf16 aws', (s) => Buffer.from(s, 'utf16le'), aws1, aws2, 'aws-access-key-id'], ['utf32 aws', unit32, aws1, aws2, 'aws-access-key-id'], ['utf32 github, 259 characters', unit32, gh1, gh2, 'github-token']];
+  for (const [name, enc, k1, k2, pattern] of cases) {
+    const fp2 = fingerprint('f.bin', pattern, k2);
+    for (const off of [8, 10, 24, 200]) {
+      const first = enc(k1);
+      const b = Buffer.concat([pad(W + off - first.length), first, enc(k2 + '\n'), pad(65536)]); // the second key starts `off` bytes past the second window's start
+      const fps = spelledHits(b, 'f.bin').map((h) => h.fp);
+      assert.ok(fps.includes(fp2), `${name}: the second key at W+${off} is found`);
+      assert.strictEqual(fps.length, 2, `${name}: both keys, once each, at W+${off}`);
+      assert.strictEqual(probe(b), true, `${name}: the probe finds a key, at W+${off}`);
+    }
+  }
+  // a key alone just past the edge, and a key glued to a word across it, are judged as anywhere
+  const word = Buffer.concat([pad(W + 8 - 2 * 30), Buffer.from('w'.repeat(30) + aws2 + '\n', 'utf16le'), pad(65536)]);
+  assert.deepStrictEqual(spelledHits(word, 'f.bin'), [], 'a key glued to a word that starts before the edge stays refused');
+});
+
+// 21i P3 (CodeRabbit on a carrier, 21h D14): an edited wide file whose committed version is past the decode bound was keyed at push by its git blob id, while the
+// tree scan keys the same bytes by their SHA-256. One file asked for two acknowledgments. The push path now hashes the bytes it already holds, as the tree scan does.
+// (The scanner's own test file is the source room's, pinned by blob, so the scanner's 21i tests live here.)
+test('an edited wide file past the decode bound gets the same fingerprint at push as in the tree scan -- RED before 21i', async () => {
+  const { scanBytes, scanPushed, WIDE_DECODE_MAX_BYTES, WIDE_TOO_LARGE } = await import(pathToFileURL(LIB).href);
+  const line = Buffer.from('a line of wide text\n', 'utf16le');
+  const body = Buffer.alloc(WIDE_DECODE_MAX_BYTES + line.length * 4);
+  for (let i = 0; i + line.length <= body.length; i += line.length) line.copy(body, i);
+  const first = Buffer.concat([Buffer.from([0xff, 0xfe]), body]);
+  const edited = Buffer.concat([first, Buffer.from('one more line\n', 'utf16le')]);
+  const dir = repo([{ 'w.txt': first }, { 'w.txt': edited }]);
+  const gitBytes = (args, o = {}) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { encoding: o.buffer ? 'buffer' : 'utf8', maxBuffer: 64 << 20, timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() });
+  const base = gitBytes(['rev-parse', 'HEAD~1']).trim();
+  const tip = gitBytes(['rev-parse', 'HEAD']).trim();
+  const tree = scanBytes(edited, 'w.txt').filter((h) => h.pattern === WIDE_TOO_LARGE).map((h) => h.fp);
+  const pushed = scanPushed(`refs/heads/main ${tip} refs/heads/main ${base}\n`, gitBytes).hits.filter((h) => h.pattern === WIDE_TOO_LARGE).map((h) => h.fp);
+  assert.strictEqual(tree.length, 1, 'the tree scan gives the file one too-large hit');
+  assert.deepStrictEqual([...new Set(pushed)], tree, 'the push gives the same fingerprint, so one acknowledgment covers both');
+});
+
+// 21i P3 (the 21a round's named gap): a wide-spelled match longer than a window's carry, starting near the end of what its window owns, was cut at the window's text end,
+// so it was fingerprinted on the cut value (an acknowledgment of the whole value never matched it). The search now reads on until the match ends inside its text.
+test('a wide-spelled key longer than a window\'s carry, starting just before the window\'s owned end, keeps its whole fingerprint -- RED before 21i', async () => {
+  const { spelledHits, spelledProbe, fingerprint } = await import(pathToFileURL(LIB).href);
+  const W = 1 << 20;
+  const pad = (n) => { const b = Buffer.alloc(n, 0x81); for (let q = 64; q < n; q += 97) b[q] = 0; return b; };
+  const key = 'gl' + 'pat-' + 'aB3d'.repeat(2500); // 10,006 characters: 20,012 bytes in UTF-16, past the 16 KiB carry
+  const probe = (b) => { const r = spelledProbe(); for (let i = 0; i < b.length; i += 65536) r.feed(b.subarray(i, i + 65536)); r.end(); return r.found(); };
+  for (const before of [100, 2, 4000]) {
+    const b = Buffer.concat([pad(W - before), Buffer.from(' ' + key + '\n', 'utf16le'), pad(65536)]);
+    assert.deepStrictEqual(spelledHits(b, 'f.bin').map((h) => [h.pattern, h.fp]), [['gitlab-pat', fingerprint('f.bin', 'gitlab-pat', key)]], `starting ${before} bytes before the window's end: the whole value`);
+    assert.strictEqual(probe(b), true, 'the probe finds it, ' + before);
+  }
+});
+
+// 21i P4 (CodeRabbit on a carrier, 21h D13): a pushed wide hunk past line 1 was numbered git's start line plus its decoded offset. Git counts every 0x0A byte as a
+// line, one inside a wide character too (U+0E0A is bytes 0A 0E in UTF-16LE), so a later hunk named a line past the one a reader sees. With a mark, the committed
+// file's own line map now turns the hunk's start into its decoded line, as the tree scan maps a raw hit.
+test('a key in a later pushed hunk of a marked wide file is reported on the decoded line the tree scan names -- RED before 21i', async () => {
+  const { scanBytes, scanPushed } = await import(pathToFileURL(LIB).href);
+  const KEY4 = 'gh' + 'p_' + 'Qw7'.repeat(12);
+  const v1 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('x' + String.fromCharCode(0x0e0a) + 'y\nline2\nline3\n', 'utf16le')]);
+  const v2 = Buffer.concat([v1, Buffer.from('id ' + KEY4 + '\n', 'utf16le')]);
+  const dir = repo([{ 'w.txt': v1 }, { 'w.txt': v2 }]);
+  const gitBytes = (args, o = {}) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { encoding: o.buffer ? 'buffer' : 'utf8', maxBuffer: 64 << 20, timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv() });
+  const base = gitBytes(['rev-parse', 'HEAD~1']).trim();
+  const tip = gitBytes(['rev-parse', 'HEAD']).trim();
+  const tree = scanBytes(v2, 'w.txt').filter((h) => h.pattern === 'github-token').map((h) => h.line);
+  const pushed = scanPushed(`refs/heads/main ${tip} refs/heads/main ${base}\n`, gitBytes).hits.filter((h) => h.pattern === 'github-token').map((h) => h.line);
+  assert.deepStrictEqual(tree, [4], 'the tree scan names decoded line 4');
+  assert.deepStrictEqual([...new Set(pushed)], [4], 'the push names the same line, not git\'s raw line 5');
+});
+
+// 21j: --rename-odd refuses, writing nothing, what it was not printed for: a blob that does not match, a path that is valid UTF-8, a new name already staged, a malformed spec.
+test('--rename-odd refuses a wrong blob, a valid path, a taken name and a malformed spec, and changes nothing -- 21j', () => {
+  const dir = repo([{ 'README.md': 'plain\n' }]);
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() }).toString().trim();
+  const odd = gitIn(['hash-object', '-w', '--stdin'], Buffer.from('odd file\n'));
+  gitIn(['update-index', '--index-info'], Buffer.concat([Buffer.from('100644 ' + odd + ' 0\t'), oddName, Buffer.from('\n')]));
+  const before = gitIn(['ls-files', '-s', '-z']);
+  const hex = oddName.toString('hex');
+  const cases = [
+    [['--rename-odd=' + hex + ':' + '0'.repeat(40), '--to=x.txt'], 1, /not 000000000000/],
+    [['--rename-odd=' + Buffer.from('README.md').toString('hex') + ':' + odd, '--to=x.txt'], 1, /is valid UTF-8/],
+    [['--rename-odd=' + hex + ':' + odd, '--to=README.md'], 1, /already in the index/],
+    [['--rename-odd=zz:' + odd, '--to=x.txt'], 64, /takes <path as hex>:<blob>/],
+    [['--rename-odd=' + hex + ':' + odd], 64, /needs --to=/],
+  ];
+  for (const [args, code, said] of cases) {
+    const r = run(dir, args);
+    assert.strictEqual(r.code, code, args.join(' ') + ': ' + r.out + r.err);
+    assert.match(r.out + r.err, said, args.join(' '));
+    assert.strictEqual(gitIn(['ls-files', '-s', '-z']), before, args.join(' ') + ': the index is unchanged');
+  }
+});
+
+// 21k (the 21i INSPECT's re-check of 21j: two HIGHs and a MEDIUM in --rename-odd). The class: a command that edits the index must let GIT judge the new state before
+// anything is removed. One --index-info call removed the entry and then had its add line skipped ("Ignoring path", exit 0) for a name git refuses, so the entry the
+// command was run to rescue was dropped and the gate printed success; and --index-info replaced an entry that clashed with the new name as a file or a folder. The
+// rename now adds first through git (--cacheinfo, never --replace), reads the whole index back, and only then removes the old entry by its exact bytes. A refused run
+// leaves the index byte for byte as it was and exits non-zero; a name that differs from a staged one only by letter case is refused on every platform.
+const renameFixture = () => {
+  const dir = repo([{ 'README.md': 'plain\n', ['a' + String.fromCodePoint(0xe9) + '.txt']: 'v1\n' }]); // the fixture also stages scripts/secret-gate.mjs and scripts/lib/
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() });
+  const neighbour = 'a' + String.fromCodePoint(0xe9) + '.txt';
+  fs.writeFileSync(path.join(dir, neighbour), 'v2-staged\n');
+  gitIn(['add', '--', neighbour]);
+  fs.writeFileSync(path.join(dir, neighbour), 'v3-worktree\n');
+  const odd = gitIn(['hash-object', '-w', '--stdin'], Buffer.from('odd file\n')).toString().trim();
+  gitIn(['update-index', '--index-info'], Buffer.concat([Buffer.from('100644 ' + odd + ' 0\t'), oddName, Buffer.from('\n')]));
+  return { dir, odd, index: () => gitIn(['ls-files', '-s', '-z']) };
+};
+test('--rename-odd refuses every name git refuses, a file/folder clash and a letter-case twin, leaving the index byte for byte and exiting non-zero -- RED before 21k', () => {
+  const { dir, odd, index } = renameFixture();
+  // 21n (the red on main's POSIX runners): C:/abs.txt is a legal path to git on Linux and macOS. A name that Windows refuses is refused on every platform, because a
+  // carrier's CI builds on all three; git's own NTFS rules are turned off here so this box's git accepts them as POSIX git does, and the gate alone must refuse them
+  execFileSync('git', ['-C', dir, 'config', 'core.protectNTFS', 'false'], { timeout: 60000, env: gitEnv() });
+  const spec = '--rename-odd=' + oddName.toString('hex') + ':' + odd;
+  const refused = ['../out.txt', 'a/../b.txt', 'C:/abs.txt', '.git/hooks/pre-commit', 'newdir/', 'scripts', 'README.md/x', 'readme.md', 'd' + String.fromCharCode(92) + 'e.txt', 'a:b', 'NUL.txt', 'x.', 'docs/COM1.md', 'a|b', 'x /y'];
+  for (const to of refused) {
+    const before = index();
+    const r = run(dir, [spec, '--to=' + to]);
+    assert.notStrictEqual(r.code, 0, `--to=${to} was accepted: ` + r.out + r.err);
+    assert.ok(index().equals(before), `--to=${to}: the index is byte for byte as it was`);
+    assert.match(r.out + r.err, /FAIL RENAME: .*nothing was changed/, `--to=${to}: a sentence, and it says nothing was changed: ` + r.out + r.err);
+    assert.doesNotMatch(r.out + r.err, /renamed /, `--to=${to}: no success line`);
+  }
+  const twin = run(dir, [spec, '--to=readme.md']);
+  assert.match(twin.out, /only by letter case/, 'the letter-case twin is named: ' + twin.out);
+  assert.match(twin.out, /README\.md/, 'with the staged entry it collides with');
+  const clash = run(dir, [spec, '--to=scripts']);
+  assert.match(clash.out, /git refused the new name: .*appears as both a file and as a directory/, 'git\'s own reason is printed: ' + clash.out);
+});
+test('--rename-odd adds the new entry first and reads the index back: after it, exactly the old entry is gone and the new one holds its blob and mode -- 21k', () => {
+  const { dir, odd, index } = renameFixture();
+  const rows = (buf) => buf.toString('latin1').split(String.fromCharCode(0)).filter(Boolean).sort();
+  const before = rows(index());
+  const r = run(dir, ['--rename-odd=' + oddName.toString('hex') + ':' + odd, '--to=renamed.txt']);
+  assert.strictEqual(r.code, 0, r.out + r.err);
+  const oldRow = before.find((x) => x.endsWith('\t' + oddName.toString('latin1')));
+  assert.ok(oldRow, 'the odd entry was there before');
+  assert.deepStrictEqual(rows(index()), [...before.filter((x) => x !== oldRow), '100644 ' + odd + ' 0\trenamed.txt'].sort(), 'only the named entry moved');
+  assert.match(r.out, /renamed a\\xff\\xfe\.txt to "renamed\.txt"/, 'the success line names the old bytes and the new path: ' + r.out);
+});
+
+// 21l (the 21i INSPECT's re-check of 21k: the truth of the messages). Once the add has succeeded, no message may say "nothing was changed": a failure after it says the
+// new name is staged beside the old one on the same blob, nothing lost, and prints the one command that finishes the rename and the one that undoes it, each naming
+// its entry by exact bytes. A re-run refused because the new name is already staged that way says why. A read-back that finds more than the one new entry names every
+// extra one. An unmerged odd entry is refused for its stage. The faults are made in the gate child by a preload (the child keeps its heap cap and kill-timeout).
+const faultPreload = (name, body) => {
+  const p = path.join(SANDBOX, name);
+  fs.writeFileSync(p, [
+    "import cp from 'node:child_process';", "import fs from 'node:fs';", "import path from 'node:path';", "import { syncBuiltinESMExports } from 'node:module';",
+    'const real = cp.execFileSync;',
+    'cp.execFileSync = function (file, args, opts) {', body, '  return real.call(this, file, args, opts);', '};', 'syncBuiltinESMExports();', '',
+  ].join('\n'));
+  return { NODE_OPTIONS: '--import ' + pathToFileURL(p).href };
+};
+// git's own lock: the removal after the add meets an index.lock that another git holds, and fails as git fails
+const lockedRemoval = () => faultPreload('lock-removal.preload.mjs', [
+  "  if (file === 'git' && Array.isArray(args) && args.includes('--index-info') && !args.includes('--add')) {",
+  "    const lock = path.join(process.cwd(), '.git', 'index.lock');",
+  "    fs.writeFileSync(lock, '');",
+  '    try { return real.call(this, file, args, opts); } finally { fs.rmSync(lock, { force: true }); }',
+  '  }',
+].join('\n'));
+const printedCommands = (out) => [...out.matchAll(/^\s*(?:Finish|Undo)[^:]*: (node scripts\/secret-gate\.mjs \S+)$/gm)].map((m) => m[1]);
+test('a failure after the add says the new name is staged beside the old one, never "nothing was changed", and its finish command completes the rename -- RED before 21l', () => {
+  const { dir, odd, index } = renameFixture();
+  const rows = () => index().toString('latin1').split(String.fromCharCode(0)).filter(Boolean).sort();
+  const before = rows();
+  const oldRow = before.find((x) => x.endsWith('\t' + oddName.toString('latin1')));
+  const r = run(dir, ['--rename-odd=' + oddName.toString('hex') + ':' + odd, '--to=renamed.txt'], '', lockedRemoval());
+  assert.notStrictEqual(r.code, 0, r.out + r.err);
+  assert.doesNotMatch(r.out + r.err, /nothing was changed/, 'the add happened, so this is never said: ' + r.out + r.err);
+  assert.match(r.out, /renamed\.txt.* staged beside a\\xff\\xfe\.txt.*nothing is lost/s, 'it says what the index now holds: ' + r.out);
+  assert.deepStrictEqual(rows(), [...before, '100644 ' + odd + ' 0\trenamed.txt'].sort(), 'both names are staged on the one blob');
+  const [finish, undo] = printedCommands(r.out);
+  assert.ok(finish && undo, 'the finish and the undo commands are printed: ' + r.out);
+  // 21m: each names BOTH entries by exact bytes: the one to drop, then the one that must remain, then the blob
+  const newHex = Buffer.from('renamed.txt').toString('hex');
+  assert.ok(finish.includes('--drop-twin=' + oddName.toString('hex') + ':' + newHex + ':' + odd) && undo.includes('--drop-twin=' + newHex + ':' + oddName.toString('hex') + ':' + odd), 'each names the entry to drop and the one to keep: ' + r.out);
+  // the re-run of the printed rename says why it is refused, and points at the same two commands
+  const again = run(dir, ['--rename-odd=' + oddName.toString('hex') + ':' + odd, '--to=renamed.txt']);
+  assert.notStrictEqual(again.code, 0, again.out);
+  assert.match(again.out, /half-finished earlier run/, again.out);
+  assert.deepStrictEqual(printedCommands(again.out), [finish, undo], 'the same two commands');
+  // pasting the finish command leaves only the new entry
+  const done = run(dir, finish.split(' ').slice(2));
+  assert.strictEqual(done.code, 0, done.out + done.err);
+  assert.deepStrictEqual(rows(), [...before.filter((x) => x !== oldRow), '100644 ' + odd + ' 0\trenamed.txt'].sort(), 'only the new entry is left');
+});
+test('the undo command removes the new entry and leaves the old one; --drop-twin refuses an entry whose blob no other staged entry holds -- 21l', () => {
+  const { dir, odd, index } = renameFixture();
+  const before = index();
+  const r = run(dir, ['--rename-odd=' + oddName.toString('hex') + ':' + odd, '--to=renamed.txt'], '', lockedRemoval());
+  const [, undo] = printedCommands(r.out);
+  assert.ok(undo, r.out);
+  assert.strictEqual(run(dir, undo.split(' ').slice(2)).code, 0);
+  assert.ok(index().equals(before), 'the index is as it was before the rename');
+  // the finish pasted after the undo names an entry to keep that is gone, so it is refused (21m)
+  const alone = run(dir, ['--drop-twin=' + oddName.toString('hex') + ':' + Buffer.from('renamed.txt').toString('hex') + ':' + odd]);
+  assert.strictEqual(alone.code, 1, alone.out);
+  assert.match(alone.out, /the entry to keep, "renamed\.txt", is not staged/, alone.out);
+  assert.ok(index().equals(before), 'and nothing was removed');
+  const old = run(dir, ['--drop-twin=' + oddName.toString('hex') + ':' + odd]);
+  assert.strictEqual(old.code, 64, 'the two-part form of 21l names no entry to keep, so it is a usage error: ' + old.out + old.err);
+});
+test('a read-back that finds more than the one new entry names every extra one, says another run may have touched the index, and never prints success -- RED before 21l', () => {
+  const { dir, odd, index } = renameFixture();
+  const env = faultPreload('second-run.preload.mjs', [
+    "  if (file === 'git' && Array.isArray(args) && args.includes('--cacheinfo')) {",
+    '    const r = real.call(this, file, args, opts);',
+    "    const [mode, sha] = args[args.indexOf('--cacheinfo') + 1].split(',');",
+    "    real.call(this, file, [args[0], 'update-index', '--add', '--cacheinfo', mode + ',' + sha + ',two.txt'], opts);",
+    '    return r;',
+    '  }',
+  ].join('\n'));
+  const r = run(dir, ['--rename-odd=' + oddName.toString('hex') + ':' + odd, '--to=one.txt'], '', env);
+  assert.notStrictEqual(r.code, 0, r.out + r.err);
+  assert.match(r.out, /"two\.txt"/, 'the extra entry is named: ' + r.out);
+  assert.match(r.out, /another run may have touched the index/, r.out);
+  assert.doesNotMatch(r.out, /^secret-gate: renamed /m, 'no success line');
+  assert.ok(index().toString('latin1').includes('\t' + oddName.toString('latin1')), 'the old entry is still staged');
+});
+test('an unmerged odd entry is refused for its stage, not for a blob it does hold -- RED before 21l', () => {
+  const dir = repo([{ 'README.md': 'plain\n' }]);
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() }).toString().trim();
+  const odd = gitIn(['hash-object', '-w', '--stdin'], Buffer.from('odd file\n'));
+  gitIn(['update-index', '--index-info'], Buffer.concat([Buffer.from('100644 ' + odd + ' 1\t'), oddName, Buffer.from('\n')]));
+  const r = run(dir, ['--rename-odd=' + oddName.toString('hex') + ':' + odd, '--to=x.txt']);
+  assert.strictEqual(r.code, 1, r.out);
+  assert.match(r.out, /unmerged \(stage 1\)/, r.out);
+  assert.doesNotMatch(r.out, new RegExp('not ' + odd.slice(0, 12)), 'the blob is not given as the reason: ' + r.out);
+});
+
+// 21m (the 21i INSPECT's re-check of 21l, round 4 granted by main): --drop-twin took ANY other entry holding the blob as the twin, so with an empty odd file beside an
+// empty .gitkeep (one blob, e69de29b...) the Finish and then the Undo both ran, and the rescued file was left under neither of its names. The command now names BOTH
+// entries, the one to drop and the one that must remain, and refuses unless both are staged, both hold the blob, and they are different entries, one of them a path
+// that is not valid UTF-8 (the rename's own pair). The printed Finish names (old, keep new) and the Undo (new, keep old), so whichever runs first, the other is refused.
+const emptyFixture = () => {
+  const dir = repo([{ 'README.md': 'plain\n', '.gitkeep': '' }]);
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() });
+  const empty = gitIn(['hash-object', '-w', '--stdin'], Buffer.alloc(0)).toString().trim(); // the same blob as .gitkeep
+  gitIn(['update-index', '--index-info'], Buffer.concat([Buffer.from('100644 ' + empty + ' 0\t'), oddName, Buffer.from('\n')]));
+  const names = () => gitIn(['ls-files', '-s', '-z']).toString('latin1').split(String.fromCharCode(0)).filter(Boolean).map((x) => x.slice(x.indexOf('\t') + 1)).sort();
+  return { dir, empty, names };
+};
+test('an empty odd file beside an empty .gitkeep: after the Finish the Undo is refused, after the Undo the Finish is refused, and one of the two names always remains -- RED before 21m', () => {
+  for (const order of [['finish', 'undo'], ['undo', 'finish']]) {
+    const { dir, empty, names } = emptyFixture();
+    const r = run(dir, ['--rename-odd=' + oddName.toString('hex') + ':' + empty, '--to=renamed.txt'], '', lockedRemoval());
+    assert.notStrictEqual(r.code, 0, r.out);
+    const [finish, undo] = printedCommands(r.out);
+    const cmd = { finish, undo };
+    const first = run(dir, cmd[order[0]].split(' ').slice(2));
+    assert.strictEqual(first.code, 0, order[0] + ' runs: ' + first.out + first.err);
+    const second = run(dir, cmd[order[1]].split(' ').slice(2));
+    assert.strictEqual(second.code, 1, order[1] + ' after ' + order[0] + ' is refused: ' + second.out);
+    assert.match(second.out, /FAIL DROP: .*nothing was changed/, second.out);
+    const left = names();
+    const oddLatin = oddName.toString('latin1');
+    assert.strictEqual([left.includes(oddLatin), left.includes('renamed.txt')].filter(Boolean).length, 1, order.join(' then ') + ': exactly one of the two names remains: ' + JSON.stringify(left));
+    assert.ok(left.includes('.gitkeep') && left.includes('README.md'), 'and the other files are as they were');
+  }
+});
+test('--drop-twin keeps only the entry it names: another file with the same blob is no substitute, and the pair must be the rename\'s shape -- RED before 21m', () => {
+  const { dir, empty, names } = emptyFixture();
+  const odd = oddName.toString('hex');
+  const hex = (s) => Buffer.from(s).toString('hex');
+  const before = names();
+  const refused = [
+    [`--drop-twin=${odd}:${hex('renamed.txt')}:${empty}`, /the entry to keep, "renamed\.txt", is not staged/], // the named keep is gone; .gitkeep holds the blob but is not named
+    [`--drop-twin=${odd}:${hex('README.md')}:${empty}`, /"README\.md" is staged with blob/], // named, but it holds another blob
+    [`--drop-twin=${odd}:${odd}:${empty}`, /the same entry/],
+    [`--drop-twin=${hex('.gitkeep')}:${hex('README.md')}:${empty}`, /exactly one of the two is a path that is not valid UTF-8/], // both valid: not a rename's pair
+  ];
+  for (const [arg, said] of refused) {
+    const r = run(dir, [arg]);
+    assert.strictEqual(r.code, 1, arg + ': ' + r.out + r.err);
+    assert.match(r.out, said, arg + ': ' + r.out);
+    assert.deepStrictEqual(names(), before, arg + ': nothing was removed');
+  }
+  // the ruling: a pair the user names explicitly, the odd entry dropped and .gitkeep kept, is accepted: its bytes stay staged under the entry it named
+  const named = run(dir, [`--drop-twin=${odd}:${hex('.gitkeep')}:${empty}`]);
+  assert.strictEqual(named.code, 0, named.out + named.err);
+  assert.deepStrictEqual(names(), before.filter((x) => x !== oddName.toString('latin1')), 'only the named entry was dropped, and the named one kept');
 });
