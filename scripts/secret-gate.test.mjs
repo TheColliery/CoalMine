@@ -889,7 +889,10 @@ test('the bytes held for staged text are bounded: a text blob past the ceiling i
   assert.strictEqual(run(dir).code, 0, 'with no variable the same tree passes');
   assert.strictEqual(run(dir, [], '', { SECRET_GATE_MAX_HELD_BYTES: '999999999999' }).code, 0, 'a higher value is ignored: it cannot weaken the ceiling');
   const binary = repo([{ 'logo.png': Buffer.concat([Buffer.from([0, 1, 2, 3]), Buffer.alloc(300000, 7)]).toString('latin1'), 'README.md': 'hello\n' }]);
-  assert.strictEqual(run(binary, [], '', { SECRET_GATE_MAX_HELD_BYTES: '100000' }).code, 0, 'a binary-named binary blob is dropped as it streams and holds nothing');
+  // 21a: the ceiling is the tree's own text (the gate and the scanner this fixture commits, and README.md) plus the 8,000-byte probe, as in the held-bytes test below,
+  // never a fixed number the canon files can outgrow (100000 fell under them at 21a); a binary blob held whole would still cross it by 300 KB
+  const textOnly = fs.statSync(GATE).size + fs.statSync(LIB).size + 'hello\n'.length + 8000;
+  assert.strictEqual(run(binary, [], '', { SECRET_GATE_MAX_HELD_BYTES: String(textOnly) }).code, 0, 'a binary-named binary blob is dropped as it streams and holds nothing');
 });
 
 // t343 F5 (2026-11-18): a binary-looking NAME and a first 8,000 bytes without a NUL pattern read as wide were enough to skip a UTF-16 file whose wide text starts later: one ASCII character, then CJK text with no
@@ -968,18 +971,21 @@ test('a binary-named blob whose wide-text evidence is split across pieces, each 
 });
 
 test('the gate\'s verdict on a binary-named blob equals the whole-buffer verdict across the wide-text rule\'s thresholds and chunk edges (the oracle) -- RED before 18b', async () => {
-  const { wideKinds, looksBinary, scanBytes } = await import(pathToFileURL(LIB).href);
-  const make = (opposing, keyAt, later) => {
+  const { wideKinds, looksBinary, scanBytes, spelledHits } = await import(pathToFileURL(LIB).href);
+  const make = (opposing, keyAt, later, secret = KEY) => {
     const b = Buffer.alloc(300000, 0x41);
     b[3] = 0; // one NUL in the prefix: git's rule calls the blob binary
     for (let i = 0; i < opposing; i++) b[200 + i * 100 + (i % 2) * 2] = 0; // even positions, split between offsets 0 and 2 mod 4
-    Buffer.from('\nid ' + KEY + '\n', 'utf16le').copy(b, keyAt);
+    Buffer.from('\nid ' + secret + '\n', 'utf16le').copy(b, keyAt);
     for (let k = 0; k < later; k++) { const p = 70000 + k * 6200; b[p] = 0x7a; b[p + 1] = 0; }
     return b;
   };
   const files = {};
   for (const opposing of [0, 7, 11, 12]) for (const keyAt of [8000, 131048]) for (const later of [0, 37]) files[`b-${opposing}-${keyAt}-${later}.bin`] = make(opposing, keyAt, later);
-  const verdict = (b) => (looksBinary(b) && !wideKinds(b).length ? false : scanBytes(b, 'x').length > 0);
+  // 20f: a binary-named blob that is binary and not wide text is still searched for keys in their wide spellings, so every keyed blob above is found; keyless
+  // twins (the same bytes with a non-key in the key's place) keep the grid's other outcome
+  for (const opposing of [0, 7, 11, 12]) for (const keyAt of [8000, 131048]) files[`n-${opposing}-${keyAt}.bin`] = make(opposing, keyAt, 0, 'x'.repeat(KEY.length));
+  const verdict = (b) => (looksBinary(b) && !wideKinds(b).length ? spelledHits(b, 'x').length > 0 : scanBytes(b, 'x').length > 0);
   const names = Object.keys(files);
   const outs = {};
   for (let i = 0; i < names.length; i += 4) { // four blobs a run: the gate lists at most five matches
@@ -1184,6 +1190,227 @@ test('a reported line is the decoded line where the occurrence sits, whatever th
   assert.deepStrictEqual(lines(Buffer.concat([Buffer.from([0xfe, 0xff]), w('x' + String.fromCharCode(0x0a00).repeat(4) + 'y\nm\n ').swap16(), fakeFromBytes, w('\nend').swap16()])), [[3, 'github-token']], 'the mark decides');
   // (sixteen more letters on line 2, so the rule reads it as wide text by its NULs alone; the readings at offset 1 would count the 0x0A inside U+410A as a newline)
   assert.deepStrictEqual(lines(Buffer.concat([w('x' + String.fromCharCode(0x410a) + 'y\n' + 'm'.repeat(17) + '\n ').swap16(), fakeFromBytes, w('\nend').swap16()])), [[3, 'github-token']], 'A7 without a mark');
+  // 20d (CodeRabbit on Kolwen PR 197, thread 4642988514): a key held by a reading that does NOT fit the file (little-endian bytes appended to a big-endian file, which the
+  // little-endian reading, first in order, decodes) took that reading's line map, which counts none of the file's newlines: both occurrences were named line 1. Every raw hit is now
+  // mapped through the byte-order mark's reading whenever the file has one. UTF-16BE and UTF-32BE with a mark; the little-endian mirrors were already right, because a
+  // little-endian reading comes first. A file with NO mark keeps its key's first reading (the UTF-32 file shifted off its grid needs it), a named gap for mixed byte orders.
+  const T2 = 'gh' + 'p_' + 'A'.repeat(36);
+  const u32 = (s, little) => { const cps = [...s].map((c) => c.codePointAt(0)); const b = Buffer.alloc(cps.length * 4); cps.forEach((cp, k) => (little ? b.writeUInt32LE(cp, k * 4) : b.writeUInt32BE(cp, k * 4))); return b; };
+  const MARK = String.fromCharCode(0xfeff);
+  assert.deepStrictEqual(lines(Buffer.concat([Buffer.from([0xfe, 0xff]), w('\n ' + T2 + '\n ').swap16(), w(T2)])), [[2, 'github-token'], [3, 'github-token']], 'UTF-16BE with little-endian bytes appended');
+  assert.deepStrictEqual(lines(Buffer.concat([u32(MARK + '\n ' + T2 + '\n ', false), u32(T2, true)])), [[2, 'github-token'], [3, 'github-token']], 'UTF-32BE with little-endian bytes appended');
+  assert.deepStrictEqual(lines(Buffer.concat([BOM, w('\n ' + T2 + '\n '), w(T2).swap16()])), [[2, 'github-token'], [3, 'github-token']], 'the UTF-16LE mirror');
+  assert.deepStrictEqual(lines(Buffer.concat([u32(MARK + '\n ' + T2 + '\n ', true), u32(T2, false)])), [[2, 'github-token'], [3, 'github-token']], 'the UTF-32LE mirror');
+  // 20e (the 6ea2246 review's L1): the mark wins only where it fits at least as well as the key's own reading, by the newlines each decodes. A big-endian mark over a
+  // little-endian body (V5), and a true mark followed by one stray byte (V9, the body at an odd offset), decode fewer newlines than the key's reading: its line stands.
+  assert.deepStrictEqual(lines(Buffer.concat([Buffer.from([0xfe, 0xff]), w('top\nmid\n ' + T2 + '\nend\n')])), [[3, 'github-token']], 'V5, a mark that lies about the body');
+  assert.deepStrictEqual(lines(Buffer.concat([BOM, Buffer.from([0x20]), w('top\n ' + T2 + '\nmid\n ' + T2 + '\n')])), [[2, 'github-token'], [4, 'github-token']], 'V9, a stray byte after a true mark');
   // big-endian: a decoded newline is the bytes 00 0A, its 0x0A byte LAST; U+0A41 is 0A 41 there, a raw break only
   assert.deepStrictEqual(lines(Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('x' + NL + 'y\nreal ' + TOK + '\nmid\n', 'utf16le').swap16()])), [[2, 'github-token']]);
+});
+
+// 20e (the 6ea2246 review's M1, older than 6ea2246): a file with no byte-order mark whose big-endian part and appended little-endian part are near equal in size puts as many
+// NULs on even positions as on odd ones, so the skew test read it as no wide text at all, the scanner read it as UTF-8 with its NULs left in, and it reported NOTHING: the gate passed
+// a file that holds the key twice. 20f (the 7edf02c review's H1): such a file is NOT guessed to be wide text (a guess from NUL runs read fonts and PE files as text); its raw bytes
+// are searched for the provider keys in their four wide spellings, and only the provider patterns run on what is found. Controls: random bytes, a run of zeros, a UTF-8 file with
+// NULs on both parities, and the shapes that fooled 7edf02c, stay plain.
+test('a key in a wide spelling is reported in a file with no mark whose NULs do not skew (both byte orders balanced, or one order beside other NULs), and the gate refuses it -- RED before 20e', async () => {
+  const { scanBytes, wideKinds } = await import(pathToFileURL(LIB).href);
+  const T = 'gh' + 'p_' + 'A'.repeat(36);
+  const le16 = (s) => Buffer.from(s, 'utf16le');
+  const be16 = (s) => Buffer.from(s, 'utf16le').swap16();
+  const u32 = (s, little) => { const cps = [...s].map((c) => c.codePointAt(0)); const b = Buffer.alloc(cps.length * 4); cps.forEach((cp, k) => (little ? b.writeUInt32LE(cp, k * 4) : b.writeUInt32BE(cp, k * 4))); return b; };
+  const lines = (b) => scanBytes(b, 'f.txt').map((h) => [h.line, h.pattern]);
+  const mixed16 = Buffer.concat([be16('\n ' + T + '\n '), le16(T)]);
+  assert.deepStrictEqual(lines(mixed16), [[2, 'github-token'], [3, 'github-token']], 'UTF-16, balanced orders: both keys, each on the raw line where it sits');
+  const mixed32 = Buffer.concat([u32('\n ' + T + '\n ', false), u32(T, true)]);
+  assert.deepStrictEqual(lines(mixed32), [[2, 'github-token'], [3, 'github-token']], 'UTF-32, balanced orders: both keys');
+  // the reviewer's M-a (the 7edf02c review's M2): the big-endian part holds only short ASCII runs (a CJK character every 8 units), the key sits in the little-endian part
+  const shortWords = (n) => Array.from({ length: n }, (_, i) => 'word' + (i % 10) + 'ab' + String.fromCharCode(0x4e2d)).join('');
+  const ma = Buffer.concat([be16(shortWords(60) + '\n'), le16('\n ' + T + '\n' + 'pad '.repeat(40))]);
+  assert.deepStrictEqual(wideKinds(ma), [], 'M-a: the skew test does not read it');
+  assert.deepStrictEqual(lines(ma), [[3, 'github-token']], 'M-a: the key is reported');
+  const N = String.fromCharCode(0);
+  // one order beside other NULs: 20 even NULs (10 at offset 0 mod 4, 10 at 2) against the key's 40 odd ones, under 4 to 1, and no three of four positions full
+  const oneOrder = Buffer.concat([Buffer.from((N + 'abcde' + N + 'f').repeat(10), 'latin1'), le16(T)]);
+  assert.deepStrictEqual(wideKinds(oneOrder), [], 'one order whose NULs do not skew: not read as wide text');
+  assert.deepStrictEqual(lines(oneOrder), [[1, 'github-token']], 'one order whose NULs do not skew: the key is reported');
+  // a key glued to a word in its own spelling is not a key, here as anywhere
+  // the search runs in 1 MiB windows that overlap: a key across a window edge is found once, at its line
+  const { spelledHits } = await import(pathToFileURL(LIB).href);
+  for (const shift of [-80, -2, 0, 2]) {
+    const head = Buffer.alloc((1 << 20) + shift, 0x41);
+    for (let q = 0; q < head.length; q += 2) head[q] = 0;
+    assert.deepStrictEqual(spelledHits(Buffer.concat([head, le16(' ' + T + '\n')]), 'f').map((h) => [h.line, h.pattern]), [[1, 'github-token']], 'window edge, shift ' + shift);
+  }
+  const glued = Buffer.concat([be16('\n ' + 'pad '.repeat(10)), le16('x' + T)]); // balanced, so not read as wide text: the spelled search alone judges it
+  assert.deepStrictEqual([wideKinds(glued), lines(glued)], [[], []], 'a glued key in a wide spelling is refused like a glued plain one');
+  // the gate refuses the balanced file
+  const r = run(repo([{ 'mixed.txt': mixed16 }]));
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.ok(r.out.includes('tree "mixed.txt"') && r.out.includes('github-token'), r.out);
+  // a binary-named file whose first 8,000 bytes read as binary and not wide, with the balanced text after them: the gate drops it by its prefix and
+  // judges it by the stream's counters, so those counters carry the spelled search too (RED against a gate that kept only the NUL totals)
+  const head = Buffer.alloc(9000, 0x41);
+  for (let q = 100; q < 9000; q += 101) head[q] = 0; // NULs on both parities: binary by the prefix, not wide
+  const big = Buffer.concat([head, mixed16]);
+  assert.deepStrictEqual(wideKinds(head), [], 'the prefix alone is not wide text');
+  const rb = run(repo([{ 'mixed.bin': big }]));
+  assert.strictEqual(rb.code, 1, rb.out + rb.err);
+  assert.ok(rb.out.includes('tree "mixed.bin"') && rb.out.includes('github-token'), rb.out);
+  // controls
+  let seed = 7;
+  const rnd = (n) => { const b = Buffer.alloc(n); for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) >>> 0; b[i] = seed >>> 24; } return b; };
+  const noise = rnd(200000);
+  assert.deepStrictEqual([wideKinds(noise), scanBytes(noise, 'f.bin').length], [[], 0], 'pseudo-random bytes: plain, no hit');
+  assert.deepStrictEqual(wideKinds(Buffer.concat([Buffer.alloc(100000, 0), Buffer.from('id ' + T + '\n')])), [], 'a run of zeros is not wide text');
+  // 17-byte lines put the NULs on both parities, so the skew test is silent
+  const utf8 = Buffer.from(('plain text line' + N + '\n').repeat(40), 'utf8');
+  assert.deepStrictEqual([wideKinds(utf8), scanBytes(utf8, 'f.txt').length], [[], 0], 'UTF-8 with a few NULs: plain, no hit');
+});
+
+// 20f (the 7edf02c review's H1): the shapes that made 7edf02c read real binaries as wide text, built in code (the suite runs on three systems and reads no system file).
+// PE-LIKE stands for kernel32.dll and shell32.dll: UTF-16LE resource strings (words with no key) beside a table of small big-endian 16-bit values, both in runs of far
+// more than 12 units, in random bytes. FONT-LIKE stands for msyh.ttc: big-endian name and metric tables of small values and little-endian runs, past the 8 MiB decode
+// bound. 7edf02c read both as UTF-16 and drew a "wide text too large" refusal on the second; each must stay plain, with no hit, and the gate must pass them.
+test('binaries whose small 16-bit values run in both byte orders (a PE string table, a font collection) stay plain: no wide reading, no hit, no refusal -- RED against 7edf02c', async () => {
+  const { scanBytes, wideKinds, WIDE_TOO_LARGE } = await import(pathToFileURL(LIB).href);
+  let seed = 11;
+  const rnd = (n) => { const b = Buffer.alloc(n); for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) >>> 0; b[i] = seed >>> 24; } return b; };
+  const smallBE = (n) => { const b = Buffer.alloc(n * 2); for (let k = 0; k < n; k++) b.writeUInt16BE(1 + (k % 200), k * 2); return b; };
+  const strLE = (s) => Buffer.from(s, 'utf16le');
+  const peLike = Buffer.concat([rnd(20000), strLE('FileDescriptionWindowsShellCommonDll'.repeat(4)), rnd(3000), smallBE(400), rnd(20000), strLE('CompanyNameMicrosoftCorporation'.repeat(3)), smallBE(300), rnd(9000)]);
+  const fontLike = Buffer.alloc((8 << 20) + 65536);
+  for (let off = 0; off + 4096 <= fontLike.length; off += 4096) {
+    rnd(2048).copy(fontLike, off);
+    smallBE(512).copy(fontLike, off + 2048, 0, 1024);
+    strLE('Regular'.repeat(20)).copy(fontLike, off + 3072, 0, 1024);
+  }
+  for (const [name, b] of [['pe-like.dll', peLike], ['font-like.ttc', fontLike]]) {
+    assert.deepStrictEqual(wideKinds(b), [], name + ': not read as wide text');
+    const hits = scanBytes(b, name);
+    assert.ok(!hits.some((h) => h.pattern === WIDE_TOO_LARGE), name + ': no "too large to decode" refusal');
+    assert.strictEqual(hits.length, 0, name + ': no hit: ' + JSON.stringify(hits.map((h) => h.pattern)));
+  }
+  const r = run(repo([{ 'pe-like.dll': peLike }]));
+  assert.strictEqual(r.code, 0, 'the gate passes the PE-shaped file: ' + r.out + r.err);
+});
+
+// 21a (a carrier's pull request: CodeRabbit Verify's "false rejection of a longer UTF-16LE word at the 1 MiB window boundary", and CodeRabbit's thread on a key cut by a
+// window): the wide-spelled search runs in windows, and a window's text END satisfied a pattern's closing boundary, so a word too long to be a key, cut by the end,
+// was reported; and a key across the edge was reported at its shorter first sighting, a fingerprint an acknowledgment of the whole value never matches. Each match
+// now belongs to the one window that owns its first byte, and that window's text runs past it. The gate's stream probe uses the same windows.
+test('a wide-spelled word cut by a scan window is judged whole: a word too long to be a key is not reported, and a key across the edge keeps its whole fingerprint -- RED before 21a', async () => {
+  const { spelledHits, spelledProbe, fingerprint } = await import(pathToFileURL(LIB).href);
+  let seed = 5;
+  // bytes with no NUL and no character a spelling can hold, then a balanced sprinkle of NULs: not wide text, and no spelled run of their own
+  const fill = (n) => { const b = Buffer.alloc(n); for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) >>> 0; b[i] = 0x80 | ((seed >>> 24) & 0x7f); } for (let q = 64; q < n; q += 97) b[q] = 0; return b; };
+  const le = (s) => Buffer.from(s, 'utf16le');
+  const W = 1 << 20;
+  const at = (chars, word) => Buffer.concat([fill(W - 2 * chars), le(word), Buffer.from([0x0a]), fill(4000)]); // the window edge falls after `chars` characters
+  const probe = (b) => { const r = spelledProbe(); for (let i = 0; i < b.length; i += 65536) r.feed(b.subarray(i, i + 65536)); r.end(); return r.found(); };
+  const long = 'AK' + 'IA' + 'ABCDEFGHIJKLMNOPQ'; // 17 body characters: one more than an AWS key id holds, so not a key
+  for (const chars of [20, 21, 4]) {
+    const b = at(chars, long);
+    assert.deepStrictEqual(spelledHits(b, 'f.bin'), [], 'a word too long to be a key, cut after ' + chars + ' characters, is not reported');
+    assert.strictEqual(probe(b), false, 'the gate probe agrees, cut after ' + chars);
+  }
+  const key = 'gl' + 'pat-' + 'aB3'.repeat(10);
+  const whole = fingerprint('f.bin', 'gitlab-pat', key);
+  for (const chars of [28, 30, 7]) {
+    const b = at(chars, key);
+    assert.deepStrictEqual(spelledHits(b, 'f.bin').map((h) => [h.line, h.pattern, h.fp]), [[1, 'gitlab-pat', whole]], 'a key across the edge after ' + chars + ' characters keeps its whole fingerprint');
+    assert.strictEqual(probe(b), true, 'the gate probe finds it, cut after ' + chars);
+  }
+  // inside one window, and in a file of one window, nothing changes
+  const small = Buffer.concat([fill(5000), le(key), Buffer.from([0x0a]), fill(4000)]);
+  assert.deepStrictEqual(spelledHits(small, 'f.bin').map((h) => h.fp), [whole]);
+  assert.strictEqual(probe(small), true);
+});
+
+// 21a (CodeRabbit on a carrier's pull request, on the gate's index listing): a path that is not valid UTF-8 was decoded to U+FFFD, so two such paths holding one key became one
+// string, one hit and one fingerprint, and one acknowledgment cleared both; the push side's patch headers decoded the same way. Such a path now fails the gate by
+// name, at commit and at push, and its hits are never given a fingerprint another path shares. A path that is valid UTF-8 keeps its fingerprint.
+test('a staged or pushed path that is not valid UTF-8 fails the gate by name instead of sharing a fingerprint with another path -- RED before 21a', () => {
+  const KEY2 = 'gh' + 'p_' + 'Q7w'.repeat(12);
+  const dir = repo([{ 'README.md': 'plain\n' }]);
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() }).toString().trim();
+  const sha = gitIn(['hash-object', '-w', '--stdin'], Buffer.from('token = ' + KEY2 + '\n'));
+  const odd = (x) => Buffer.concat([Buffer.from('a'), Buffer.from([x]), Buffer.from('.txt')]);
+  const entry = (pathBytes) => Buffer.concat([Buffer.from('100644 ' + sha + ' 0\t'), pathBytes, Buffer.from('\n')]);
+  gitIn(['update-index', '--index-info'], Buffer.concat([entry(odd(0xff)), entry(odd(0xfe)), entry(Buffer.from('ok.txt'))]));
+  const r = run(dir);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.ok(/2 staged path\(s\) are not valid UTF-8/.test(r.out), 'both paths named as unreadable: ' + r.out);
+  assert.ok(r.out.includes('a\\xff.txt') && r.out.includes('a\\xfe.txt'), 'each named by its bytes: ' + r.out);
+  assert.ok(!r.out.includes(String.fromCharCode(0xfffd)), 'no path is shown decoded to U+FFFD: ' + r.out);
+  assert.ok(r.out.includes('tree "ok.txt":1 github-token'), 'a valid path beside them is still scanned: ' + r.out);
+  // 21b (the 21a review's L2): the message says the refusal is about the path and gives the rename that works for such a path in the index; the commands are run
+  // here as printed (a wildcard that matches only the byte that is not UTF-8, and the blob id), and the renamed index then passes the path check
+  assert.ok(r.out.includes('This refusal is about the path, not about a key in it.'), r.out);
+  assert.ok(r.out.includes('a\\xff.txt: git ls-files -s -- "a[^ -~].txt" ; git update-index --add --cacheinfo 100644,' + sha + ',<new name> ; git rm --cached -q -- "a[^ -~].txt"'), r.out);
+  assert.strictEqual(gitIn(['ls-files', '--', 'a[^ -~].txt']).split('\n').length, 2, 'the printed wildcard matches the two such paths and not ok.txt');
+  // the same two files pushed in a commit
+  const tree = gitIn(['write-tree']);
+  const commit = gitIn(['commit-tree', tree, '-p', 'HEAD', '-m', 'odd names']);
+  gitIn(['update-ref', 'refs/heads/main', commit]);
+  const pushed = run(dir, ['--pre-push'], 'refs/heads/main ' + commit + ' refs/heads/main ' + ZERO + '\n');
+  assert.strictEqual(pushed.code, 1, pushed.out + pushed.err);
+  assert.ok(/a pushed file's path is not valid UTF-8 \(a\\x[ef][ef]\.txt\)/.test(pushed.out), 'the push names the path: ' + pushed.out);
+  assert.ok(!pushed.out.includes(String.fromCharCode(0xfffd)), 'no path is shown decoded to U+FFFD: ' + pushed.out);
+});
+
+// 21a (CodeRabbit on a carrier's pull request, on the gate's failure message): "committed on the branch you push" sent a user whose staged tree held a match to the pushed branch,
+// while the tree scan reads acknowledgments from HEAD. The message now names the tree each kind of hit is acknowledged in.
+test('the failure message says where each kind of hit is acknowledged: a tree hit in HEAD, a pushed hit in the pushed commit -- RED before 21a', () => {
+  const r = run(repo([{ 'k.txt': 'token = ' + 'gh' + 'p_' + 'Q7w'.repeat(12) + '\n' }]));
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  assert.ok(r.out.includes('committed where the gate reads it: for a "tree" hit in HEAD (the commit checked out), for a "pushed" hit in the pushed commit'), r.out);
+  assert.ok(!r.out.includes('the branch you push'), r.out);
+});
+
+// 21b (the 21a review's M1): the test above cuts words at the OLD window edge (1 MiB), where the longer windows of 21a already save them, so a scanner that dropped the
+// owner rule (every window reporting every match it sees) still passed. A window's text now ENDS at its start + 1 MiB + 16 KiB, and only the owner rule keeps a word cut
+// there out: the next window owns it and sees it whole. The reviewer's vector, a 304-character word of github shape (past the pattern's 255 cap, so not a key), cut at the
+// first and second windows' text ends, in all four wide spellings. RED against the owner rule dropped (newedge.mjs, the 21a review).
+test('a wide-spelled word cut at a window\'s text end (1 MiB + 16 KiB past its start) is judged by the window that owns it, whole: not reported -- RED against the owner rule dropped', async () => {
+  const { spelledHits, spelledProbe } = await import(pathToFileURL(LIB).href);
+  const W = 1 << 20;
+  const END = W + 16384; // the first window's text end; the second's is W + END
+  const word = ' ' + 'g' + 'hp_' + 'aB3d'.repeat(75) + ' ';
+  const u32 = (s, little) => { const b = Buffer.alloc(s.length * 4); [...s].forEach((c, k) => (little ? b.writeUInt32LE(c.charCodeAt(0), k * 4) : b.writeUInt32BE(c.charCodeAt(0), k * 4))); return b; };
+  const spell = { LE16: Buffer.from(word, 'utf16le'), BE16: Buffer.from(word, 'utf16le').swap16(), LE32: u32(word, true), BE32: u32(word, false) };
+  const probe = (b) => { const r = spelledProbe(); for (let i = 0; i < b.length; i += 65536) r.feed(b.subarray(i, i + 65536)); r.end(); return r.found(); };
+  for (const [name, w] of Object.entries(spell)) {
+    for (const end of [END, W + END]) {
+      const b = Buffer.alloc(2 * W + END + 4096); // zeros: a NUL-bearing file that holds no run of its own
+      w.copy(b, end - 200); // 200 bytes of the word before the text end, the rest after
+      assert.deepStrictEqual(spelledHits(b, 'f.bin'), [], name + ', cut at ' + end + ': not reported');
+      assert.strictEqual(probe(b), false, name + ', cut at ' + end + ': the gate probe agrees');
+    }
+  }
+});
+
+// 21c (the 21b re-check's N1): the wildcard printed in the refusal kept a path's valid UTF-8 characters as they were, so a path holding U+009B (an 8-bit CSI), U+2028
+// (a line separator) or U+202E (a right-to-left override) sent them raw to the terminal, past the gate's own rule on escaping by category. The reviewer's path, built from
+// code points: every line of the output is printable ASCII, and the printed wildcard still selects that one path and not its neighbours one ordinary character apart.
+test('a path that is not valid UTF-8 and holds C1, line-separator or bidi characters prints as ASCII only, and its wildcard still selects it alone -- RED before 21c', () => {
+  const dir = repo([{ 'README.md': 'plain\n' }]);
+  const gitIn = (args, input) => execFileSync('git', [...GIT_IDENTITY, '-C', dir, ...args], { input, timeout: 60000, env: gitEnv() }).toString().trim();
+  const sha = gitIn(['hash-object', '-w', '--stdin'], Buffer.from('nothing here\n'));
+  const cp = (n) => Buffer.from(String.fromCodePoint(n), 'utf8');
+  const forging = Buffer.concat([Buffer.from('x'), Buffer.from([0xff]), cp(0x9b), Buffer.from('31m'), cp(0x2028), Buffer.from('FAKE'), cp(0x202e), Buffer.from('.txt')]);
+  const near = (c) => Buffer.concat([Buffer.from('x'), Buffer.from([0xff]), cp(0x9b), Buffer.from('31m'), cp(0x2028), Buffer.from('FAKE'), cp(0x202e), Buffer.from(c + '.txt')]);
+  const entry = (pathBytes) => Buffer.concat([Buffer.from('100644 ' + sha + ' 0\t'), pathBytes, Buffer.from('\n')]);
+  gitIn(['update-index', '--index-info'], Buffer.concat([entry(forging), entry(near('a')), entry(Buffer.concat([Buffer.from('xA'), forging.subarray(2)])), entry(Buffer.from('x1.txt'))]));
+  const r = run(dir);
+  assert.strictEqual(r.code, 1, r.out + r.err);
+  const out = r.out + r.err;
+  assert.ok(/^[\x20-\x7e\r\n]*$/.test(out), 'only printable ASCII and line ends reach the output: ' + JSON.stringify([...out].filter((c) => c < ' ' && c !== '\n' && c !== '\r' || c > '~').map((c) => 'U+' + c.codePointAt(0).toString(16))));
+  assert.strictEqual(out.trim().split(/\r?\n/).length, 1, 'one line: no path splits it');
+  const glob = /"(x\[\^ -~\][^"]*\.txt)"/.exec(r.out);
+  assert.ok(glob, 'a wildcard is printed for the path: ' + r.out);
+  const hits = gitIn(['ls-files', '-z', '--', glob[1]]).split(String.fromCharCode(0)).filter(Boolean);
+  assert.strictEqual(hits.length, 1, 'the printed wildcard lists exactly one path: ' + JSON.stringify(hits));
+  assert.ok(hits[0].endsWith('FAKE' + String.fromCodePoint(0x202e) + '.txt') && !hits[0].startsWith('xA'), 'and it is the forging path, not a neighbour one character apart');
 });

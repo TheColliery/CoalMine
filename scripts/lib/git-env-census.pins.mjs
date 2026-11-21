@@ -7,8 +7,8 @@
 export const ROOM_PINS = [
   {
     rel: 'scripts/secret-gate.mjs',
-    blob: '7334d8d34d05103008ad82b5e9528d2db29712f1',
-    why: "The pin follows the canon re-copy of this file from .github 1af0733 (its git spawns are re-read at INSPECT; the blob moved from 856956a1 to 6b452f2f at f1c9a4d, and from 6b452f2f to 4bf97717 at 1af0733; and from 4bf97717 to 175f0a52 at 609d86b, and from 175f0a52 to 33e8a4ae at a7161df, and from 33e8a4ae to 0dd7e4e1 at 03438a1, and from 0dd7e4e1 to 719f7667 at 78c53e6, and from 719f7667 to 2800aab98129 at .github 90c1933, and from 2800aab98129 to 7334d8d34d05 at .github 1c7a36a). The canon gate (published-code template) builds its git env as a FILTER of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES (commit mode must read the index a hook names), which the canon census refuses by rule at both of its git spawns (`gitIn` and `readBlobs`):\"execFileSync('git', ...) env: holds process.env without gitEnv() -- ambient GIT_* reaches the child\". The canon ships no pins, so each room that carries the gate pins it here.",
+    blob: '235bf5b5b4dffaa814c07b7c56b5499232937b2b',
+    why: "The pin follows the canon re-copy of this file from .github 1af0733 (its git spawns are re-read at INSPECT; the blob moved from 856956a1 to 6b452f2f at f1c9a4d, and from 6b452f2f to 4bf97717 at 1af0733; and from 4bf97717 to 175f0a52 at 609d86b, and from 175f0a52 to 33e8a4ae at a7161df, and from 33e8a4ae to 0dd7e4e1 at 03438a1, and from 0dd7e4e1 to 719f7667 at 78c53e6, and from 719f7667 to 2800aab98129 at .github 90c1933, and from 2800aab98129 to 7334d8d34d05 at .github 1c7a36a, and from 7334d8d34d05 to 235bf5b5b4df at .github ea92a58). The canon gate (published-code template) builds its git env as a FILTER of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES (commit mode must read the index a hook names), which the canon census refuses by rule at both of its git spawns (`gitIn` and `readBlobs`):\"execFileSync('git', ...) env: holds process.env without gitEnv() -- ambient GIT_* reaches the child\". The canon ships no pins, so each room that carries the gate pins it here.",
   },
 ];
 
@@ -16,12 +16,12 @@ export const ROOM_PINS = [
 export const ASYNC_GIT_PINS = [
   {
     rel: 'scripts/secret-gate.mjs',
-    blob: '7334d8d34d05103008ad82b5e9528d2db29712f1',
-    why: "Its one async git spawn (cat-file --batch, streamed on stdin, line 108, read at 1c7a36a, from 0dd7e4e1 to 719f7667 at 78c53e6, from 719f7667 to 2800aab98129 at .github 90c1933, from 2800aab98129 to 7334d8d34d05 at .github 1c7a36a) passes gitEnv(), the canon's own filter of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
+    blob: '235bf5b5b4dffaa814c07b7c56b5499232937b2b',
+    why: "Its one async git spawn (cat-file --batch, streamed on stdin, line 108, read at 1c7a36a, from 0dd7e4e1 to 719f7667 at 78c53e6, from 719f7667 to 2800aab98129 at .github 90c1933, from 2800aab98129 to 7334d8d34d05 at .github 1c7a36a, and from 7334d8d34d05 to 235bf5b5b4df at .github ea92a58) passes gitEnv(), the canon's own filter of process.env that keeps GIT_INDEX_FILE and GIT_CEILING_DIRECTORIES; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
   },
   {
     rel: 'scripts/secret-gate.test.mjs',
-    blob: 'c99cabd2c18ea673a0d2cec3aba721ab5b6711e5',
-    why: "Its two async git spawns (hash-object -w --stdin, at lines 429 and 801, read at 1c7a36a, from 77eeb126 to 18842d60 at 78c53e6, from 18842d60 to f98cfc8a3fae at .github 90c1933, from f98cfc8a3fae to c99cabd2c18e at .github 1c7a36a) each pass gitEnv(), the same canon filter; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
+    blob: 'bcd5ce799c8d37ca304bda13df47fdc9e70eb94a',
+    why: "Its two async git spawns (hash-object -w --stdin, at lines 429 and 801, read at 1c7a36a, from 77eeb126 to 18842d60 at 78c53e6, from 18842d60 to f98cfc8a3fae at .github 90c1933, from f98cfc8a3fae to c99cabd2c18e at .github 1c7a36a, and from c99cabd2c18e to bcd5ce799c8d at .github ea92a58) each pass gitEnv(), the same canon filter; the canon census reads only spawnSync and execFileSync, so this spawn is unseen by it.",
   },
 ];
