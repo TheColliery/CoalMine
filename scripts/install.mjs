@@ -27,7 +27,9 @@ import { gitEnv } from './lib/git-env.mjs';
 import { MANIFEST_NAME, hashInstalledTree } from './lib/manifest.mjs';
 import { projectConfigCandidates, ownDirDefault, isGlobalCfgFile } from './lib/config-paths.mjs';
 import { FOLDER_FIX, MAX_CONFIG_BYTES, MAX_DOC_BYTES, repoEntryKind, readRepoFileBounded, readRepoBytesBounded, checkRepoDirTarget, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
-import { seedOf, stillSeeded } from './lib/seed-identity.mjs';
+import { seedOf } from './lib/seed-identity.mjs';
+import { moveAndCompare, sourceNote } from './lib/move-aside.mjs';
+import { trackedStatus } from './lib/tracked-status.mjs';
 
 // CWK-137 -- every path below cwd is REPO-DERIVED, i.e. untrusted: a cloned repository can
 // plant `.github/copilot-instructions.md -> ~/.bashrc`, a junction on `.agents`, or a FIFO
@@ -198,32 +200,7 @@ function isOwnHook(content) {
   return content.split('\n', 5).some((line) => OWN_HOOK_RE.test(line));
 }
 
-// CWK-096 -- tracked-ness is asked of git, never inferred from a path. `resolveHooksDir`
-// honours `core.hooksPath`, which can point INSIDE the worktree (this repo's own
-// `.githooks/`) -- a Coal* uninstall must never delete a file the repo's own maintainer
-// versions. `git ls-files --error-unmatch` is the oracle: exit 0 = tracked, exit 1 =
-// genuinely untracked, ANYTHING ELSE means the question could not be answered -- and
-// "could not tell" is not "it is untracked" (the same `isDir` tri-state lesson from
-// d65ae5c, applied here to a delete instead of a carve-out). `hookPath` is absolute;
-// `git ls-files` resolves it against `repoDir` fine.
-//
-// LOW-1 (r33 INSPECT) -- "no git binary" is NOT a reachable producer of the `unknown`
-// verdict this function returns, despite what an earlier version of this comment (and
-// the refusal message, and the CHANGELOG) claimed: with no git binary, `resolveHooksDir`
-// never learns a configured `core.hooksPath` and always falls back to `<gitDir>/hooks`,
-// which is outside the worktree by construction and never reaches this function at all
-// (see `insideWorktree` at the call site below) -- measured directly, including against
-// a `.git` FILE pointing a gitdir INSIDE the worktree with no git binary present. The
-// one REACHABLE producer of `unknown` is a git process that started (so `r.error` is
-// unset and a `configured` path DID put us inside the worktree) but was killed or
-// otherwise failed mid-run, returning neither 0 nor 1.
-function trackedStatus(hookPath, repoDir) {
-  const r = spawnSync('git', ['ls-files', '--error-unmatch', hookPath], { cwd: repoDir, env: gitEnv(path.dirname(repoDir)), encoding: 'utf8' });
-  if (r.error) return 'unknown';
-  if (r.status === 0) return 'tracked';
-  if (r.status === 1) return 'untracked';
-  return 'unknown';
-}
+// Tracked-ness is asked of git, never inferred from a path (CWK-096): `trackedStatus` in lib/tracked-status.mjs, shared with configure.mjs.
 
 // Lexical containment for a SCOPE decision (never a security boundary -- node/runtime.md
 // section 4's realpath rule binds an ownership/allowlist check, not this): is `childPath`
@@ -450,16 +427,30 @@ function uninstallGitHooks() {
           process.exitCode = 1;
           continue;
         }
-        // 29kk (T-29jw-5, HIGH): the backup is the user's until it is restored. It goes over the wrapper only while it still holds the bytes read above.
-        if (!stillSeeded(backupSeed)) {
-          console.warn(`  [kept] ${hookName}: ${backupPath} changed after it was read, so it is not restored over CoalMine's hook. Review it, then restore it by hand if you want it.`);
+        // BB-533 (T-29jw-5, T-29lk-1, T-29mc-2): the backup is the user's and moves over the wrapper by ONE rename (mode kept, nothing copied or
+        // unlinked), then the moved file is read back against the bytes read at the seed. The rename replaces CoalMine's wrapper, which the recorded
+        // blob check above judged ours (a limit: a wrapper edited since install is replaced too).
+        const restore = moveAndCompare({ src: backupPath, dest: hookPath, root: hooksRoot, maxBytes: MAX_DOC_BYTES, snapshot: backupSeed.bytes });
+        if (restore.refused) {
+          console.warn(refuseMsg(`git hook ${hookName}`, restore.refused));
           process.exitCode = 1;
           continue;
         }
-        const mode = fs.lstatSync(backupPath).mode & 0o777;
-        writeRepoFile(hookPath, backupBody, hooksRoot);
-        try { fs.chmodSync(hookPath, mode); } catch {}
-        fs.unlinkSync(backupPath);
+        if (!restore.moved) {
+          console.warn(`  [kept] ${hookName}: the backup could not be moved over the hook (${restore.code}); ${sourceNote(restore.srcState, backupPath)}, and CoalMine's hook stays in place.`);
+          process.exitCode = 1;
+          continue;
+        }
+        if (restore.same === null) {
+          console.warn(`  ${hookName}: the restored hook at ${hookPath} could not be read back to check it against ${backupPath}. Check ${hookPath}.`);
+          process.exitCode = 1;
+          continue;
+        }
+        if (restore.same === false) {
+          console.warn(`  ${hookName}: ${backupPath} changed while it was restored over ${hookPath}, so the two differ. Check ${hookPath}: it holds the backup as it was when the restore ran.`);
+          process.exitCode = 1;
+          continue;
+        }
         console.log(`  restored backed-up git hook: ${hookName}`);
       } else if ((() => { const b = readHook(hookPath); return b !== null && isOwnHook(b); })()) {
         // CWK-096 -- a Coal* uninstall NEVER destroys a tracked file. `resolveHooksDir`
@@ -521,7 +512,7 @@ function uninstallConfig(arg) {
     if (!lexists(destFile)) return;
     const root = process.cwd();
     const why = checkRepoWriteTarget(destFile, root);
-    // 29kk (T-29jw-7): the trigger config is the user's file too; its bytes are seeded here and re-checked before it is rewritten or removed.
+    // The trigger config is the user's file too: its raw bytes are read once here, and the move-aside below compares against them.
     const contentSeed = why ? null : seedOf(destFile, root, MAX_DOC_BYTES);
     let content = contentSeed === null ? null : contentSeed.bytes.toString('utf8');
     if (content === null) {
@@ -541,18 +532,44 @@ function uninstallConfig(arg) {
       const after = content.slice(ei + end.length);
       content = (before.trimEnd() + '\n\n' + after.trimStart()).trim();
 
-      if (!stillSeeded(contentSeed)) {
-        console.warn(`  [kept] ${path.relative(root, destFile)}: changed after it was read, so the CoalMine block is not removed. Review it, then remove the block by hand.`);
+      // BB-533 (T-29jw-7, T-29lk-1): the user's file moves aside to <file>.bak by ONE rename, is read back against the bytes read at the seed, and
+      // only then is the file rewritten from those bytes (never from the moved file). Nothing is unlinked, and an empty result writes nothing.
+      const rel = path.relative(root, destFile);
+      const bak = destFile + '.bak';
+      const tracked = trackedStatus(destFile, root); // asked before the move
+      const moved = moveAndCompare({ src: destFile, dest: bak, root, maxBytes: MAX_DOC_BYTES, snapshot: contentSeed.bytes });
+      if (moved.refused) {
+        console.warn(refuseMsg(rel, moved.refused));
         process.exitCode = 1;
         return;
       }
-      if (!content) {
-        fs.unlinkSync(destFile);
-        console.log(`  removed empty trigger config: ${path.relative(process.cwd(), destFile)}`);
-      } else {
-        writeRepoFile(destFile, content + '\n', root);
-        console.log(`  removed trigger config block from ${path.relative(process.cwd(), destFile)}`);
+      if (!moved.moved) {
+        console.warn(`  [kept] ${rel}: it could not be moved aside to ${bak} (${moved.code}), so the CoalMine block stays. ${sourceNote(moved.srcState, rel)}.`);
+        process.exitCode = 1;
+        return;
       }
+      const bakNote = moved.replaced ? 'replaced an earlier backup' : 'no earlier backup';
+      if (moved.same === null) {
+        console.warn(`  ${rel}: the moved file could not be read back to check it against what was read. Your file is at ${bak}.`);
+        process.exitCode = 1;
+      } else if (moved.same === false) {
+        console.warn(`  ${rel}: the file changed while it was moved aside to ${bak}, so the two differ. Check ${rel} against ${bak}.`);
+        process.exitCode = 1;
+      }
+      if (!content) {
+        console.log(`  removed empty trigger config: ${rel} (your file is kept at ${bak}, ${bakNote})`);
+      } else {
+        try {
+          writeRepoFile(destFile, content + '\n', root);
+        } catch (e) {
+          console.warn(`  ${rel} could not be written (${e.message}); your file is at ${bak}; rename it back.`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`  removed trigger config block from ${rel}; your file as it was is kept at ${bak} (${bakNote}), and it is yours to keep or delete.`);
+      }
+      if (tracked === 'tracked') console.log(`  ${rel} was tracked by git: commit its removal (git add -A -- ${rel}); ${rel}.bak is untracked.`);
+      else if (tracked === 'unknown') console.log(`  could not tell whether git tracks ${rel}.`);
     }
   } catch (e) {
     console.warn(`  [warn] failed to uninstall config: ${e.message}`);

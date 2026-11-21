@@ -10,7 +10,9 @@ import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
 import { stripJsonc } from './lib/jsonc.mjs';
 import { projectConfigPath, ownDirDefault, LEGACY_CONFIGS, isGlobalCfgFile } from './lib/config-paths.mjs';
 import { FOLDER_FIX, MAX_CONFIG_BYTES, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
-import { seedOf, stillSeeded } from './lib/seed-identity.mjs';
+import { seedOf } from './lib/seed-identity.mjs';
+import { moveAndCompare, sourceNote } from './lib/move-aside.mjs';
+import { trackedStatus } from './lib/tracked-status.mjs';
 
 // The three per-agent-dir shapes were added by the namespace campaign
 // (#69+#39, owner-designated 2026-08-08) alongside the LEGACY dotfile: a
@@ -187,7 +189,8 @@ function main() {
   let cfg = {};
   let hadComments = false;
   let rawConfig = null;
-  let readSeed = null; // 29kk: the bytes and identity of the file read here, re-checked before a legacy removal
+  let readSeed = null; // BB-533: the raw bytes of the file read here, compared with the moved-aside backup
+  let migrationFailed = false; // set when the legacy move did not end clean: the success line is then not printed
   if (lexists(readPath)) {
     readSeed = seedOf(readPath, isGlobal ? null : projectRoot, MAX_CONFIG_BYTES);
     rawConfig = readSeed === null ? null : readSeed.bytes.toString('utf8');
@@ -246,14 +249,20 @@ function main() {
       // partial failure the user must notice — flag the non-zero exit even though the
       // run continues from defaults (the old config is backed up where possible).
       process.exitCode = 1;
-      try {
-        // CWK-137: the backup is written from the bytes already read (a bounded, regular,
-        // contained file), through the contained writer -- a planted `.bak` link is refused.
-        if (isGlobal) fs.writeFileSync(readPath + '.bak', rawConfig, 'utf8');
-        else writeRepoFile(readPath + '.bak', rawConfig, projectRoot);
-        console.warn(`Warning: existing config is malformed — backed it up to ${readPath}.bak and rebuilding.`);
-      } catch {
-        console.warn('Warning: existing config is malformed. Overwriting.');
+      if (isLegacyRead(readPath)) {
+        // BB-533: the migration moves this file aside to <legacy>.bak by one rename, and that rename makes the backup; a copy written here
+        // would be replaced by it, so none is written.
+        console.warn(`Warning: existing config is malformed. It will be moved aside to ${readPath}.bak with the migration, and the new config starts from defaults.`);
+      } else {
+        try {
+          // CWK-137: the backup is written from the bytes already read (a bounded, regular,
+          // contained file), through the contained writer -- a planted `.bak` link is refused.
+          if (isGlobal) fs.writeFileSync(readPath + '.bak', rawConfig, 'utf8');
+          else writeRepoFile(readPath + '.bak', rawConfig, projectRoot);
+          console.warn(`Warning: existing config is malformed — backed it up to ${readPath}.bak and rebuilding.`);
+        } catch {
+          console.warn('Warning: existing config is malformed. Overwriting.');
+        }
       }
     }
   }
@@ -297,21 +306,38 @@ function main() {
     // leaves a correctly-written new config; the stray legacy file is simply
     // not cleaned up this run.
     if (isLegacyRead(readPath) && writePath !== readPath) {
-      // 29kk (T-29jw-1, HIGH): the legacy file is the user's until removed. It goes only while it still holds the bytes
-      // read above; a change in between is the user's edit, so the file is kept and the run exits 1.
-      if (!stillSeeded(readSeed)) {
-        console.error(`Kept ${readPath}: it changed after it was read. Check the new config, then remove the file by hand.`);
-        process.exitCode = 1;
+      // BB-533 (T-29lk-1, T-29mc-1, T-29mc-2): the legacy file is MOVED ASIDE to <legacy>.bak by one rename, never removed in place. The read-back compares
+      // the backup with the bytes read at the seed; a change in between is kept in the backup and named. The rename is the only destroying call here.
+      const bak = readPath + '.bak';
+      const rel = path.relative(projectRoot, readPath);
+      const tracked = trackedStatus(readPath, projectRoot); // asked before the move
+      const moved = moveAndCompare({ src: readPath, dest: bak, root: projectRoot, maxBytes: MAX_CONFIG_BYTES, snapshot: readSeed.bytes });
+      if (moved.refused) {
+        console.error(`Kept ${readPath}: ${bak} is refused (${moved.refused}). The new config (${writePath}) was written; ${rel} is kept.`);
+        process.exitCode = 1; migrationFailed = true;
+      } else if (!moved.moved) {
+        console.error(`Kept ${readPath}: it could not be moved aside to ${bak} (${moved.code}). The new config (${writePath}) was written; ${sourceNote(moved.srcState, rel)}.`);
+        process.exitCode = 1; migrationFailed = true;
+      } else if (moved.same === null) {
+        console.error(`Warning: could not read ${bak} back to check it against what was migrated. The new config (${writePath}) was written; check it against ${bak}.`);
+        process.exitCode = 1; migrationFailed = true;
+      } else if (moved.same === false) {
+        console.error(`Warning: ${readPath} changed while it was moved aside to ${bak}, so the two differ. The new config (${writePath}) was written from what was read; check it against ${bak}.`);
+        process.exitCode = 1; migrationFailed = true;
       } else {
-        try { fs.rmSync(readPath, { force: true }); } catch {}
-        console.log(`Migrated the project config from ${readPath} to ${writePath}.`);
+        console.log(`Migrated the project config from ${readPath} to ${writePath}; the old file is kept as ${bak} (${moved.replaced ? 'replaced an earlier backup' : 'no earlier backup'}).`);
+        console.log('It is yours to keep or delete.');
+        if (tracked === 'tracked') console.log(`${rel} was tracked by git: commit its removal (git add -A -- ${rel}); ${rel}.bak is untracked.`);
+        else if (tracked === 'unknown') console.log(`could not tell whether git tracks ${rel}.`);
       }
     }
     if (hadComments) {
       console.warn('Note: inline comments were stripped (this tool writes plain JSON). Every key stays documented in platform-configs/.coalmine.json.');
     }
-    console.log(`Successfully updated configuration in: ${writePath}`);
-    console.log(JSON.stringify(cfg, null, 2));
+    if (!migrationFailed) {
+      console.log(`Successfully updated configuration in: ${writePath}`);
+      console.log(JSON.stringify(cfg, null, 2));
+    }
   } catch (e) {
     console.error(`Error: Failed to write to config file: ${e.message}`);
     process.exitCode = 1;
