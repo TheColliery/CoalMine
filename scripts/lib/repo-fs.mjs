@@ -55,7 +55,7 @@ export function isContained(child, parent) {
 // path still reads its own files; a `..` segment is refused outright, because the lexical walk cannot see which link it would climb out of.
 // (2) ENTRY PIN: the entry's realpath (`.native` on both sides) must stay inside its own folder's realpath, which refuses a FILE symlink that
 // leaves its folder. Node reports a Windows junction as a symbolic link, so one lstat test covers both kinds. Residual, named: the check and
-// the later open are two steps, so a link swapped in between is not caught here (the fd re-check below only re-checks kind and size).
+// the later open are two steps; the open is then compared with the check's identity (dev and ino, T-76), so a swap in between is refused. A folder swapped in the chain between the walk and the open is not closed here (T-82).
 function folderChainIsPlain(p, root) {
   if (p.split(/[\\/]/).includes('..')) return false;
   const rel = path.relative(root, p);
@@ -76,16 +76,26 @@ function entryInsideItsFolder(p, root) {
     return real !== realFolder && isContained(real, realFolder);
   } catch { return false; }
 }
-export function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
+// (T-76, 29nj) The identity the name had when its kind was decided: dev and ino as bigint, so a 64-bit file id is never rounded. ONE lstat decides the kind and the identity together.
+function entryIdentity(p, root) {
   try {
-    const lst = fs.lstatSync(p);
+    const lst = fs.lstatSync(p, { bigint: true });
     if (!lst.isSymbolicLink() && !lst.isFile() && !lst.isDirectory()) return null;
     if (root != null && !entryInsideItsFolder(p, root)) return null;
-    const st = lst.isSymbolicLink() ? fs.statSync(p) : lst;
-    if (st.isFile()) return 'file';
-    if (st.isDirectory()) return 'dir';
+    const st = lst.isSymbolicLink() ? fs.statSync(p, { bigint: true }) : lst;
+    if (st.isFile()) return { kind: 'file', dev: st.dev, ino: st.ino };
+    if (st.isDirectory()) return { kind: 'dir', dev: st.dev, ino: st.ino };
     return null;
   } catch { return null; }
+}
+export function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
+  const id = entryIdentity(p, root);
+  return id === null ? null : id.kind;
+}
+// The opened handle is the entry the check took (T-76). ino 0 on either side (a volume that reports none) skips the compare, as the name check did.
+function sameHandle(fst, id) {
+  if (fst.ino === 0n || id.ino === 0n) return true;
+  return fst.dev === id.dev && fst.ino === id.ino;
 }
 
 // The file's text, or null (absent, refused, over the bound, unreadable). `prefixOnly`
@@ -98,14 +108,16 @@ export function readRepoFileBounded(file, root, maxBytes, prefixOnly = false) {
 
 // The same read, as raw bytes -- for a caller that hashes (a utf8 round trip would
 // change the digest of any non-UTF-8 byte sequence).
-// Residual, accepted: a regular file swapped in between the lstat above and the open may lie outside the project -- SECURITY.md, "Not covered, named".
+// (T-76) A regular file swapped in between the check and the open is refused: the opened handle's dev and ino are compared with the check's identity.
 // The one bounded reader, one descriptor: the bytes AND the fstat come from the same open file (29kk), so a caller
 // that keys an identity on the stat is keyed on the file it read, never on a name it stat'ed separately.
 export function readRepoBytesAndStat(file, root, maxBytes, prefixOnly = false) {
-  if (repoEntryKind(file, root) !== 'file') return null;
+  const id = entryIdentity(file, root);
+  if (id === null || id.kind !== 'file') return null;
   let fd;
   try {
     fd = fs.openSync(file, OPEN_FLAGS);
+    if (!sameHandle(fs.fstatSync(fd, { bigint: true }), id)) return null; // T-76: the name changed between the check and the open; refused, never read
     const st = fs.fstatSync(fd);
     if (!st.isFile()) return null;
     if (st.size > maxBytes && !prefixOnly) return null;

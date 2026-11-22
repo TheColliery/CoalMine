@@ -159,6 +159,8 @@ const TESTS = [
   'scripts/lib/move-aside.test.mjs',
   // T-29mk-D2: a config, backup or trigger file with no write bit is refused by name, never replaced (the read-only refusal, repo-fs checkRepoWriteTarget).
   'scripts/lib/configure-readonly.test.mjs',
+  // T-76 / 29nj: the reader's check-then-use window. The opened handle's dev and ino are compared with the check's identity (repo-fs and the hook partial).
+  'scripts/lib/repo-fs-toctou.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the
