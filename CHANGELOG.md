@@ -2,6 +2,13 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.11] - 2026-11-22
+
+A link a reader honours is read from the target its one realpath resolved, never from a second stat of the name
+
+### Fixed
+- **A reader of a user's file takes a link's identity from the target its one realpath resolved.** Stub, the doc-writer revises it. Test: repo-fs: a link retargeted after the realpath is refused, never read (leg in); repo-fs: a link retargeted after the realpath is refused, never read (leg out); hook reader: a link retargeted after the realpath is refused, never read (leg in); hook reader: a link retargeted after the realpath is refused, never read (leg out)
+
 ## [3.28.10] - 2026-11-22
 
 A file read is refused when its name changes between the check and the open, and a read-only legacy config is moved aside

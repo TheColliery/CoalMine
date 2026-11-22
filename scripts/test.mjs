@@ -161,6 +161,8 @@ const TESTS = [
   'scripts/lib/configure-readonly.test.mjs',
   // T-76 / 29nj: the reader's check-then-use window. The opened handle's dev and ino are compared with the check's identity (repo-fs and the hook partial).
   'scripts/lib/repo-fs-toctou.test.mjs',
+  // T-29nj-1 / 29nu: a link retargeted after its one realpath is refused (the identity comes from the resolved target, never a second stat of the name).
+  'scripts/lib/repo-fs-linkretarget.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

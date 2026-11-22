@@ -72,7 +72,7 @@ test('the conductor opens each rule document once per run, and stops at a cumula
   assert.equal(r.ruleOpens.length, 2, 'two documents fit the 8 MiB walk budget; the third is never opened');
 });
 
-// A file link is judged against the folder it sits in (repo-fs entryInsideItsFolder): its real path must lie inside that folder.
+// A file link is judged against the folder it sits in (repo-fs resolveInsideFolder): its real path must lie inside that folder.
 // So the dedupe case is the real document in the SAME rules folder as its links, and a link into another folder is refused.
 test('the conductor reads a document reached through several links in its own folder once, not once per link', (t) => {
   const dir = sandbox(t);

@@ -54,8 +54,9 @@ export function isContained(child, parent) {
 // them refused wherever it points, a target inside the project included; `root` itself is not walked, so a project opened through a linked
 // path still reads its own files; a `..` segment is refused outright, because the lexical walk cannot see which link it would climb out of.
 // (2) ENTRY PIN: the entry's realpath (`.native` on both sides) must stay inside its own folder's realpath, which refuses a FILE symlink that
-// leaves its folder. Node reports a Windows junction as a symbolic link, so one lstat test covers both kinds. Residual, named: the check and
-// the later open are two steps; the open is then compared with the check's identity (dev and ino, T-76), so a swap in between is refused. A folder swapped in the chain between the walk and the open is not closed here (T-82).
+// leaves its folder. Node reports a Windows junction as a symbolic link, so one lstat test covers both kinds. The link is resolved ONCE (resolveInsideFolder),
+// and its identity is read from that resolved path (T-29nj-1), never from a second stat of the name. The open is then compared with that identity (dev and ino,
+// T-76). The limit, where it stops, is written at the open in readRepoBytesAndStat and readRepoFileBounded.
 function folderChainIsPlain(p, root) {
   if (p.split(/[\\/]/).includes('..')) return false;
   const rel = path.relative(root, p);
@@ -67,25 +68,35 @@ function folderChainIsPlain(p, root) {
   }
   return true;
 }
-function entryInsideItsFolder(p, root) {
-  if (path.relative(root, p) === '') return true; // the root itself is not walked
-  if (!folderChainIsPlain(p, root)) return false;
+// The entry's realpath when the entry sits inside its own folder (the root itself is not walked), else null. ONE realpath of the entry: the caller takes the
+// entry's identity from the path returned here, never from a second resolution of the name (T-29nj-1).
+function resolveInsideFolder(p, root) {
   try {
+    if (path.relative(root, p) === '') return fs.realpathSync.native(p);
+    if (!folderChainIsPlain(p, root)) return null;
     const realFolder = fs.realpathSync.native(path.dirname(p));
     const real = fs.realpathSync.native(p);
-    return real !== realFolder && isContained(real, realFolder);
-  } catch { return false; }
+    return real !== realFolder && isContained(real, realFolder) ? real : null;
+  } catch { return null; }
 }
-// (T-76, 29nj) The identity the name had when its kind was decided: dev and ino as bigint, so a 64-bit file id is never rounded. ONE lstat decides the kind and the identity together.
+function identityOf(st) { // dev and ino as bigint, so a 64-bit file id is never rounded
+  return st.isFile() ? { kind: 'file', dev: st.dev, ino: st.ino } : { kind: 'dir', dev: st.dev, ino: st.ino };
+}
+// (T-76, 29nj) The entry's kind and identity. A plain entry: its one lstat. A link: the path resolveInsideFolder resolved (taken once), read by an lstat that must
+// say regular file or directory (a link there is refused). Never a second stat of the name, so a link retargeted after the realpath is not the file read.
 function entryIdentity(p, root) {
   try {
     const lst = fs.lstatSync(p, { bigint: true });
     if (!lst.isSymbolicLink() && !lst.isFile() && !lst.isDirectory()) return null;
-    if (root != null && !entryInsideItsFolder(p, root)) return null;
-    const st = lst.isSymbolicLink() ? fs.statSync(p, { bigint: true }) : lst;
-    if (st.isFile()) return { kind: 'file', dev: st.dev, ino: st.ino };
-    if (st.isDirectory()) return { kind: 'dir', dev: st.dev, ino: st.ino };
-    return null;
+    if (!lst.isSymbolicLink()) {
+      if (root != null && resolveInsideFolder(p, root) === null) return null;
+      return identityOf(lst);
+    }
+    const real = root != null ? resolveInsideFolder(p, root) : fs.realpathSync.native(p);
+    if (real === null) return null;
+    const rst = fs.lstatSync(real, { bigint: true });
+    if (!rst.isFile() && !rst.isDirectory()) return null;
+    return identityOf(rst);
   } catch { return null; }
 }
 export function repoEntryKind(p, root) { // 'file' | 'dir' | null, decided WITHOUT opening p
@@ -116,6 +127,10 @@ export function readRepoBytesAndStat(file, root, maxBytes, prefixOnly = false) {
   if (id === null || id.kind !== 'file') return null;
   let fd;
   try {
+    // THE LIMIT (T-29nj-1; the reader's own statement). Closed: a file or link swapped or retargeted after its identity was taken is refused by the compare
+    // below. NOT closed: a timed multi-swap of a FOLDER in the chain, back and forth around the kind check and this open. Node has no handle-relative open (no
+    // *at() call), and /proc/self/fd exists on Linux only (measured in TheColliery/scratchpad/dispatch/29np-t82-answer.md). Also not closed: a swap of the
+    // resolved file's own name before its identity is read, which is the window a plain file has.
     fd = fs.openSync(file, OPEN_FLAGS);
     if (!sameHandle(fs.fstatSync(fd, { bigint: true }), id)) return null; // T-76: the name changed between the check and the open; refused, never read
     const st = fs.fstatSync(fd);

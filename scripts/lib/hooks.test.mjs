@@ -2527,7 +2527,7 @@ function canMkfifoHere(dir) {
 }
 
 // 15b5b (CI red fix) TEST PROVEN WRONG, CHANGED IN ITS OWN NAMED STEP: the fixture linked the config to <proj>/cfg-target.json, a target OUTSIDE the
-// link's own folder. The 15b5 folder pin (entryInsideItsFolder: the entry's realpath must stay inside its OWN folder) refuses that link on purpose, so the
+// link's own folder. The 15b5 folder pin (resolveInsideFolder: the entry's realpath must stay inside its OWN folder) refuses that link on purpose, so the
 // config read as absent and no line printed (ubuntu and macOS, `0 !== 1`; never ran on Windows, file symlinks skip there). What R12 bounce 2 protects
 // stays: an ALLOWED link (target inside .claude/coal/) to an unreadable file is still UNREADABLE. The refusal itself is pinned by the next test.
 // R12 bounce 2, MEDIUM-1 (reviewer witness): an IN-FOLDER symlinked config (the link rule allows it:

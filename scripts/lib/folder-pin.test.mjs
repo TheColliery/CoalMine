@@ -2,7 +2,7 @@
 // target INSIDE the project included), and the entry's own realpath must stay inside its own folder (hooks-safety.md section 6 row 10 as
 // amended 2026-10-04; node/runtime.md section 4: an allowlist pins the literal expected location). Before this, repoEntryKind only asked
 // whether the realpath lay inside the ROOT, so a junction at `.claude` or `.claude/coal` pointing at a folder inside the project was followed.
-// Exemplar: CoalLedger scripts/lib/repo-fs.mjs (folderChainIsPlain / entryInsideItsFolder, 9f48634).
+// Exemplar: CoalLedger scripts/lib/repo-fs.mjs (folderChainIsPlain / resolveInsideFolder, 9f48634).
 // Windows junction legs run here; POSIX symlink legs and the file-symlink leg are capability-probed (t.skip with a reason, ONE skippable leg
 // per test) and run on CI. Every fixture lives under os.tmpdir(); every hook child is heap-capped and timed.
 import { test } from 'node:test';
@@ -127,16 +127,16 @@ test('a FILE symlink that stays inside its OWN folder is still read (POSIX, or W
 // ---- the hooks: the SAME rule, spawned hermetically (the config read through a planted junction is NOT honoured) ----
 const HOOKS = ['coalmine-conductor.js', 'rot-canary-stop.js', 'rot-canary-touch.js'].map((f) => path.join(repo, 'hooks', f));
 
-test('the hook copies and scripts/lib/repo-fs.mjs carry byte-identical folderChainIsPlain / entryInsideItsFolder / repoEntryKind (kept identical by hand, now enforced)', () => {
+test('the hook copies and scripts/lib/repo-fs.mjs carry byte-identical folderChainIsPlain / resolveInsideFolder / repoEntryKind (kept identical by hand, now enforced)', () => {
   const grab = (file) => {
     const s = fs.readFileSync(file, 'utf8');
     const m = /\/\/ 15b5 \(CWK2-037[^\n]*\n(?:\/\/ [^\n]*\n)*function folderChainIsPlain[\s\S]*?\n(?:export )?function repoEntryKind[\s\S]*?\n}\n/.exec(s);
-    assert.ok(m, `${path.basename(file)}: folderChainIsPlain + entryInsideItsFolder + repoEntryKind found`);
+    assert.ok(m, `${path.basename(file)}: folderChainIsPlain + resolveInsideFolder + repoEntryKind found`);
     return m[0];
   };
   const want = grab(path.join(repo, 'hooks', '_shared', 'node-config.js'));
   for (const h of HOOKS) assert.equal(grab(h), want, `${path.basename(h)} carries the partial's copy`);
-  assert.match(want, /entryInsideItsFolder/);
+  assert.match(want, /resolveInsideFolder/);
   assert.equal(grab(path.join(repo, 'scripts', 'lib', 'repo-fs.mjs')).replace('export function repoEntryKind', 'function repoEntryKind'), want, 'scripts/lib/repo-fs.mjs carries the same three functions');
 });
 
