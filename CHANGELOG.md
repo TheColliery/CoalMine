@@ -4,10 +4,12 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [3.28.11] - 2026-11-22
 
-A link a reader honours is read from the target its one realpath resolved, never from a second stat of the name
+A link a reader honours is read from the target its one realpath resolved, so a link retargeted after the check is refused
+
+A reader that honoured a link took the file's identity from a second stat of the name, after the realpath check. A link retargeted between the two was therefore read from wherever it then pointed, outside the project included, and the open matched it (MEDIUM, the reviewer's: it needs a local process with write access to the config folder racing the run). The identity is now taken from the path the one realpath resolved, never from a second stat of the name, and the opened handle's device and inode are compared with it, so a retargeted link is refused and never read. The stated limit: a timed multi-swap of a folder in the chain, back and forth around the check and the open, is still not closed, because Node offers no handle-relative open (no `*at()` call), and `/proc/self/fd` exists on Linux only.
 
 ### Fixed
-- **A reader of a user's file takes a link's identity from the target its one realpath resolved.** Stub, the doc-writer revises it. Test: repo-fs: a link retargeted after the realpath is refused, never read (leg in); repo-fs: a link retargeted after the realpath is refused, never read (leg out); hook reader: a link retargeted after the realpath is refused, never read (leg in); hook reader: a link retargeted after the realpath is refused, never read (leg out)
+- **A reader of a user's file takes a link's identity from the target its one realpath resolved.** `scripts/lib/repo-fs.mjs` and the shared hook partial `hooks/_shared/node-config.js` (synced into the three hook copies) no longer stat the name a second time — test: script reader: a link retargeted to a file INSIDE the root after the realpath is refused, never read (leg in); script reader: a link retargeted to a file OUTSIDE the root after the realpath is refused, never read (leg out); hook reader: a link retargeted to a file INSIDE the root after the realpath is refused, never read (leg in); hook reader: a link retargeted to a file OUTSIDE the root after the realpath is refused, never read (leg out)
 
 ## [3.28.10] - 2026-11-22
 

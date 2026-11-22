@@ -61,6 +61,14 @@ The same three Node hooks also carry an **Antigravity mode** (selected by the ev
 
 ---
 
+## 🧱 Reads of a user's config — what is not covered
+
+The hooks and `configure.mjs` read a project config, and the rule files the conductor scans, that a cloned repository can plant. A reader decides the entry is a plain file, or a link that stays inside its own folder, and then opens it by name. A link's identity is taken from the target its one realpath resolved, never from a second stat of the name, and the opened handle's device and inode are compared with that identity. So a file swapped, or a link retargeted, after the identity was taken is refused and never read. Where a volume reports no inode, the compare is skipped.
+
+**Not covered:** a timed multi-swap of a folder in the chain, back and forth around the check and the open, and a swap of the resolved file's own name before its identity is read (the window a plain file has). Either needs a local process with write access to the config folder, racing the run. The reason is the platform's: Node offers no handle-relative open (no `*at()` call), and `/proc/self/fd` exists on Linux only. CoalLedger's T-82 answer measured this; it is kept in the umbrella's dispatch scratchpad as 29np-t82-answer.md, which is local to the maintainers.
+
+---
+
 ## 🩺 Debug Hatch
 
 Off by default. Set `COALMINE_DEBUG` in the environment that starts the agent and the three Node hooks append two or three short JSON lines per run to `~/.claude/coal/coalmine/debug-hatch.jsonl`, rotated to `debug-hatch.1.jsonl` before a write would take it past 256 KiB, so the two files stay under 512 KiB. Each line holds a timestamp, a severity, the hook name, the platform, the Node version, an event name and, for a refusal, a crash or a finished run, a guard name, the error name and code, the hook's own file name and line, or short counts and true/false flags. It records structure only: a value is kept if it is a number, a true/false or a short plain word, anything else (a path, a line break, free text) is written as `redacted`, and nothing is read out of the hook payload. Nothing is written to stdout or stderr, and nothing leaves the machine unless you attach the file to a report yourself. The stop hook removes either file once it is older than `tempSweepStaleDays` days in your global config (7 if unset; a project config is ignored), whether or not the hatch is still on. On Linux and macOS the file is created at mode `0600` and opened without following links, and a folder the hatch creates itself gets mode `0700`; on Windows those modes and that flag do not apply, so the hook refuses a path that is not a plain file just before it opens it.
