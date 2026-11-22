@@ -2,6 +2,15 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.9] - 2026-11-22
+
+A read-only config or backup is refused by name instead of replaced
+
+On Linux and macOS, `configure.mjs` and `install.mjs --uninstall` replaced a config file with no write bit by a rename, because a rename needs only the folder's write bit, and the new file lost the mode (LOW). A file with no write bit is now refused by name before anything is written, and so is a read-only backup path. The message is `<file> is read-only; nothing was written -- make the file writable if you mean to change it`, with no advice about links; the run writes nothing and exits 1, and the file keeps its bytes and its mode. The same check covers `--global` and the trigger configs and the hook restore of `--uninstall`. A file made read-only after the check is still replaced on POSIX: that window is not closed.
+
+### Fixed
+- **`configure.mjs` and `install.mjs --uninstall` refuse a config, a trigger config or a backup path that has no write bit, and no longer replace it.** The refusal comes before the first write, so nothing is half done and the run exits 1 — test: configure: a project config with no write bit is refused by name, its bytes and mode kept, and nothing new written (exit 1); configure: a legacy migration whose backup is read-only is refused before the new home is written, and the legacy file is unchanged; configure --global: a global config with no write bit is refused by name, its bytes and mode kept (HOME sandboxed); install --uninstall cline: a read-only .clinerules is refused, untouched, and no backup is made
+
 ## [3.28.8] - 2026-11-21
 
 The config migration and uninstall keep the user's file as a .bak
