@@ -8,6 +8,9 @@ A file read is refused when its name changes between the check and the open
 
 The hook readers and the script readers checked a file's name, then opened it by name, so a name swapped in between was read. The opened handle's device and inode are now compared with the identity the check took (as bigint), and a mismatch is refused: the reader returns its existing refusal, never the other file's bytes. Where a volume reports no inode, the compare is skipped, as before. A folder swapped in the chain between the walk and the open is still not closed (named residual).
 
+### Changed
+- **A read-only legacy config is moved aside, and the migration line says it was read-only.** `configure.mjs` no longer refuses a read-only `.coalmine.json` before its migration: the file is moved to `.bak` with its mode kept, and the line reads `the old file is kept as <bak>, read-only as it was`. A writable legacy config's line is unchanged. Test: configure: a read-only legacy config is still moved to .bak; the .bak keeps its bytes and mode; the one line says it was read-only (29nj N3)
+
 ### Fixed
 - **A reader of a user's file refuses a name that changes between the check and the open.** `scripts/lib/repo-fs.mjs` and the shared hook partial `hooks/_shared/node-config.js` (synced into the three hook copies) compare the opened handle with the checked identity. Test: repo-fs: a read whose name is swapped after the check is refused, never read (leg a); repo-fs: a read whose name is swapped after the check is refused, never read (leg b); hook reader: a read whose name is swapped after the check is refused, never read (leg a); hook reader: a read whose name is swapped after the check is refused, never read (leg b)
 

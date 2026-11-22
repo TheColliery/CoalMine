@@ -9,7 +9,7 @@ import path from 'path';
 import { CONFIG_SCHEMA, validateValue } from './lib/config-schema.mjs';
 import { stripJsonc } from './lib/jsonc.mjs';
 import { projectConfigPath, ownDirDefault, LEGACY_CONFIGS, isGlobalCfgFile } from './lib/config-paths.mjs';
-import { FOLDER_FIX, READONLY_FIX, MAX_CONFIG_BYTES, checkRepoWriteTarget, writeRepoFile } from './lib/repo-fs.mjs';
+import { FOLDER_FIX, READONLY_FIX, MAX_CONFIG_BYTES, checkRepoWriteTarget, isNoWriteMode, writeRepoFile } from './lib/repo-fs.mjs';
 import { seedOf } from './lib/seed-identity.mjs';
 import { moveAndCompare, sourceNote } from './lib/move-aside.mjs';
 import { trackedStatus } from './lib/tracked-status.mjs';
@@ -183,8 +183,10 @@ function main() {
   };
   // Every target is checked BEFORE the first write (T-29mk-D2, H2): the config, its new home, and the backup a migration or a malformed config makes.
   if (!isGlobal) {
+    // A legacy readPath is MOVED to .bak by this run, never written (29nj N1, BB-533 ruling 6): a read-only one is moved with its mode, so it is not refused.
+    const migrating = isLegacyRead(readPath);
     for (const p of new Set([readPath, writePath, readPath + '.bak'])) {
-      const why = checkRepoWriteTarget(p, projectRoot);
+      const why = checkRepoWriteTarget(p, projectRoot, { movedAside: migrating && p === readPath });
       if (why) { refuse(p, why); return; }
     }
   } else {
@@ -324,6 +326,9 @@ function main() {
       const bak = readPath + '.bak';
       const rel = path.relative(projectRoot, readPath);
       const tracked = trackedStatus(readPath, projectRoot); // asked before the move
+      // 29nj N2: the mode is read BEFORE the move, with the room's one write-bit test; the rename keeps it, so the backup is read-only as the user left it.
+      let legacyReadOnly = false;
+      try { legacyReadOnly = isNoWriteMode(fs.lstatSync(readPath).mode); } catch { /* the move below reports a file it cannot reach */ }
       const moved = moveAndCompare({ src: readPath, dest: bak, root: projectRoot, maxBytes: MAX_CONFIG_BYTES, snapshot: readSeed.bytes });
       if (moved.refused) {
         console.error(`Kept ${readPath}: ${bak} is refused (${moved.refused}). The new config (${writePath}) was written; ${rel} is kept.`);
@@ -338,7 +343,7 @@ function main() {
         console.error(`Warning: ${readPath} changed while it was moved aside to ${bak}, so the two differ. The new config (${writePath}) was written from what was read; check it against ${bak}.`);
         process.exitCode = 1; migrationFailed = true;
       } else {
-        console.log(`Migrated the project config from ${readPath} to ${writePath}; the old file is kept as ${bak} (${moved.replaced ? 'replaced an earlier backup' : 'no earlier backup'}).`);
+        console.log(`Migrated the project config from ${readPath} to ${writePath}; the old file is kept as ${bak}${legacyReadOnly ? ', read-only as it was' : ''} (${moved.replaced ? 'replaced an earlier backup' : 'no earlier backup'}).`);
         console.log('It is yours to keep or delete.');
         if (tracked === 'tracked') console.log(`${rel} was tracked by git: commit its removal (git add -A -- ${rel}); ${rel}.bak is untracked.`);
         else if (tracked === 'unknown') console.log(`could not tell whether git tracks ${rel}.`);

@@ -15,9 +15,9 @@ const ROOM = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const CONFIGURE = path.join(ROOM, 'scripts', 'configure.mjs');
 const ORIG = '{ "autoScanFileCap": 7 }\n';
 
-// A project with a git root and a LEGACY root dotfile (`.coalmine.json`), the shape configure migrates.
-function legacyProject(t) {
-  const root = makeRoot('cm-cfgmig-', removeTree, t);
+// A project with a git root and a LEGACY root dotfile (`.coalmine.json`), the shape configure migrates. `prefix` names the temp root (a test may name it so).
+function legacyProject(t, prefix = 'cm-cfgmig-') {
+  const root = makeRoot(prefix, removeTree, t);
   const proj = path.join(root, 'proj');
   fs.mkdirSync(proj);
   gitInit(proj, root);
@@ -138,4 +138,44 @@ test('configure: a malformed legacy config is moved aside whole, so its bytes su
   const text = r.stdout + r.stderr;
   assert.match(text, /existing config is malformed\. It will be moved aside/, 'the warning says the old file moves aside with the migration');
   assert.doesNotMatch(text, /backed it up to/, 'the malformed branch does not write a backup of its own');
+});
+
+// 29nj N3 (BB-533 ruling 6): a legacy config with no write bit is still MOVED to .bak, and the one line says so. The word is judged on the words: the
+// migration line is read with its own paths taken out first, so a temp root whose name holds `read-only` cannot flip the verdict (item V).
+const ROOT_USER = typeof process.getuid === 'function' && process.getuid() === 0;
+const SKIP_ROOT = 'running as root: a root process ignores the write bit, so the read-only leg cannot be seen on this run (skipped visibly)';
+const NEW_HOME = (proj) => path.join(proj, '.claude', 'coal', 'coalmine.json');
+function wordsOf(text, paths) {
+  let s = text;
+  for (const p of paths) s = s.split(p).join(' ');
+  return s;
+}
+// A file's mode is restored in a finally path, so the sandbox can always be removed.
+function restoreMode(p) { if (fs.existsSync(p)) fs.chmodSync(p, 0o644); }
+
+test('configure: a read-only legacy config is still moved to .bak; the .bak keeps its bytes and mode; the one line says it was read-only (29nj N3)', (t) => {
+  if (ROOT_USER) { t.skip(SKIP_ROOT); return; }
+  const { root, proj, legacy, bak } = legacyProject(t, 'cm-read-only-legacy-');
+  fs.chmodSync(legacy, 0o444);
+  try {
+    const r = runScript(root, proj, CONFIGURE, ['--autoScanFileCap', '9'], null);
+    assert.equal(r.status, 0, `a read-only legacy config migrates, stderr: ${r.stderr}`);
+    assert.equal(fs.existsSync(legacy), false, 'the read-only legacy file is moved aside');
+    assert.deepEqual(fs.readFileSync(bak), Buffer.from(ORIG), 'the backup holds the bytes that were read');
+    assert.equal(fs.statSync(bak).mode & 0o222, 0, 'the backup keeps the read-only bits the user set');
+    const line = wordsOf(r.stdout, [bak, legacy, NEW_HOME(proj)]);
+    assert.match(line, /kept as\s+, read-only as it was/, `the one line says the old file was read-only; got:\n${r.stdout}`);
+  } finally {
+    restoreMode(legacy);
+    restoreMode(bak);
+  }
+});
+
+test('configure: a writable legacy config\'s line does not say read-only, judged with the paths taken out (the temp root holds the word)', (t) => {
+  const { root, proj, legacy, bak } = legacyProject(t, 'cm-read-only-writable-');
+  const r = runScript(root, proj, CONFIGURE, ['--autoScanFileCap', '9'], null);
+  assert.equal(r.status, 0, `a writable legacy config migrates, stderr: ${r.stderr}`);
+  const line = wordsOf(r.stdout, [bak, legacy, NEW_HOME(proj)]);
+  assert.match(line, /kept as\s+ \(no earlier backup\)/, `the line is the plain migration line; got:\n${r.stdout}`);
+  assert.doesNotMatch(line, /read-only/, 'a writable legacy\'s line must not say read-only');
 });

@@ -222,8 +222,12 @@ export function checkRepoDirTarget(dir, root) {
   return folderChainWhy(path.resolve(dir), path.resolve(root)); // 17a: a link anywhere under the root is refused, in-project included
 }
 
+// The room's one write-bit test (T-29mk-D2; BB-533 ruling 6 reuses it): a mode with no write bit. On Windows the read-only attribute reads as 0o444.
+export function isNoWriteMode(mode) { return (mode & 0o222) === 0; }
+
 // Is `target` a file CoalMine may (re)write inside `root`? null = yes, else the reason.
-export function checkRepoWriteTarget(target, root) {
+// `movedAside` (29nj N1): the caller MOVES this file (a rename keeps its bytes and mode) and never writes it, so a read-only file is not refused for that move.
+export function checkRepoWriteTarget(target, root, { movedAside = false } = {}) {
   const dirWhy = checkRepoDirTarget(path.dirname(path.resolve(target)), root);
   if (dirWhy) return dirWhy;
   let st;
@@ -239,7 +243,7 @@ export function checkRepoWriteTarget(target, root) {
   if (!st.isFile()) return `${target} exists but is not a regular file`;
   // T-29mk-D2: a file with no write bit is refused by name, never chmodded and never replaced. Windows reports the read-only attribute as 0o444, so one check covers both.
   // Stated limit (H3): a file made read-only AFTER this check is still replaced on POSIX, because the rename needs only the folder's write bit. Not closed here.
-  if ((st.mode & 0o222) === 0) return `${target} is read-only; nothing was written -- ${READONLY_FIX}`;
+  if (!movedAside && isNoWriteMode(st.mode)) return `${target} is read-only; nothing was written -- ${READONLY_FIX}`;
   return null;
 }
 
