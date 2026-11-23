@@ -2,6 +2,13 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.12] - 2026-11-23
+
+FILL writes only after the user chose FILL; a start answer or a tier pick is not that choice
+
+### Fixed
+- **`gold-standard` FILL writes only after the user chose FILL.** `skills/gold-standard/SKILL.md` (and its `plugin/` copy) now says so in FILL's own step: a start answer or a tier pick is not that choice, and with no user to answer nothing is written. — test: none (prose; no gate reads a skill's text). Variance walk: debt (the walk spawns leaves, held back for this unit).
+
 ## [3.28.11] - 2026-11-22
 
 A link a reader honours is read from the target its one realpath resolved, so a link retargeted after the check is refused

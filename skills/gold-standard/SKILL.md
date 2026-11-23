@@ -42,7 +42,7 @@ Hook cells assume an interactive session; non-interactive → D6, report-only: n
 ADOPT and every CONFORM fix: gated (G2/G3), never assumed (P2).
 
 1. **AUDIT** — pick 3–5 named exemplars **fresh at run time** (the bar moves with the era — never reuse a remembered bar (P3)), derive the 100% checklist per dimension, score (✅/🟡/❌/N-A), give overall %. Previously filled/adopted rules are audit subjects too: a rule past its `revalidate` due date or contradicted by today's exemplars is a gap.
-2. **FILL** — write missing MUST-HAVE rules into the project's rules home (`.claude/rules/` → `AGENTS.md` → `STANDARDS.md`). Match project style + voice. Cite the exemplar. Invoke source-grounding for version-sensitive claims. Extend existing; never duplicate (P4). Check the retired-rules record first — never resurrect a rule retired with a reason unless the user overrides (P5). No overkill rules — only essential, practical, saturated ones (P6). Stamp each rule: `<!-- coalmine: verified <YYYY-MM-DD> · exemplar <name> · revalidate <30|90>d -->` — 30d fast-moving surfaces, 90d general; a CVE/advisory rule's event overrides its calendar stamp. Mechanics + why: `references/method.md`.
+2. **FILL** — write missing MUST-HAVE rules into the project's rules home (`.claude/rules/` → `AGENTS.md` → `STANDARDS.md`). Match project style + voice. Cite the exemplar. Invoke source-grounding for version-sensitive claims. Extend existing; never duplicate (P4). Check the retired-rules record first — never resurrect a rule retired with a reason unless the user overrides (P5). No overkill rules — only essential, practical, saturated ones (P6). Stamp each rule: `<!-- coalmine: verified <YYYY-MM-DD> · exemplar <name> · revalidate <30|90>d -->` — 30d fast-moving surfaces, 90d general; a CVE/advisory rule's event overrides its calendar stamp. Mechanics + why: `references/method.md`. **FILL writes only after the user chose FILL:** the wizard's ACT pick, `go deeper`, or a FILL trigger word in the table above. A start answer or a tier pick is not that choice. Until then, report the missing rules as text and write nothing to the rules home; with no user to answer, write nothing and return the choice as text.
 3. **ADOPT** — treat the completed ruleset as binding for the rest of the session. Code changes still need user approval — adoption governs *how* to work, not license to auto-edit (P7).
 4. **CONFORM** — scan existing code against adopted rules; report violations (`path:line` · rule · evidence). Fix on approval: checkpoint → record a build+test BASELINE → one fix → build+tests → revert only if a NEW failure appeared versus the baseline. Style Drift: conform minority patterns to the dominant style (highest average usage); never start a standalone style refactor (P8).
 5. **RE-VALIDATE** (runs inside every repeat AUDIT, or when offered on a past-due stamp) — verdict each CoalMine-stamped rule, all changes choice-gated (G4/P9):
@@ -86,8 +86,6 @@ Correctness · Security · Performance · UX/DX · Docs/onboarding · Testing/CI
 | P15 | include unapproved code or paths in the self error-report |
 | P16 | treat a denied FILL/write as if it succeeded — ADOPT MUST NOT bind against rules that were never written |
 
-Dedup: P5 restated at the RE-VALIDATE tombstone · P9 restated at the CONSISTENCY sub-bullet · P11 restated at Method §1 · P16 restated at the CLASSIFY-BLOCK write row — one row each, further mentions.
-
 ## Degrade paths (D1–D8, declared)
 | # | branch | condition | lane |
 |---|---|---|---|
@@ -100,10 +98,10 @@ Dedup: P5 restated at the RE-VALIDATE tombstone · P9 restated at the CONSISTENC
 | D7 | report the rule/fix as NOT written, never say "filled"/"adopted" (P16) | write (`Edit`/`Write`) denied during FILL/ADOPT/CONFORM/RE-VALIDATE | universal |
 | D8 | refuse that file, name it — never a clean bill | read (`Read`/`Grep`/`Glob`) denied during AUDIT/CONSISTENCY scanning | universal |
 
-D3 restated at four sites — the general clause, the Standard row's "(else single-agent)", the Heavy row's "if supported", and the Heavy-specific "escalate by model + reasoning only" — one row, four mentions. D4–D6 come from the shared Escalation footer below (Agent lane has no equivalent for D4/D5 — tier is asked, see G1, never degraded; D6 applies in either lane, wherever `ask_question` would fire). The Freshness cap (scope already audited this session → cap at Light) is a tier-selection modifier on G1, not a degrade branch — no capability lever is missing and there is no unhappy path, so it stays out of D. D7/D8 are this skill's CLASSIFY-BLOCK branches (skill-authoring.md §5b) — numbered here, not restated in the table below.
+D4–D6 come from the shared Escalation footer below (Agent lane: tier is asked, G1, never degraded).
 
 ## Grants & denials (CLASSIFY-BLOCK)
-SPAWN/TIER/QUESTION-TOOL/NETWORK already discharged above — D3/D4/D6, D1. This table adds READ + WRITE; their denial branches are numbered into the Degrade paths ledger (D8, D7) rather than restated here.
+SPAWN, TIER, QUESTION-TOOL and NETWORK are discharged in Degrade paths (D1, D3, D4, D6); this table adds READ and WRITE.
 | class | step it powers | grant | on denial |
 |---|---|---|---|
 | read | AUDIT (scan exemplars/rule trees) · CONSISTENCY (scan memory/decision log) | `Read`·`Grep`·`Glob` | D8 |
