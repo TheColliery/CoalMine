@@ -4,10 +4,12 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [3.28.12] - 2026-11-23
 
-FILL writes only after the user chose FILL; a start answer or a tier pick is not that choice
+gold-standard FILL waits for the FILL choice, and a start answer or a tier pick is not that choice
+
+In a headless run the skill tried to write a rules file after only a start answer and a tier pick, before the user had chosen FILL (a write the harness denied; an attempt counts). FILL's own step now carries the sentence below. This is a text rule, followed by the model and not enforced by any hook, so it is claimed at prose strength. It narrowed the early write and did not close it: on the haiku tier, headless, with hooks off, 3 of 3 rounds tried to write before the change and 1 of 5 after. The remaining case is a known issue (see the README's gold-standard row). After a real FILL answer the skill still wrote, 2 of 2 rounds.
 
 ### Fixed
-- **`gold-standard` FILL writes only after the user chose FILL.** `skills/gold-standard/SKILL.md` (and its `plugin/` copy) now says so in FILL's own step: a start answer or a tier pick is not that choice, and with no user to answer nothing is written. — test: none (prose; no gate reads a skill's text). Variance walk: debt (the walk spawns leaves, held back for this unit).
+- **`gold-standard` FILL writes only after the user chose FILL.** `skills/gold-standard/SKILL.md` (and its `plugin/` copy) now says in FILL's own step: "FILL writes only after the user chose FILL: the wizard's ACT pick, `go deeper`, or a FILL trigger word in the table above. A start answer or a tier pick is not that choice. Until then, report the missing rules as text and write nothing to the rules home; with no user to answer, write nothing and return the choice as text." — test: none (prose; no gate reads a skill's text); measured by a headless run, 3 of 3 early write attempts before and 1 of 5 after
 
 ## [3.28.11] - 2026-11-22
 
