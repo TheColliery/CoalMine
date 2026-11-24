@@ -38,7 +38,7 @@
 | Skill Name | Catches | Run Mode |
 |---|---|---|
 | **`rot-canary`** | Dead code, bugs, resource leaks, race conditions, silent failures, stale docs | **Auto + Manual** (runs on session end / manual trigger) |
-| **`gold-standard`** | Audits project completeness against world-class exemplars. Known issue: in a headless run, FILL may still try to write a rules file before FILL is chosen (1 of 5 measured on haiku, a text rule and not enforced), so run it where a user can answer, or choose AUDIT only | **One-time** (triggered once, governs the session) |
+| **`gold-standard`** | Audits project completeness against world-class exemplars. Known issue: in a headless run, FILL may still try to write a rules file before FILL is chosen (measured on haiku: 1 of 5 on the maintainer's machine, 0 of 5 without its rules; a text rule and not enforced), so run it where a user can answer, or choose AUDIT only | **One-time** (triggered once, governs the session) |
 | **`source-grounding`** | Prevents AI hallucinations by forcing cross-source verification | **Standing rule** (always on only where your own `CLAUDE.md` or `AGENTS.md` carries it; CoalMine writes no such file) · offered at session start on version-sensitive work · `/source-grounding` on demand |
 | **`supply-chain-audit`** | Audits dependency vulnerabilities, licenses, phone-home code, and build/CI security | **On-demand** (manually run when relevant) |
 | **`resilience-audit`** | Audits failure path handling (FMEA), rollbacks, retry limits, and idempotency | **On-demand** (manually run when relevant) |
