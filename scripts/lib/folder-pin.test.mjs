@@ -127,11 +127,11 @@ test('a FILE symlink that stays inside its OWN folder is still read (POSIX, or W
 // ---- the hooks: the SAME rule, spawned hermetically (the config read through a planted junction is NOT honoured) ----
 const HOOKS = ['coalmine-conductor.js', 'rot-canary-stop.js', 'rot-canary-touch.js'].map((f) => path.join(repo, 'hooks', f));
 
-test('the hook copies and scripts/lib/repo-fs.mjs carry byte-identical folderChainIsPlain / resolveInsideFolder / repoEntryKind (kept identical by hand, now enforced)', () => {
+test('the hook copies and scripts/lib/repo-fs.mjs carry byte-identical folderChainPin / resolveInsideFolder / repoEntryKind (kept identical by hand, now enforced)', () => {
   const grab = (file) => {
     const s = fs.readFileSync(file, 'utf8');
-    const m = /\/\/ 15b5 \(CWK2-037[^\n]*\n(?:\/\/ [^\n]*\n)*function folderChainIsPlain[\s\S]*?\n(?:export )?function repoEntryKind[\s\S]*?\n}\n/.exec(s);
-    assert.ok(m, `${path.basename(file)}: folderChainIsPlain + resolveInsideFolder + repoEntryKind found`);
+    const m = /\/\/ 15b5 \(CWK2-037[^\n]*\n(?:\/\/ [^\n]*\n)*function folderChainPin[\s\S]*?\n(?:export )?function repoEntryKind[\s\S]*?\n}\n/.exec(s);
+    assert.ok(m, `${path.basename(file)}: folderChainPin + resolveInsideFolder + repoEntryKind found`);
     return m[0];
   };
   const want = grab(path.join(repo, 'hooks', '_shared', 'node-config.js'));

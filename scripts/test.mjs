@@ -163,6 +163,8 @@ const TESTS = [
   'scripts/lib/repo-fs-toctou.test.mjs',
   // T-29nj-1 / 29nu: a link retargeted after its one realpath is refused (the identity comes from the resolved target, never a second stat of the name).
   'scripts/lib/repo-fs-linkretarget.test.mjs',
+  // T-29qn-1 / 29qn: one swap of the entry's folder to a junction after the chain check is refused (a link reads OUTSIDE today; the identity is checked first).
+  'scripts/lib/repo-fs-folderswap.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the

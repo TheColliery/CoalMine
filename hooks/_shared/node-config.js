@@ -163,26 +163,43 @@ function isContained(child, parent) {
 // leaves its folder. Node reports a Windows junction as a symbolic link, so one lstat test covers both kinds. The link is resolved ONCE (resolveInsideFolder),
 // and its identity is read from that resolved path (T-29nj-1), never from a second stat of the name. The open is then compared with that identity (dev and ino,
 // T-76). The limit, where it stops, is written at the open in readRepoBytesAndStat and readRepoFileBounded.
-function folderChainIsPlain(p, root) {
-  if (p.split(/[\\/]/).includes('..')) return false;
+// T-29qn-1 (29qn): the entry's own folder is pinned by the chain walk and the pin is compared again with the folder the realpath lands in. One swap of that
+// folder to a junction after the walk moves the realpath into the swapped target, so the compare refuses it before the identity is taken (resolveInsideFolder),
+// and a link entry is compared a second time after its identity is read (entryIdentity). The check and the open stay in these functions, one code path for both readers.
+function folderChainPin(p, root) {
+  if (p.split(/[\\/]/).includes('..')) return { ok: false, folder: null };
   const rel = path.relative(root, p);
-  if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) return false;
+  if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) return { ok: false, folder: null };
   let cur = root;
+  let folder = null; // the entry's own folder, the last one walked; null when the entry sits directly in `root`, which is not walked
   for (const part of rel.split(path.sep).slice(0, -1)) {
     cur = path.join(cur, part);
-    try { if (fs.lstatSync(cur).isSymbolicLink()) return false; } catch { return false; }
+    let st;
+    try { st = fs.lstatSync(cur, { bigint: true }); } catch { return { ok: false, folder: null }; }
+    if (st.isSymbolicLink()) return { ok: false, folder: null };
+    folder = { dev: st.dev, ino: st.ino };
   }
-  return true;
+  return { ok: true, folder };
 }
-// The entry's realpath when the entry sits inside its own folder (the root itself is not walked), else null. ONE realpath of the entry: the caller takes the
-// entry's identity from the path returned here, never from a second resolution of the name (T-29nj-1).
+// Is `dirPath` the folder the chain walk pinned? No pin (the root is not walked) and an ino of 0 on either side (a volume that reports none) skip the compare.
+function folderIs(dirPath, folder) {
+  if (folder === null) return true;
+  const st = fs.lstatSync(dirPath, { bigint: true });
+  if (!st.isDirectory()) return false;
+  if (folder.ino === 0n || st.ino === 0n) return true;
+  return st.dev === folder.dev && st.ino === folder.ino;
+}
+// The entry's realpath, with the folder it resolved into, or null. ONE realpath of the entry: the caller takes the entry's identity from the path returned here,
+// never from a second resolution of the name (T-29nj-1). The folder is compared after its realpath is taken and before the entry's own (T-29qn-1).
 function resolveInsideFolder(p, root) {
   try {
-    if (path.relative(root, p) === '') return fs.realpathSync.native(p);
-    if (!folderChainIsPlain(p, root)) return null;
+    if (path.relative(root, p) === '') return { real: fs.realpathSync.native(p), realFolder: null, folder: null };
+    const chain = folderChainPin(p, root);
+    if (!chain.ok) return null;
     const realFolder = fs.realpathSync.native(path.dirname(p));
+    if (!folderIs(realFolder, chain.folder)) return null;
     const real = fs.realpathSync.native(p);
-    return real !== realFolder && isContained(real, realFolder) ? real : null;
+    return real !== realFolder && isContained(real, realFolder) ? { real, realFolder, folder: chain.folder } : null;
   } catch { return null; }
 }
 function identityOf(st) { // dev and ino as bigint, so a 64-bit file id is never rounded
@@ -190,6 +207,7 @@ function identityOf(st) { // dev and ino as bigint, so a 64-bit file id is never
 }
 // (T-76, 29nj) The entry's kind and identity. A plain entry: its one lstat. A link: the path resolveInsideFolder resolved (taken once), read by an lstat that must
 // say regular file or directory (a link there is refused). Never a second stat of the name, so a link retargeted after the realpath is not the file read.
+// T-29qn-1: a link's folder is compared again after that lstat, so a swap made between the resolution and the lstat is refused as well.
 function entryIdentity(p, root) {
   try {
     const lst = fs.lstatSync(p, { bigint: true });
@@ -198,10 +216,11 @@ function entryIdentity(p, root) {
       if (root != null && resolveInsideFolder(p, root) === null) return null;
       return identityOf(lst);
     }
-    const real = root != null ? resolveInsideFolder(p, root) : fs.realpathSync.native(p);
-    if (real === null) return null;
-    const rst = fs.lstatSync(real, { bigint: true });
+    const resolved = root != null ? resolveInsideFolder(p, root) : { real: fs.realpathSync.native(p), realFolder: null, folder: null };
+    if (resolved === null) return null;
+    const rst = fs.lstatSync(resolved.real, { bigint: true });
     if (!rst.isFile() && !rst.isDirectory()) return null;
+    if (resolved.realFolder !== null && !folderIs(resolved.realFolder, resolved.folder)) return null;
     return identityOf(rst);
   } catch { return null; }
 }

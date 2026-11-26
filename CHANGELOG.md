@@ -2,6 +2,11 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [3.28.13] - 2026-11-27
+
+### Security
+- A config read through a link no longer follows one swap of its folder out of the repository (T-29qn-1). The chain walk pins the entry's own folder, and the pin is checked again before the entry's identity is taken and after a link's identity is read, in both the script reader and the hook reader. — test: scripts/lib/repo-fs-folderswap.test.mjs
+
 ## [3.28.12] - 2026-11-23
 
 gold-standard FILL waits for the FILL choice, and a start answer or a tier pick is not that choice
