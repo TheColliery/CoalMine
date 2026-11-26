@@ -7,6 +7,7 @@
 // Example: node scripts/front-door-links.mjs README.md SECURITY.md
 // Exit:    0 every link answers · 1 a finding, or a file that cannot be read · 64 usage error
 // Env:     FRONT_DOOR_LINKS_TIMEOUT_MS (per request, default 10000) · FRONT_DOOR_LINKS_RETRY_MS (the pause before the one retry, default 2000)
+//          GITHUB_TOKEN (read by name, optional): a github.com repository, account or file (blob) link that still answers 5xx after the retry is asked once of the REST API with it
 // Output:  one `FAIL <file>:<line>: <url>: <why>` line per finding, then the summary line. Report a problem: the repository's issues.
 // Node builtins only at the top level (node/runtime.md section 1): the engine is imported inside the try, so a missing engine is a FAIL line, never a stack.
 import fs from 'node:fs';
@@ -77,7 +78,7 @@ async function main(argv) {
   let summary = '';
   try {
     const lib = await import(pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'lib', 'front-door-links.mjs')).href);
-    const r = await lib.checkFiles(texts, { timeoutMs: env('FRONT_DOOR_LINKS_TIMEOUT_MS', lib.DEFAULT_TIMEOUT_MS), retryMs: env('FRONT_DOOR_LINKS_RETRY_MS', lib.DEFAULT_RETRY_MS), skipHosts });
+    const r = await lib.checkFiles(texts, { timeoutMs: env('FRONT_DOOR_LINKS_TIMEOUT_MS', lib.DEFAULT_TIMEOUT_MS), retryMs: env('FRONT_DOOR_LINKS_RETRY_MS', lib.DEFAULT_RETRY_MS), skipHosts, token: process.env.GITHUB_TOKEN || '' });
     for (const x of r.findings) console.log(`FAIL ${printable(x.file)}:${x.line}: ${printable(x.url)}: ${printable(x.message)}`);
     fails += r.findings.length;
     summary = `${r.links} link(s) in ${texts.length} file(s), ${r.fetched} fetched${r.skipped.length ? `, ${r.skipped.length} skipped by host` : ''}`;

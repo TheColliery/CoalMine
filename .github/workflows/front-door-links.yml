@@ -65,6 +65,10 @@ jobs:
           node-version: 22
       # The front doors that exist here, the same list the paths: filters above name. An empty list is a failure, never a green run that read nothing.
       - name: Front-door links answer at the page they name
+        # The workflow's own token, read-only, for ONE use: a github.com repository link whose anonymous answer stays 5xx (GitHub's incident of 2026-11-09 left anonymous requests at 504 and
+        # authenticated ones unaffected) is asked of the REST API instead. A 504 that persists there too stays a finding.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           files=()
           for f in README.md SECURITY.md CONTRIBUTING.md PRIVACY.md CODE_OF_CONDUCT.md GOVERNANCE.md ACCESSIBILITY.md; do
