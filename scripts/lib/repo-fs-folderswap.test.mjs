@@ -93,6 +93,44 @@ function withFolderSwap({ folder, entry, outDir, fakeEntry, swap }, body) {
   }
 }
 
+// The second-compare swap (T-29qn-1, L2): armed AFTER the reader's own realpath of the entry returns. The chain walk and the folder's realpath both saw the real folder,
+// so the first compare passes; the swapped folder is caught only by the compare made after the entry's identity is read. `fakeEntry` as in withFolderSwap.
+function withRealpathSwap({ folder, entry, outDir, fakeEntry }, body) {
+  const realL = fs.lstatSync;
+  const realRpn = fs.realpathSync.native;
+  const state = { swapped: false, aside: null };
+  let faked = false;
+  fs.lstatSync = function (q, ...r) {
+    const st = realL.call(this, q, ...r);
+    const rq = typeof q === 'string' ? path.resolve(q) : '';
+    if (fakeEntry && !faked && rq === path.resolve(entry)) {
+      faked = true;
+      return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { isSymbolicLink: () => true, isFile: () => false });
+    }
+    return st;
+  };
+  fs.realpathSync.native = function (q, ...r) {
+    const out = realRpn.call(this, q, ...r);
+    if (!state.swapped && typeof q === 'string' && path.resolve(q) === path.resolve(entry)) {
+      state.swapped = true;
+      state.aside = folder + '.real';
+      fs.renameSync(folder, state.aside);
+      fs.symlinkSync(outDir, folder, 'junction');
+    }
+    return out;
+  };
+  try {
+    return { got: body(), state };
+  } finally {
+    fs.lstatSync = realL;
+    fs.realpathSync.native = realRpn;
+    if (state.swapped) {
+      fs.unlinkSync(folder);
+      fs.renameSync(state.aside, folder);
+    }
+  }
+}
+
 for (const [name, reader] of READERS) {
   test(`${name} reader, control: a link entry with no folder swap reads the target (VICTIM)`, (t) => {
     const f = fixture(t, `cm-folderswap-ctl-${name}-`);
@@ -107,6 +145,14 @@ for (const [name, reader] of READERS) {
     const { got, state } = withFolderSwap({ folder: f.folder, entry: f.entry, outDir: f.outDir, fakeEntry: true, swap: true }, () => reader(f.entry, f.proj));
     assert.ok(state.swapped, 'the folder swap happened, so this leg is not vacuous');
     assert.equal(got, null, `the swapped link entry is refused; read ${got ? JSON.stringify(got.toString()) : ''}`);
+  });
+
+  test(`${name} reader: a link entry whose folder is swapped after the entry's own realpath returns is refused by the second compare, never read (L2)`, (t) => {
+    if (!canMakeJunction(t)) { t.skip('this account cannot make a directory junction here; the leg runs where it can'); return; }
+    const f = fixture(t, `cm-folderswap-l2-${name}-`);
+    const { got, state } = withRealpathSwap({ folder: f.folder, entry: f.entry, outDir: f.outDir, fakeEntry: true }, () => reader(f.entry, f.proj));
+    assert.ok(state.swapped, 'the folder swap happened after the entry realpath, so this leg is not vacuous');
+    assert.equal(got, null, `the entry whose folder was swapped after its realpath is refused; read ${got ? JSON.stringify(got.toString()) : ''}`);
   });
 
   test(`${name} reader: a plain entry whose folder is swapped to a junction after the chain check is refused, never read (P1)`, (t) => {
