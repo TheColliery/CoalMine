@@ -4,7 +4,7 @@ All notable changes to CoalMine are documented here. Format follows [Keep a Chan
 
 ## [3.28.13] - 2026-11-27
 
-A config read through a link refuses one swap of its folder after the chain check
+A link config read refuses one folder swap after the chain check
 
 ### Security
 - **A link entry's folder swapped once after the chain check is refused, never read (T-29qn-1).** Before, one swap of the entry's own folder to a junction after the chain walk let the script reader and the hook reader read a file outside the repository. The chain walk now pins the entry's own folder, and the pin is checked again before the entry's identity is taken and after a link's identity is read, in `scripts/lib/repo-fs.mjs` and the shared hook partial `hooks/_shared/node-config.js` (synced into the three hook copies). Still not refused: a timed multi-swap of a folder in the chain, back and forth around the check and the open, because Node offers no handle-relative open (no `*at()` call); and a file link that stays inside its own folder, which is read by design. — test: script reader: a link entry whose folder is swapped to a junction after the chain check is refused, never read (S1); hook reader: a link entry whose folder is swapped to a junction after the chain check is refused, never read (S1); the real-link legs (`script reader, real link` and `hook reader, real link`, R1 among them) are skipped where the account cannot make a file symlink and run on the ubuntu and macos CI legs
