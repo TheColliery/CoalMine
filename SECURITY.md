@@ -6,7 +6,7 @@ CoalMine is verified under the same framework as **[CoalTipple](https://github.c
 
 ## 🔒 Reporting a Vulnerability
 
-Report a security issue in this repo through GitHub's private vulnerability reporting — [Security → Report a vulnerability](https://github.com/TheColliery/CoalMine/security/advisories/new) — never a public issue. In scope: everything this repo ships — the canary skills, the shipped hooks, the installer and other `scripts/`, the `plugin/` dist, and the PowerShell fallback hooks and platform hook-config templates we publish for manual install. Out of scope: a vulnerability in a third-party skill or codebase a canary merely scans — report that to its own maintainer. This is a one-person-maintained project. We acknowledge a report within 5 days, send an assessment within 10 days, and disclose publicly once the fix ships, or at 90 days at most. During an absence announced on the maintainer's GitHub profile, the 5 days count from the first day back. Where we decide not to fix, you are told that and why. A public GitHub issue remains the right channel for an ordinary, non-security bug.
+Report a security issue in this repo through GitHub's private vulnerability reporting—[Security → Report a vulnerability](https://github.com/TheColliery/CoalMine/security/advisories/new)—never a public issue. In scope: everything this repo ships—the canary skills, the shipped hooks, the installer and other `scripts/`, the `plugin/` dist, and the PowerShell fallback hooks and platform hook-config templates we publish for manual install. Out of scope: a vulnerability in a third-party skill or codebase a canary merely scans—report that to its own maintainer. This is a one-person-maintained project. We acknowledge a report within 5 days, send an assessment within 10 days, and disclose publicly once the fix ships, or at 90 days at most. During an absence announced on the maintainer's GitHub profile, the 5 days count from the first day back. Where we decide not to fix, you are told that and why. A public GitHub issue remains the right channel for an ordinary, non-security bug.
 
 Fixed vulnerabilities are published as [Security Advisories](https://github.com/TheColliery/CoalMine/security/advisories).
 
@@ -14,7 +14,7 @@ Fixed vulnerabilities are published as [Security Advisories](https://github.com/
 
 ## 🔑 Commit & Tag Signatures
 
-Every **release tag** and **maintainer commit** is SSH-signed (`gpg.format=ssh`); GitHub shows the Verified badge on them. Automated **Dependabot / CI** commits are not signed with the maintainer key (GitHub signs these with its own), so verify a signed **release tag** — the artifact a release consumer trusts:
+Every **release tag** and **maintainer commit** is SSH-signed (`gpg.format=ssh`); GitHub shows the Verified badge on them. Automated **Dependabot / CI** commits are not signed with the maintainer key (GitHub signs these with its own), so verify a signed **release tag**—the artifact a release consumer trusts:
 ```bash
 echo "* ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEtqTWGKhX1Dk9nZP8ns13Wl5zsO1Cz3VlTS6m1p2fP9" > coalmine_signers
 git config gpg.ssh.allowedSignersFile ./coalmine_signers
