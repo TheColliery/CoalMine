@@ -2,7 +2,7 @@
 
 # 🐤 CoalMine
 
-> *A mine's canary dies first so the miners live — these nine die first so your codebase lives.*
+> *A mine's canary dies first so the miners live—these nine die first so your codebase lives.*
 
 **9 Quality-Safeguard Canaries for AI Coding Agents**—Detect code rot, weak rules, hallucinations, supply-chain vulnerabilities, brittle architectures, and API contract drift before they pollute your codebase.
 
