@@ -22,7 +22,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const USAGE = [
   'Usage: node scripts/consistency.mjs [--base <dir>]',
   '  (no flag)     check this repo. The doctrine-mirror check compares the rule homes it resolves:',
-  '                the cwd when it holds a rule home and is not this repo; otherwise the repo if it holds',
+  '                the cwd when it holds a rule home and is not inside this repo; otherwise the repo if it holds',
   '                both homes, else its parent.',
   '  --base <dir>  compare the rule homes under <dir>. Fails loud when neither home is there.',
   '  -h, --help    print this usage and exit 0.',
@@ -47,10 +47,15 @@ function parseArgs(argv) {
   return { base };
 }
 
-// True when `dir` is this repo, compared by realpath on both sides (a cwd spelled through a link or an 8.3 name still matches).
-// A dir that does not resolve counts as NOT this repo, so it keeps the cwd rule it had before this check existed.
-function isThisRepo(dir) {
-  try { return fs.realpathSync.native(dir) === fs.realpathSync.native(repo); } catch { return false; }
+// True when `dir` is this repo or lies INSIDE it (a subfolder counts), compared by realpath on both sides (a cwd spelled through a link
+// or an 8.3 name still matches). CWK-142 round 2: "inside" is the test, because a subfolder of the repo is not an umbrella above it. A dir
+// that does not resolve counts as inside (fail closed): the default then compares the repo, never the unresolved cwd.
+function isInsideThisRepo(dir) {
+  let d;
+  let r;
+  try { d = fs.realpathSync.native(dir); r = fs.realpathSync.native(repo); } catch { return true; }
+  const rel = path.relative(r, d);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
 }
 
 function main(argv) {
@@ -58,12 +63,12 @@ function main(argv) {
   if (parsed.help) { console.log(USAGE); return 0; }
   if (parsed.error) { console.error(`consistency: ${parsed.error}\n${USAGE}`); return 1; }
 
-  // The mirror base: an explicit --base, else the cwd when it holds a rule home and is NOT this repo
+  // The mirror base: an explicit --base, else the cwd when it holds a rule home and is NOT inside this repo
   // (an umbrella run), else null, which is today's default (the repo, or its parent, via resolveMirrorBase).
   // The NOT-this-repo half is load-bearing (INSPECT F1): CI and the hooks run bare from the repo root, and a
   // repo holding ONE stray rule tree must keep resolveMirrorBase's M2 widening to the parent, not compare itself.
   const cwd = process.cwd();
-  const chosen = parsed.base !== null ? parsed.base : (!isThisRepo(cwd) && hasRuleHome(cwd) ? cwd : null);
+  const chosen = parsed.base !== null ? parsed.base : (!isInsideThisRepo(cwd) && hasRuleHome(cwd) ? cwd : null);
 
   // A chosen base with NO rule home compares nothing. That is a FAIL, never a PASS over zero files.
   const extra = [];

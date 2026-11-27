@@ -36,11 +36,26 @@ function runCli(cli, args, cwd) {
 // plants its own rule trees, and the copy must hold none the test did not plant.
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const COPY_SKIP = new Set(['.git', 'scratchpad', '.claude', '.agents', 'node_modules']);
+// The copy keeps a source unless a segment of its path RELATIVE TO THE REPO is in COPY_SKIP (CWK-142 round 2, the worktree case: a repo
+// checked out under `.claude/worktrees/<name>` has `.claude` in its absolute path, so an absolute-segment filter copied nothing).
+function keepForCopy(repoRoot, src) {
+  return !path.relative(repoRoot, src).split(path.sep).some((seg) => COPY_SKIP.has(seg));
+}
+
 function copyRepoUnder(parent) {
   const dest = path.join(parent, 'CoalMine');
-  fs.cpSync(REPO, dest, { recursive: true, filter: (src) => !src.split(path.sep).some((seg) => COPY_SKIP.has(seg)) });
+  fs.cpSync(REPO, dest, { recursive: true, filter: (src) => keepForCopy(REPO, src) });
   return dest;
 }
+
+// CWK-142 round 2 (29sg, c152 c): the copy filter reads the path RELATIVE TO THE REPO. A unit check on a repo root that sits under a
+// `.claude` folder (a worktree checkout): a source inside the repo is kept, and a skipped segment inside the repo is still dropped.
+test('the copy filter keeps a repo source when the repo itself sits under a .claude folder (a worktree checkout)', () => {
+  const root = path.join(os.tmpdir(), 'cm-wt', '.claude', 'worktrees', 'w1', 'CoalMine');
+  assert.equal(keepForCopy(root, path.join(root, 'scripts', 'install.mjs')), true, 'a source in the repo is kept');
+  assert.equal(keepForCopy(root, path.join(root, '.claude', 'rules')), false, 'a skipped segment inside the repo is still dropped');
+  assert.equal(keepForCopy(root, path.join(root, '.git')), false, 'the git folder is still dropped');
+});
 
 test('--base at a base whose two rule homes agree passes, and the PASS line names that base', (t) => {
   const base = mkDir(t);
@@ -102,6 +117,25 @@ test('a bare run from the repo root with ONE stray rule tree still widens to the
   assert.equal(res.status, 1, res.stdout + res.stderr);
   assert.match(res.stdout, /DIVERGED/);
   assert.ok(res.stdout.includes(path.resolve(parent)), 'the divergence is checked at the parent the M2 ruling widens to');
+});
+
+// CWK-142 round 2 (29sg, c152 b): the 26b reviewer's witness 3d. A cwd INSIDE the repo (a subfolder), holding one stray rule tree, is not
+// "a rule home outside this repo", so the default must not compare that tree alone. Before the fix the subfolder counted as "not this
+// repo", the stray tree was compared alone, and the run PASSed over a diverged parent. The fix: "inside this repo" is the test, and the
+// default widens to the parent exactly as it does from the repo root.
+test('a run from a SUBFOLDER of the repo, holding ONE stray rule tree, still widens to the parent, and a divergence there FAILs', (t) => {
+  const parent = mkDir(t);
+  writeRule(parent, ROOTS[0], 'common/rule.md', 'claude copy\n');
+  writeRule(parent, ROOTS[1], 'common/rule.md', 'agents copy\n');
+  const copy = copyRepoUnder(parent);
+  const sub = path.join(copy, 'nested');
+  fs.mkdirSync(sub);
+  writeRule(sub, ROOTS[1], 'stray.md', 'one stray tree, in a subfolder of the repo\n');
+  const res = runCli(path.join(copy, 'scripts', 'consistency.mjs'), [], sub);
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stdout, /DIVERGED/);
+  assert.ok(res.stdout.includes(path.resolve(parent)), 'the divergence is checked at the parent, not at the stray subfolder');
+  assert.ok(!res.stdout.includes(path.resolve(sub)), 'the subfolder inside the repo is never the mirror base');
 });
 
 test('-h prints usage to stdout, exits 0, and does no consistency work', (t) => {
