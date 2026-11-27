@@ -48,6 +48,25 @@ function copyRepoUnder(parent) {
   return dest;
 }
 
+// CWK-142 round 2 (i81 F1): the same folder spelled as a UNC path (\\localhost\<drive>$\<rest>) is on another volume from the repo, so
+// path.relative() returns an ABSOLUTE path, and only the isAbsolute half of isInsideThisRepo reads that cwd as outside the repo. Returns
+// the UNC spelling of `dir` when this box resolves it, the child takes it as its cwd, and path.relative() from the repo is absolute (the
+// branch is reachable); otherwise null. The backslash is built from code point 92, never typed doubled (the Bash tool halves a pair).
+function uncCwdOf(dir) {
+  const bs = String.fromCharCode(92);
+  let real;
+  let repoReal;
+  try { real = fs.realpathSync.native(dir); repoReal = fs.realpathSync.native(REPO); } catch { return null; }
+  const m = /^([A-Za-z]):(.*)$/.exec(real);
+  if (!m) return null;
+  const unc = bs + bs + 'localhost' + bs + m[1] + '$' + m[2];
+  let uncReal;
+  try { uncReal = fs.realpathSync.native(unc); } catch { return null; }
+  if (!path.isAbsolute(path.relative(repoReal, uncReal))) return null;
+  const probe = spawnSync(process.execPath, ['-e', ''], { cwd: unc, encoding: 'utf8', timeout: 120000 });
+  return probe.status === 0 ? unc : null;
+}
+
 // CWK-142 round 2 (29sg, c152 c): the copy filter reads the path RELATIVE TO THE REPO. A unit check on a repo root that sits under a
 // `.claude` folder (a worktree checkout): a source inside the repo is kept, and a skipped segment inside the repo is still dropped.
 test('the copy filter keeps a repo source when the repo itself sits under a .claude folder (a worktree checkout)', () => {
@@ -90,6 +109,24 @@ test('with no flag, a cwd that holds the rule homes is the mirror base, and dive
   writeRule(base, ROOTS[0], 'common/rule.md', 'claude copy\n');
   writeRule(base, ROOTS[1], 'common/rule.md', 'agents copy\n');
   const res = run([], base);
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stdout, /rule\.md/);
+});
+
+// CWK-142 round 2 (i81 F1): the leg that reaches the isAbsolute half. With the cwd spelled as a UNC path, the diverged rule homes in that folder
+// must still be the mirror base; without the isAbsolute half the cwd reads as inside the repo and the default compares the bare repo, which
+// holds no rule home and PASSes. Skips visibly where the UNC spelling does not resolve or a child cannot take it as its cwd.
+test('with no flag, a cwd spelled on another volume (a UNC path), holding the rule homes, is still the mirror base, and divergence there fails', (t) => {
+  const base = mkDir(t);
+  writeRule(base, ROOTS[0], 'common/rule.md', 'claude copy\n');
+  writeRule(base, ROOTS[1], 'common/rule.md', 'agents copy\n');
+  const unc = uncCwdOf(base);
+  if (unc === null) {
+    t.skip('no UNC spelling of this folder resolves here as a cwd on another volume (no admin share, or a child cannot take it)');
+    return;
+  }
+  const copy = copyRepoUnder(mkDir(t));
+  const res = runCli(path.join(copy, 'scripts', 'consistency.mjs'), [], unc);
   assert.equal(res.status, 1, res.stdout + res.stderr);
   assert.match(res.stdout, /rule\.md/);
 });
