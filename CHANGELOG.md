@@ -2,6 +2,12 @@
 
 All notable changes to CoalMine are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer (canonical version lives in `.claude-plugin/plugin.json`).
 
+## [Unreleased]
+
+### Fixed
+
+- **`install.mjs --uninstall` exits 1 when removing a git hook or the trigger config fails.** The `[warn] failed to uninstall ...` line is unchanged; before, the run still exited 0, so a removal that failed read as success. — test: scripts/lib/install-uninstall-exit.test.mjs (the git-hook catch; its leg runs on the POSIX CI legs and skips visibly on Windows; the trigger-config catch has no reachable input and stays untested)
+
 ## [3.28.13] - 2026-11-27
 
 A link config read refuses one folder swap after the chain check
