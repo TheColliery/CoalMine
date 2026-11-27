@@ -496,6 +496,7 @@ function uninstallGitHooks() {
     }
   } catch (e) {
     console.warn(`  [warn] failed to uninstall git hooks: ${e.message}`);
+    process.exitCode = 1; // CWK-142 round 2: a failed uninstall is not a success (the warning stays)
   }
 }
 
@@ -574,6 +575,7 @@ function uninstallConfig(arg) {
     }
   } catch (e) {
     console.warn(`  [warn] failed to uninstall config: ${e.message}`);
+    process.exitCode = 1; // CWK-142 round 2: a failed uninstall is not a success (the warning stays)
   }
 }
 

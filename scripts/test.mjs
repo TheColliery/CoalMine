@@ -165,6 +165,8 @@ const TESTS = [
   'scripts/lib/repo-fs-linkretarget.test.mjs',
   // T-29qn-1 / 29qn: one swap of the entry's folder to a junction after the chain check is refused (a link reads OUTSIDE today; the identity is checked first).
   'scripts/lib/repo-fs-folderswap.test.mjs',
+  // CWK-142 round 2 (29sg, c152 a): an uninstall catch that warns must also fail the run.
+  'scripts/lib/install-uninstall-exit.test.mjs',
 ];
 
 // CWK-071: wrapped in main() so a missing/orphan check can `return` and skip the
